@@ -283,6 +283,79 @@ if (note && mount) {
     } catch { cmdkInput.disabled = false; cmdkHint.textContent = "failed"; }
   });
 
+  // ============================ chat panel ============================
+  const chat = document.createElement("div"); chat.className = "chat";
+  chat.innerHTML = '<div class="chat-head"><span>Chat</span><span class="spacer"></span><button class="chat-clear">clear</button><button class="chat-close">✕</button></div>'
+    + '<div class="chat-log"><div class="chat-empty">Ask about this note, or draft something. Replies can be inserted. Add a selection for focused context.</div></div>'
+    + '<div class="chat-foot"><div class="chat-sel"></div><button class="chat-addsel">＋ add selection</button><div class="chat-row"><textarea class="chat-input" rows="1" placeholder="Ask about this note…  (Enter to send)"></textarea><button class="chat-send">Send</button></div></div>';
+  document.body.appendChild(chat);
+  const chatLog = chat.querySelector(".chat-log") as HTMLElement;
+  const chatInput = chat.querySelector(".chat-input") as HTMLTextAreaElement;
+  const chatSelBox = chat.querySelector(".chat-sel") as HTMLElement;
+  const chatMsgs: { role: string; content: string }[] = [];
+  let chatSel = "";
+
+  function openChat() { chat.classList.add("show"); chatInput.focus(); }
+  function closeChat() { chat.classList.remove("show"); if (editor) editor.commands.focus(); }
+  function toggleChat() { if (chat.classList.contains("show")) closeChat(); else openChat(); }
+
+  function selectionText(): string {
+    if (!editor) return "";
+    const sel: any = editor.state.selection;
+    if (sel.node && sel.node.type.name === "richBlock") return sel.node.attrs.html || "";
+    return editor.state.doc.textBetween(sel.from, sel.to, "\n");
+  }
+  function addSelToChat() {
+    const text = selectionText();
+    if (!text.trim()) { flash("select something first", false); openChat(); return; }
+    chatSel = text;
+    chatSelBox.innerHTML = '<span class="t"></span><span class="x">✕</span>';
+    (chatSelBox.querySelector(".t") as HTMLElement).textContent = "selection: " + text.replace(/\s+/g, " ").slice(0, 88) + (text.length > 88 ? "…" : "");
+    (chatSelBox.querySelector(".x") as HTMLElement).onclick = () => { chatSel = ""; chatSelBox.classList.remove("show"); };
+    chatSelBox.classList.add("show");
+    openChat();
+  }
+
+  function insertChatReply(text: string) {
+    if (!editor) return;
+    const at = editor.state.doc.content.size;
+    if (/<[a-z][\s\S]*>/i.test(text)) editor.chain().focus().insertContentAt(at, { type: "richBlock", attrs: { html: stripActive(text) } }).run();
+    else editor.chain().focus().insertContentAt(at, text).run();
+    flash("inserted → saved");
+  }
+  function renderChatMsg(role: string, content: string, opts: { thinking?: boolean; insertable?: boolean } = {}): HTMLElement {
+    const empty = chatLog.querySelector(".chat-empty"); if (empty) empty.remove();
+    const d = document.createElement("div"); d.className = "chat-msg " + role + (opts.thinking ? " thinking" : "");
+    d.textContent = content;
+    if (opts.insertable) { const b = document.createElement("button"); b.className = "insert"; b.textContent = "Insert into note ▸"; b.onclick = () => insertChatReply(content); d.appendChild(document.createElement("br")); d.appendChild(b); }
+    chatLog.appendChild(d); chatLog.scrollTop = chatLog.scrollHeight; return d;
+  }
+
+  let chatBusy = false;
+  async function sendChat() {
+    const text = chatInput.value.trim(); if (!text || !editor || chatBusy) return;
+    chatBusy = true; (chat.querySelector(".chat-send") as HTMLButtonElement).disabled = true;
+    const sel = chatSel;
+    chatMsgs.push({ role: "user", content: sel ? text + "\n\n[attached selection]\n" + sel : text });
+    renderChatMsg("user", text + (sel ? "  ⎘ +selection" : ""));
+    chatInput.value = ""; chatInput.style.height = "auto";
+    chatSel = ""; chatSelBox.classList.remove("show");
+    const thinking = renderChatMsg("assistant", "thinking with your Claude…", { thinking: true });
+    try {
+      const r = await fetch("/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ messages: chatMsgs, note: docContext().slice(0, 12000), selection: sel }) }).then((x) => x.json());
+      thinking.remove();
+      if (!r.ok || !r.reply) { renderChatMsg("assistant", "failed: " + (r.error || "empty")); }
+      else { chatMsgs.push({ role: "assistant", content: r.reply }); renderChatMsg("assistant", r.reply, { insertable: true }); }
+    } catch { thinking.remove(); renderChatMsg("assistant", "request failed"); }
+    chatBusy = false; (chat.querySelector(".chat-send") as HTMLButtonElement).disabled = false; chatInput.focus();
+  }
+  (chat.querySelector(".chat-send") as HTMLElement).addEventListener("click", sendChat);
+  (chat.querySelector(".chat-close") as HTMLElement).addEventListener("click", closeChat);
+  (chat.querySelector(".chat-clear") as HTMLElement).addEventListener("click", () => { chatMsgs.length = 0; chatLog.innerHTML = '<div class="chat-empty">Cleared. Ask anything about this note.</div>'; });
+  (chat.querySelector(".chat-addsel") as HTMLElement).addEventListener("click", addSelToChat);
+  chatInput.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } else if (e.key === "Escape") { e.preventDefault(); closeChat(); } });
+  chatInput.addEventListener("input", () => { chatInput.style.height = "auto"; chatInput.style.height = Math.min(chatInput.scrollHeight, 140) + "px"; });
+
   // ============================ insert menu ============================
   function insertBlock(kind: string) {
     if (!editor) return;
@@ -295,11 +368,13 @@ if (note && mount) {
   document.addEventListener("keydown", (e) => {
     const mod = e.metaKey || e.ctrlKey;
     if (mod && e.key.toLowerCase() === "k") { e.preventDefault(); openCmdk(); }
+    else if (mod && e.key.toLowerCase() === "l") { e.preventDefault(); if (e.shiftKey) addSelToChat(); else toggleChat(); }
     else if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); flushSave(); }
     else if (mod && (e.key.toLowerCase() === "p" || e.key.toLowerCase() === "o")) { e.preventDefault(); openSwitcher(); }
-    else if (e.key === "Escape") { if (cmdk.classList.contains("show")) closeCmdk(); else if (switcher.classList.contains("show")) closeSwitcher(); }
+    else if (e.key === "Escape") { if (cmdk.classList.contains("show")) closeCmdk(); else if (switcher.classList.contains("show")) closeSwitcher(); else if (chat.classList.contains("show")) closeChat(); }
   });
   document.getElementById("askchip")?.addEventListener("click", openCmdk);
+  document.getElementById("chatchip")?.addEventListener("click", toggleChat);
   document.getElementById("insertchip")?.addEventListener("click", () => {
     const k = window.prompt("Insert block: type 'calendar', 'clock', or 'rich'", "clock");
     if (k) insertBlock(k.trim().toLowerCase());
