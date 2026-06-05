@@ -223,6 +223,12 @@ function styles(): string {
   .bubble button.accent{color:var(--accent);font-weight:600}
   .bubble .mono{font-family:ui-monospace,Menlo,monospace;font-size:12px}
   .bubble .bsep{width:1px;align-self:stretch;background:rgba(255,255,255,.22);margin:2px 3px}
+  .bubble .cswatch{display:inline-flex;align-items:center;justify-content:center;padding:5px 7px;cursor:pointer;border-radius:6px}
+  .bubble .cswatch:hover{background:rgba(255,255,255,.14)}
+  .bubble .cswatch input[type=color]{width:15px;height:15px;border:none;border-radius:4px;background:none;padding:0;cursor:pointer}
+  .bubble .cswatch input[type=color]::-webkit-color-swatch-wrapper{padding:0}
+  .bubble .cswatch input[type=color]::-webkit-color-swatch{border:1px solid rgba(255,255,255,.4);border-radius:4px}
+  .bubble [data-a="hilite"] .hl{background:#fde047;color:#1c1c1e;font-weight:700;border-radius:3px;padding:0 4px;font-size:11px}
   .switcher{position:fixed;inset:0;display:none;align-items:flex-start;justify-content:center;background:rgba(0,0,0,.28);z-index:60}
   .switcher.show{display:flex}
   .switcher .box{margin-top:12vh;width:min(560px,92vw);background:var(--surface);border:1px solid var(--border-strong);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden}
