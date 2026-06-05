@@ -9,7 +9,7 @@
 //   bun run server.ts [file-or-folder]
 //   open http://localhost:4321/
 //
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, renameSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, renameSync, mkdirSync, realpathSync } from "node:fs";
 import { resolve, extname, basename, dirname, sep, join } from "node:path";
 import sanitizeHtml from "sanitize-html";
 
@@ -19,12 +19,21 @@ let ROOT: string;
 let LAUNCH_FILE: string | null;
 if (existsSync(ARG) && statSync(ARG).isDirectory()) { ROOT = ARG; LAUNCH_FILE = null; }
 else { ROOT = dirname(ARG); LAUNCH_FILE = ARG; }
+try { ROOT = realpathSync(ROOT); } catch {}
 
 const NOTE_RE = /\.(md|markdown|html?|htm)$/i;
+function escHtml(s: string): string { return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string)); }
 
 // ---- safety ----
-function inVault(p: string): boolean { const r = resolve(p); return r === ROOT || r.startsWith(ROOT + sep); }
-function okNotePath(p: string): boolean { return inVault(p) && NOTE_RE.test(p); }
+// realpath the deepest EXISTING ancestor so symlinks can't escape the vault
+// (handles create/rename targets that don't exist yet).
+function realParent(p: string): string {
+  let cur = resolve(p);
+  while (cur !== dirname(cur)) { try { return realpathSync(cur); } catch { cur = dirname(cur); } }
+  return cur;
+}
+function inVault(p: string): boolean { const real = realParent(p); return real === ROOT || real.startsWith(ROOT + sep); }
+function okNotePath(p: string): boolean { return inVault(p) && NOTE_RE.test(resolve(p)); }
 function sameOrigin(req: Request): boolean {
   const origin = req.headers.get("origin");
   if (!origin) return true; // same-origin fetches may omit Origin entirely
@@ -38,7 +47,9 @@ function atomicWrite(p: string, content: string) {
 function toTrash(p: string) {
   const trash = join(ROOT, ".trash");
   if (!existsSync(trash)) mkdirSync(trash, { recursive: true });
-  renameSync(p, join(trash, `${basename(p)}.${Date.now()}`));
+  let dest = join(trash, `${basename(p)}.${Date.now()}`);
+  let i = 0; while (existsSync(dest)) dest = join(trash, `${basename(p)}.${Date.now()}.${++i}`);
+  renameSync(p, dest); // never clobber an existing trash entry
 }
 // Calibrated sanitize for AI (Model B) rich-HTML output: keep the design
 // (classes, inline styles, SVG) but strip the real execution vectors
@@ -189,7 +200,7 @@ function styles(): string {
 }
 
 function shell(note: { file: string; format: string; content: string } | null): string {
-  const title = note ? basename(note.file).replace(NOTE_RE, "") : "note-editor";
+  const title = escHtml(note ? basename(note.file).replace(NOTE_RE, "") : "note-editor");
   const json = note ? JSON.stringify({ ...note, root: ROOT }).replace(/</g, "\\u003c") : `{"root":${JSON.stringify(ROOT).replace(/</g, "\\u003c")}}`;
   const body = note
     ? `<div class="bar"><span class="title" id="title">${title}</span><span class="badge">${note.format}</span><span class="spacer"></span><span class="status dirty" id="savestatus"><span class="dot"></span><span class="lbl">—</span></span><button class="chip" id="askchip"><kbd>⌘K</kbd> Ask AI</button><button class="chip" id="insertchip">+ Insert</button></div>
@@ -241,8 +252,11 @@ Bun.serve({
         try { toTrash(p); return json({ ok: true }); } catch (e) { return json({ ok: false, error: String(e) }, 500); }
       }
       if (url.pathname === "/open-folder") {
-        const d = resolve(String(body.dir || ""));
-        if (!existsSync(d) || !statSync(d).isDirectory()) return json({ ok: false, error: "not a folder" });
+        let d: string; try { d = realpathSync(resolve(String(body.dir || ""))); } catch { return json({ ok: false, error: "not a folder" }); }
+        if (!statSync(d).isDirectory()) return json({ ok: false, error: "not a folder" });
+        // bound vault switches to inside the user's home so a stray POST can't repoint to / or system dirs
+        const home = (() => { try { return realpathSync(process.env.HOME || "/"); } catch { return "/"; } })();
+        if (d !== home && !d.startsWith(home + sep)) return json({ ok: false, error: "folder must be inside your home directory" });
         ROOT = d; LAUNCH_FILE = null;
         return json({ ok: true, first: firstNote() });
       }
@@ -257,8 +271,10 @@ Bun.serve({
           let text = out.trim();
           const fence = text.match(/^```[a-zA-Z]*\n([\s\S]*?)\n```$/);
           if (fence) text = fence[1].trim();
-          if (body.mode === "rich") text = safeRichHtml(text);
-          return json({ ok: !!text, text });
+          let html = body.mode === "rich";
+          if (body.mode === "author" && /<[a-z][\s\S]*>/i.test(text)) html = true; // AI chose to author HTML
+          if (html) text = safeRichHtml(text);
+          return json({ ok: !!text, text, html });
         } catch (e) { return json({ ok: false, error: String(e) }, 500); }
       }
       return json({ ok: false, error: "unknown" }, 404);
@@ -274,9 +290,9 @@ Bun.serve({
 
     const fileParam = url.searchParams.get("file");
     let path: string | null = fileParam ? resolve(fileParam) : (LAUNCH_FILE || firstNote());
-    if (path && (!inVault(path) || !existsSync(path) || !NOTE_RE.test(path))) path = null;
+    if (path && (!inVault(path) || !existsSync(path) || !NOTE_RE.test(path) || !statSync(path).isFile())) path = null;
     if (!path) return new Response(shell(null), { headers: { "content-type": "text/html; charset=utf-8" } });
-    const content = readFileSync(path, "utf8");
+    let content: string; try { content = readFileSync(path, "utf8"); } catch { return new Response(shell(null), { headers: { "content-type": "text/html; charset=utf-8" } }); }
     return new Response(shell({ file: path, format: fmtOf(path), content }), { headers: { "content-type": "text/html; charset=utf-8" } });
   },
 });
