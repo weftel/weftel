@@ -34,6 +34,23 @@ function stripActive(html: string): string {
 }
 function escapeAttr(s: any): string { return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 
+// Minimal, SAFE markdown for chat bubbles: HTML is escaped FIRST, then a small set of
+// inline/list transforms are applied — so AI output can never inject live markup.
+function mdLite(src: string): string {
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const inline = (s: string) => esc(s)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+  return src.replace(/\r/g, "").split(/\n{2,}/).map((blk) => {
+    const lines = blk.split("\n");
+    if (lines.some((l) => /^\s*[-*]\s+/.test(l)) && lines.every((l) => /^\s*[-*]\s+/.test(l) || !l.trim())) {
+      return "<ul>" + lines.filter((l) => l.trim()).map((l) => "<li>" + inline(l.replace(/^\s*[-*]\s+/, "")) + "</li>").join("") + "</ul>";
+    }
+    return "<p>" + lines.map(inline).join("<br>") + "</p>";
+  }).join("");
+}
+
 // ============================ custom nodes ============================
 const richMd = { markdown: { serialize(state: any, node: any) { state.write("<div data-rich-block>" + (node.attrs.html || "") + "</div>"); state.closeBlock(node); } } };
 
@@ -326,8 +343,8 @@ if (note && mount) {
   function renderChatMsg(role: string, content: string, opts: { thinking?: boolean; insertable?: boolean } = {}): HTMLElement {
     const empty = chatLog.querySelector(".chat-empty"); if (empty) empty.remove();
     const d = document.createElement("div"); d.className = "chat-msg " + role + (opts.thinking ? " thinking" : "");
-    d.textContent = content;
-    if (opts.insertable) { const b = document.createElement("button"); b.className = "insert"; b.textContent = "Insert into note ▸"; b.onclick = () => insertChatReply(content); d.appendChild(document.createElement("br")); d.appendChild(b); }
+    if (role === "assistant" && !opts.thinking) { d.classList.add("md"); d.innerHTML = mdLite(content); } else { d.textContent = content; }
+    if (opts.insertable) { const b = document.createElement("button"); b.className = "insert"; b.textContent = "Insert into note ▸"; b.onclick = () => insertChatReply(content); d.appendChild(b); }
     chatLog.appendChild(d); chatLog.scrollTop = chatLog.scrollHeight; return d;
   }
 
