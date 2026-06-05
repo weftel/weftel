@@ -214,6 +214,15 @@ function styles(): string {
   .slash-item .k{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--accent-ink);background:var(--accent-tint);border-radius:3px;padding:0 5px}
   .slash-item.sel{background:var(--accent-tint)}
   .slash-empty{padding:10px 12px;font-size:12.5px;color:var(--muted)}
+  .bubble{position:absolute;display:none;align-items:center;gap:2px;background:var(--text);border-radius:9px;padding:4px;box-shadow:0 8px 24px rgba(0,0,0,.28);z-index:54}
+  .bubble.show{display:flex}
+  .bubble button{font:inherit;font-size:13px;color:#fff;background:transparent;border:none;border-radius:6px;padding:5px 9px;cursor:pointer;line-height:1;display:flex;align-items:center}
+  @media(prefers-color-scheme:dark){.bubble{background:#26262c;border:1px solid var(--border-strong)}}
+  .bubble button:hover{background:rgba(255,255,255,.14)}
+  .bubble button.on{background:rgba(255,255,255,.22)}
+  .bubble button.accent{color:var(--accent);font-weight:600}
+  .bubble .mono{font-family:ui-monospace,Menlo,monospace;font-size:12px}
+  .bubble .bsep{width:1px;align-self:stretch;background:rgba(255,255,255,.22);margin:2px 3px}
   .switcher{position:fixed;inset:0;display:none;align-items:flex-start;justify-content:center;background:rgba(0,0,0,.28);z-index:60}
   .switcher.show{display:flex}
   .switcher .box{margin-top:12vh;width:min(560px,92vw);background:var(--surface);border:1px solid var(--border-strong);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden}

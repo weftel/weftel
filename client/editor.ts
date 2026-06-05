@@ -520,6 +520,48 @@ if (note && mount) {
   chatInput.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } else if (e.key === "Escape") { e.preventDefault(); closeChat(); } });
   chatInput.addEventListener("input", () => { chatInput.style.height = "auto"; chatInput.style.height = Math.min(chatInput.scrollHeight, 140) + "px"; });
 
+  // ============================ selection toolbar (bubble) ============================
+  const bubble = document.createElement("div"); bubble.className = "bubble";
+  bubble.innerHTML = '<button data-a="bold" title="Bold ⌘B"><b>B</b></button>'
+    + '<button data-a="italic" title="Italic ⌘I"><i>I</i></button>'
+    + '<button data-a="code" title="Code"><span class="mono">&lt;&gt;</span></button>'
+    + '<button data-a="link" title="Link ⌘K-on-text">↗</button>'
+    + '<span class="bsep"></span>'
+    + '<button data-a="ai" class="accent">✦ Ask AI</button>'
+    + '<button data-a="chat">+ Chat</button>';
+  document.body.appendChild(bubble);
+  const hideBubble = () => bubble.classList.remove("show");
+  bubble.addEventListener("mousedown", (e) => e.preventDefault()); // don't blur / collapse the selection
+  bubble.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+    if (!editor) return;
+    const a = (b as HTMLElement).dataset.a;
+    if (a === "bold") editor.chain().focus().toggleBold().run();
+    else if (a === "italic") editor.chain().focus().toggleItalic().run();
+    else if (a === "code") editor.chain().focus().toggleCode().run();
+    else if (a === "link") { const prev = editor.getAttributes("link").href || ""; const url = window.prompt("Link URL:", prev); if (url === null) return; if (url === "") editor.chain().focus().extendMarkRange("link").unsetLink().run(); else editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run(); }
+    else if (a === "ai") { hideBubble(); openCmdk(); return; }
+    else if (a === "chat") { hideBubble(); addSelToChat(); return; }
+    markEdited(); // format buttons are programmatic edits — arm the save (no beforeinput fires)
+    refreshBubble();
+  }));
+  function refreshBubble() { if (!editor) return; ["bold", "italic", "code"].forEach((m) => { const btn = bubble.querySelector('[data-a="' + m + '"]'); if (btn) btn.classList.toggle("on", editor!.isActive(m)); }); }
+  function updateBubble() {
+    if (!editor || !editor.isFocused) { hideBubble(); return; }
+    const selState: any = editor.state.selection;
+    if (selState.node || selState.empty) { hideBubble(); return; } // skip node selections (rich blocks) + carets
+    const text = editor.state.doc.textBetween(selState.from, selState.to, " ").trim();
+    if (!text) { hideBubble(); return; }
+    const s = window.getSelection(); if (!s || !s.rangeCount) { hideBubble(); return; }
+    const r = s.getRangeAt(0).getBoundingClientRect(); if (!r.width && !r.height) { hideBubble(); return; }
+    bubble.classList.add("show"); refreshBubble();
+    const bw = bubble.offsetWidth || 240;
+    bubble.style.left = Math.max(8, Math.min(r.left + r.width / 2 - bw / 2, window.innerWidth - bw - 8)) + "px";
+    bubble.style.top = Math.max(8, r.top + window.scrollY - bubble.offsetHeight - 8) + "px";
+  }
+  editor.on("selectionUpdate", updateBubble);
+  editor.on("blur", () => setTimeout(() => { if (!bubble.matches(":hover")) hideBubble(); }, 100));
+  window.addEventListener("scroll", () => { if (bubble.classList.contains("show")) updateBubble(); }, true);
+
   // ============================ insert menu ============================
   function insertBlock(kind: string) {
     if (!editor) return;
