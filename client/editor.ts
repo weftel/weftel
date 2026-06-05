@@ -19,6 +19,9 @@ import { TableHeader } from "@tiptap/extension-table-header";
 import { TableCell } from "@tiptap/extension-table-cell";
 import Placeholder from "@tiptap/extension-placeholder";
 import Suggestion from "@tiptap/suggestion";
+import { TextStyle } from "@tiptap/extension-text-style";
+import { Color } from "@tiptap/extension-color";
+import { Highlight } from "@tiptap/extension-highlight";
 
 type Note = { file: string; format: string; content: string; root: string };
 const W = window as any;
@@ -42,6 +45,28 @@ function stripActive(html: string): string {
 }
 function escapeAttr(s: any): string { return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 
+// MISSION: maximize directly-human-editable HTML; the atomic rich block is a fallback,
+// not a default. proseModelable() asks "is this HTML fully representable as editable
+// content (known tags + only styles we model as marks)?" If yes, we insert/unwrap it as
+// editable prose instead of locking it in an atomic block.
+const PROSE_OK_TAGS = new Set(["P", "H1", "H2", "H3", "H4", "H5", "H6", "UL", "OL", "LI", "BLOCKQUOTE", "BR", "HR", "STRONG", "EM", "B", "I", "U", "S", "DEL", "CODE", "A", "SPAN", "MARK"]);
+const MODELED_STYLE_PROPS = new Set(["color", "background-color", "background", "font-family", "font-size", "font-weight", "font-style", "text-decoration"]);
+function proseModelable(html: string): boolean {
+  const t = document.createElement("template"); t.innerHTML = html || "";
+  const els = Array.from(t.content.querySelectorAll("*"));
+  if (!els.length) return false; // plain text / empty — nothing to gain, leave as-is
+  for (const el of els) {
+    if (!PROSE_OK_TAGS.has(el.tagName)) return false;        // unknown tag (svg, div, img…) → keep atomic
+    if (el.getAttribute("class")) return false;              // a class usually = a styled component we can't model losslessly
+    const style = el.getAttribute("style");
+    if (style) {
+      const props = style.split(";").map((s) => s.split(":")[0].trim().toLowerCase()).filter(Boolean);
+      if (props.some((p) => !MODELED_STYLE_PROPS.has(p))) return false; // a style we don't model (layout, etc.) → keep atomic
+    }
+  }
+  return true;
+}
+
 // Minimal, SAFE markdown for chat bubbles: HTML is escaped FIRST, then a small set of
 // inline/list transforms are applied — so AI output can never inject live markup.
 function mdLite(src: string): string {
@@ -59,6 +84,35 @@ function mdLite(src: string): string {
   }).join("");
 }
 
+// ============================ inline-style marks ============================
+// Color/highlight/font on text stay EDITABLE PROSE (marks), not atomic blocks. These
+// extend the stock marks with markdown serializers so styled text round-trips a .md file
+// as inline <span>/<mark> (which Obsidian & co. render fine).
+const StyledTextStyle = TextStyle.extend({
+  addStorage() {
+    return { markdown: { serialize: {
+      open(_s: any, mark: any) {
+        const a = mark.attrs || {}; const css: string[] = [];
+        if (a.color) css.push("color:" + a.color);
+        if (a.fontFamily) css.push("font-family:" + a.fontFamily);
+        if (a.fontSize) css.push("font-size:" + a.fontSize);
+        return css.length ? '<span style="' + css.join(";") + '">' : "";
+      },
+      close(_s: any, mark: any) { const a = mark.attrs || {}; return (a.color || a.fontFamily || a.fontSize) ? "</span>" : ""; },
+      mixable: true, expelEnclosingWhitespace: true,
+    } } };
+  },
+});
+const StyledHighlight = Highlight.extend({
+  addStorage() {
+    return { markdown: { serialize: {
+      open(_s: any, mark: any) { const c = mark.attrs && mark.attrs.color; return c ? '<mark style="background-color:' + c + '">' : "<mark>"; },
+      close() { return "</mark>"; },
+      mixable: true, expelEnclosingWhitespace: true,
+    } } };
+  },
+});
+
 // ============================ custom nodes ============================
 const richMd = { markdown: { serialize(state: any, node: any) { state.write("<div data-rich-block>" + (node.attrs.html || "") + "</div>"); state.closeBlock(node); } } };
 
@@ -66,7 +120,9 @@ const RichBlock = Node.create({
   name: "richBlock", group: "block", atom: true, selectable: true, draggable: true,
   addAttributes() { return { html: { default: "", parseHTML: (el: any) => stripActive(el.innerHTML), renderHTML: () => ({}) } }; },
   addStorage() { return richMd; },
-  parseHTML() { return [{ tag: "div[data-rich-block]" }]; },
+  // If the block's content is fully prose-modelable, REJECT the atomic rule (getAttrs:false)
+  // so TipTap parses the inner HTML as editable prose+marks instead. Shrinks the atomic set.
+  parseHTML() { return [{ tag: "div[data-rich-block]", getAttrs: (el: any) => (proseModelable(el.innerHTML) ? false : null) }]; },
   renderHTML({ node }: any) { const d = document.createElement("div"); d.setAttribute("data-rich-block", ""); d.innerHTML = node.attrs.html; return d; },
   addNodeView() {
     return ({ node }: any) => { const d = document.createElement("div"); d.setAttribute("data-rich-block", ""); d.className = "rich-block"; d.contentEditable = "false"; d.innerHTML = node.attrs.html; return { dom: d }; };
@@ -303,6 +359,7 @@ let editor: Editor | null = null;
 if (note && mount) {
   const extensions: any[] = [
     StarterKit,
+    StyledTextStyle, Color, StyledHighlight.configure({ multicolor: true }),
     TaskList, TaskItem.configure({ nested: true }), TaskInputRule,
     Table.configure({ resizable: true }), TableRow, TableHeader, TableCell,
     Callout,
@@ -437,7 +494,8 @@ if (note && mount) {
         editor.chain().command(({ tr }: any) => { tr.setNodeMarkup(pos as number, undefined, { ...(node ? node.attrs : {}), html: r.text }); return true; }).run(); // undoable via cmd+Z
       } else if (t.mode === "author") {
         const at = Math.min(t.from, editor.state.doc.content.size);
-        if (r.html) editor.chain().focus().insertContentAt(at, { type: "richBlock", attrs: { html: r.text } }).run();
+        // prefer editable: only lock into an atomic rich block if the HTML isn't prose-modelable
+        if (r.html && !proseModelable(r.text)) editor.chain().focus().insertContentAt(at, { type: "richBlock", attrs: { html: r.text } }).run();
         else editor.chain().focus().insertContentAt(at, r.text).run();
       } else {
         const to = Math.min(t.to, editor.state.doc.content.size); const from = Math.min(t.from, to);
@@ -483,8 +541,11 @@ if (note && mount) {
   function insertChatReply(text: string) {
     if (!editor) return;
     const at = editor.state.doc.content.size;
-    if (/<[a-z][\s\S]*>/i.test(text)) editor.chain().focus().insertContentAt(at, { type: "richBlock", attrs: { html: stripActive(text) } }).run();
-    else editor.chain().focus().insertContentAt(at, text).run();
+    const looksHtml = /<[a-z][\s\S]*>/i.test(text);
+    const safe = looksHtml ? stripActive(text) : text;
+    // prefer editable: prose-modelable HTML inserts as editable prose+marks, not an atomic block
+    if (looksHtml && !proseModelable(safe)) editor.chain().focus().insertContentAt(at, { type: "richBlock", attrs: { html: safe } }).run();
+    else editor.chain().focus().insertContentAt(at, safe).run();
     markEdited(); flash("inserted → saved");
   }
   function renderChatMsg(role: string, content: string, opts: { thinking?: boolean; insertable?: boolean } = {}): HTMLElement {
@@ -525,11 +586,15 @@ if (note && mount) {
   bubble.innerHTML = '<button data-a="bold" title="Bold ⌘B"><b>B</b></button>'
     + '<button data-a="italic" title="Italic ⌘I"><i>I</i></button>'
     + '<button data-a="code" title="Code"><span class="mono">&lt;&gt;</span></button>'
-    + '<button data-a="link" title="Link ⌘K-on-text">↗</button>'
+    + '<button data-a="link" title="Link">↗</button>'
+    + '<label class="cswatch" title="Text color"><input type="color" value="#7c3aed"></label>'
+    + '<button data-a="hilite" title="Highlight"><span class="hl">H</span></button>'
     + '<span class="bsep"></span>'
     + '<button data-a="ai" class="accent">✦ Ask AI</button>'
     + '<button data-a="chat">+ Chat</button>';
   document.body.appendChild(bubble);
+  const colorInput = bubble.querySelector(".cswatch input") as HTMLInputElement;
+  colorInput?.addEventListener("input", () => { if (editor) { editor.chain().focus().setColor(colorInput.value).run(); markEdited(); refreshBubble(); } });
   const hideBubble = () => bubble.classList.remove("show");
   bubble.addEventListener("mousedown", (e) => e.preventDefault()); // don't blur / collapse the selection
   bubble.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
@@ -538,13 +603,19 @@ if (note && mount) {
     if (a === "bold") editor.chain().focus().toggleBold().run();
     else if (a === "italic") editor.chain().focus().toggleItalic().run();
     else if (a === "code") editor.chain().focus().toggleCode().run();
+    else if (a === "hilite") editor.chain().focus().toggleHighlight({ color: "#fde047" }).run();
     else if (a === "link") { const prev = editor.getAttributes("link").href || ""; const url = window.prompt("Link URL:", prev); if (url === null) return; if (url === "") editor.chain().focus().extendMarkRange("link").unsetLink().run(); else editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run(); }
     else if (a === "ai") { hideBubble(); openCmdk(); return; }
     else if (a === "chat") { hideBubble(); addSelToChat(); return; }
     markEdited(); // format buttons are programmatic edits — arm the save (no beforeinput fires)
     refreshBubble();
   }));
-  function refreshBubble() { if (!editor) return; ["bold", "italic", "code"].forEach((m) => { const btn = bubble.querySelector('[data-a="' + m + '"]'); if (btn) btn.classList.toggle("on", editor!.isActive(m)); }); }
+  function refreshBubble() {
+    if (!editor) return;
+    ["bold", "italic", "code"].forEach((m) => { const btn = bubble.querySelector('[data-a="' + m + '"]'); if (btn) btn.classList.toggle("on", editor!.isActive(m)); });
+    const hb = bubble.querySelector('[data-a="hilite"]'); if (hb) hb.classList.toggle("on", editor!.isActive("highlight"));
+    const cur = editor.getAttributes("textStyle").color; if (cur && colorInput) colorInput.value = cur;
+  }
   function updateBubble() {
     if (!editor || !editor.isFocused) { hideBubble(); return; }
     const selState: any = editor.state.selection;
