@@ -17,12 +17,29 @@ const W = window as any;
 const note: Note | null = W.__NOTE__ && W.__NOTE__.file ? W.__NOTE__ : null;
 const ROOT: string = (W.__NOTE__ && W.__NOTE__.root) || "";
 
+// Strip active content (inline on* handlers, script/iframe/object/embed, javascript:
+// URLs) before any HTML reaches a live DOM. Parsed into an inert <template>, so this
+// itself never executes. Imported note content is untrusted.
+function stripActive(html: string): string {
+  const t = document.createElement("template"); t.innerHTML = html || "";
+  t.content.querySelectorAll("script,iframe,object,embed").forEach((e) => e.remove());
+  t.content.querySelectorAll("*").forEach((el) => {
+    Array.from((el as HTMLElement).attributes).forEach((a) => {
+      const n = a.name.toLowerCase();
+      if (n.startsWith("on")) el.removeAttribute(a.name);
+      else if ((n === "href" || n === "src" || n === "xlink:href") && /^\s*javascript:/i.test(a.value)) el.removeAttribute(a.name);
+    });
+  });
+  return t.innerHTML;
+}
+function escapeAttr(s: any): string { return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
 // ============================ custom nodes ============================
-const richMd = { markdown: { serialize(state: any, node: any) { state.write(node.attrs.html || ""); state.closeBlock(node); } } };
+const richMd = { markdown: { serialize(state: any, node: any) { state.write("<div data-rich-block>" + (node.attrs.html || "") + "</div>"); state.closeBlock(node); } } };
 
 const RichBlock = Node.create({
   name: "richBlock", group: "block", atom: true, selectable: true, draggable: true,
-  addAttributes() { return { html: { default: "", parseHTML: (el: any) => el.innerHTML, renderHTML: () => ({}) } }; },
+  addAttributes() { return { html: { default: "", parseHTML: (el: any) => stripActive(el.innerHTML), renderHTML: () => ({}) } }; },
   addStorage() { return richMd; },
   parseHTML() { return [{ tag: "div[data-rich-block]" }]; },
   renderHTML({ node }: any) { const d = document.createElement("div"); d.setAttribute("data-rich-block", ""); d.innerHTML = node.attrs.html; return d; },
@@ -44,7 +61,7 @@ function appHead(title: string, onSettings?: () => void): HTMLElement {
 const CalendarBlock = Node.create({
   name: "calendarBlock", group: "block", atom: true, selectable: true, draggable: true,
   addAttributes() { return { src: { default: "" } }; },
-  addStorage() { return { markdown: { serialize(state: any, node: any) { state.write(`<div data-calendar data-src="${node.attrs.src}"></div>`); state.closeBlock(node); } } }; },
+  addStorage() { return { markdown: { serialize(state: any, node: any) { state.write(`<div data-calendar data-src="${escapeAttr(node.attrs.src)}"></div>`); state.closeBlock(node); } } }; },
   parseHTML() { return [{ tag: "div[data-calendar]", getAttrs: (el: any) => ({ src: el.getAttribute("data-src") || "" }) }]; },
   renderHTML({ node }: any) { return ["div", { "data-calendar": "", "data-src": node.attrs.src }]; },
   addNodeView() {
@@ -65,7 +82,7 @@ const CalendarBlock = Node.create({
 const ClockBlock = Node.create({
   name: "clockBlock", group: "block", atom: true, selectable: true, draggable: true,
   addAttributes() { return { tz: { default: "local" } }; },
-  addStorage() { return { markdown: { serialize(state: any, node: any) { state.write(`<div data-clock data-tz="${node.attrs.tz}"></div>`); state.closeBlock(node); } } }; },
+  addStorage() { return { markdown: { serialize(state: any, node: any) { state.write(`<div data-clock data-tz="${escapeAttr(node.attrs.tz)}"></div>`); state.closeBlock(node); } } }; },
   parseHTML() { return [{ tag: "div[data-clock]", getAttrs: (el: any) => ({ tz: el.getAttribute("data-tz") || "local" }) }]; },
   renderHTML({ node }: any) { return ["div", { "data-clock": "", "data-tz": node.attrs.tz }]; },
   addNodeView() {
@@ -84,7 +101,7 @@ const ClockBlock = Node.create({
 // ============================ html load/save (lossless) ============================
 const PROSE_TAGS = new Set(["H1","H2","H3","H4","H5","H6","P","UL","OL","BLOCKQUOTE","PRE","HR","TABLE"]);
 let htmlTemplate: string | null = null; // full original doc with %%NOTE_BODY%% where editable content goes
-const BODY_TOKEN = "%%NOTE_BODY%%";
+let BODY_TOKEN = "%%NOTE_BODY%%"; // reassigned per-load to a collision-free value (see prepareHtml)
 
 function prepareHtml(raw: string): string {
   const doc = new DOMParser().parseFromString(raw, "text/html");
@@ -114,7 +131,13 @@ function prepareHtml(raw: string): string {
     wrap.innerHTML = inner; container.innerHTML = ""; container.appendChild(wrap);
   }
   const content = container.innerHTML;
-  container.innerHTML = BODY_TOKEN;
+  // Pick a token guaranteed not to already exist in the doc (e.g. a literal
+  // "%%NOTE_BODY%%" sitting in a head comment), so serialize() splices the body into
+  // exactly the right place — never the head, never a stray match.
+  let tok = BODY_TOKEN, n = 0;
+  while (raw.includes(tok)) tok = "%%NOTE_BODY_" + (++n) + "%%";
+  BODY_TOKEN = tok;
+  container.innerHTML = tok;
   htmlTemplate = "<!DOCTYPE html>\n" + doc.documentElement.outerHTML;
   return content;
 }
@@ -127,7 +150,7 @@ if (note && mount) {
   const extensions: any[] = [StarterKit, RichBlock, CalendarBlock, ClockBlock];
   let content = note.content;
   if (note.format === "md") extensions.push(Markdown.configure({ html: true, linkify: true }));
-  else if (note.format === "html") content = prepareHtml(note.content);
+  else if (note.format === "html") { try { content = prepareHtml(note.content); } catch { htmlTemplate = null; content = note.content; } }
 
   editor = new Editor({ element: mount, extensions, content, autofocus: "end" });
   W.__editor = editor;
@@ -137,7 +160,7 @@ if (note && mount) {
     if (!editor) return "";
     if (note.format === "md") { const s: any = editor.storage; return s.markdown && s.markdown.getMarkdown ? s.markdown.getMarkdown() : editor.getText(); }
     const bodyHtml = editor.getHTML();
-    if (htmlTemplate) return htmlTemplate.replace(BODY_TOKEN, bodyHtml);
+    if (htmlTemplate) { const i = htmlTemplate.indexOf(BODY_TOKEN); return i < 0 ? htmlTemplate : htmlTemplate.slice(0, i) + bodyHtml + htmlTemplate.slice(i + BODY_TOKEN.length); }
     return `<!DOCTYPE html>\n<html><head><meta charset="utf-8"></head><body><article>\n${bodyHtml}\n</article></body></html>\n`;
   };
 
@@ -147,37 +170,42 @@ if (note && mount) {
   const statusEl = document.getElementById("savestatus");
   const setStatus = (cls: string, label: string) => { if (!statusEl) return; statusEl.className = "status " + cls; const l = statusEl.querySelector(".lbl"); if (l) l.textContent = label; };
 
-  // -------- save system: sequence-guarded, flushable --------
+  // -------- save system: single-flight chain, flushable --------
   let lastSaved = serialize();
   let dirty = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let saving = false;
-  let saveSeq = 0;
-  async function doSave(): Promise<boolean> {
-    const out = serialize();
-    if (out === lastSaved) { dirty = false; setStatus("saved", "Saved"); return true; }
-    const seq = ++saveSeq; saving = true; setStatus("saving", "Saving…");
-    try {
-      const r = await fetch("/save", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ file: note.file, content: out }) }).then((x) => x.json());
-      saving = false;
-      if (seq !== saveSeq) return true; // a newer save superseded this one
-      if (r.ok) { lastSaved = out; dirty = false; setStatus("saved", "Saved"); return true; }
-      setStatus("error", "Save failed — retry"); return false;
-    } catch { saving = false; if (seq === saveSeq) setStatus("error", "Save failed — retry"); return false; }
+  let saveChain: Promise<boolean> = Promise.resolve(true);
+  // One save at a time: chain so a new save never races a /save already in flight
+  // (both POST the same file; concurrent writes could otherwise land out of order).
+  function actualSave(): Promise<boolean> {
+    return (async () => {
+      const out = serialize();
+      if (out === lastSaved) { dirty = false; setStatus("saved", "Saved"); return true; }
+      setStatus("saving", "Saving…");
+      try {
+        const r = await fetch("/save", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ file: note.file, content: out }) }).then((x) => x.json());
+        if (r.ok) { lastSaved = out; if (serialize() === out) { dirty = false; setStatus("saved", "Saved"); } return true; } // stay dirty if edited mid-save
+        setStatus("error", "Save failed — retry"); return false;
+      } catch { setStatus("error", "Save failed — retry"); return false; }
+    })();
   }
+  function doSave(): Promise<boolean> { saveChain = saveChain.then(actualSave, actualSave); return saveChain; }
   function scheduleSave() { dirty = true; setStatus("dirty", "Unsaved"); clearTimeout(timer); timer = setTimeout(doSave, 600); }
-  async function flushSave() { clearTimeout(timer); if (dirty || saving) await doSave(); }
+  async function flushSave(): Promise<boolean> { clearTimeout(timer); if (dirty) return await doSave(); await saveChain; return true; }
   editor.on("update", scheduleSave);
   setStatus("saved", "Saved");
 
-  // flush before leaving (covers cmd+W / refresh)
-  window.addEventListener("beforeunload", () => {
+  // flush before leaving (covers cmd+W / refresh). sendBeacon caps payload (~64KB in
+  // some engines); if it refuses, block the unload so the user keeps their edits.
+  window.addEventListener("beforeunload", (e) => {
     if (!dirty) return;
     const out = serialize();
-    try { navigator.sendBeacon("/save", new Blob([JSON.stringify({ file: note.file, content: out })], { type: "application/json" })); } catch {}
+    let sent = false;
+    try { sent = navigator.sendBeacon("/save", new Blob([JSON.stringify({ file: note.file, content: out })], { type: "application/json" })); } catch {}
+    if (!sent) { e.preventDefault(); (e as any).returnValue = ""; }
   });
-  // navigate helper: always flush first so edits in the debounce window aren't lost
-  async function go(href: string) { await flushSave(); location.href = href; }
+  // navigate helper: flush first; if the save fails, stay put so edits aren't lost
+  async function go(href: string) { const ok = await flushSave(); if (!ok) { flash("save failed — staying so you don't lose edits", false); return; } location.href = href; }
 
   // -------- placeholder on empty doc --------
   const updatePlaceholder = () => {
@@ -202,8 +230,12 @@ if (note && mount) {
   function openCmdk() {
     if (!editor) return;
     const sel: any = editor.state.selection;
-    if (sel.node && sel.node.type.name === "richBlock") { cmdkTarget = { mode: "rich", html: sel.node.attrs.html }; cmdkHint.textContent = "rewrite this rich block — e.g. “make the grid 6×6”"; }
-    else { const text = editor.state.doc.textBetween(sel.from, sel.to, " "); cmdkTarget = { mode: "prose", from: sel.from, to: sel.to, text }; cmdkHint.textContent = text ? ('"' + text.slice(0, 56) + (text.length > 56 ? "…" : "") + '"') : "insert at cursor"; }
+    if (sel.node && sel.node.type.name === "richBlock") { cmdkTarget = { mode: "rich", html: sel.node.attrs.html, pos: sel.from }; cmdkHint.textContent = "rewrite this rich block — e.g. “make the grid 6×6”"; }
+    else {
+      const text = editor.state.doc.textBetween(sel.from, sel.to, " ");
+      if (text) { cmdkTarget = { mode: "prose", from: sel.from, to: sel.to, text }; cmdkHint.textContent = '"' + text.slice(0, 56) + (text.length > 56 ? "…" : "") + '"'; }
+      else { cmdkTarget = { mode: "author", from: sel.from, to: sel.to }; cmdkHint.textContent = "add — a paragraph, or a diagram / table / chart (AI builds the HTML)"; }
+    }
     let left = 60, top = 130;
     const s = window.getSelection();
     if (s && s.rangeCount && String(s)) { const r = s.getRangeAt(0).getBoundingClientRect(); if (r.width || r.height) { left = r.left; top = r.bottom + window.scrollY + 8; } }
@@ -224,18 +256,28 @@ if (note && mount) {
     cmdkInput.disabled = true; cmdkHint.textContent = "thinking with your Claude…";
     const prompt = t.mode === "rich"
       ? "You are editing one rich HTML block inside a note. Rewrite its INNER HTML per the instruction. Output ONLY the resulting inner HTML — no explanation, no code fences.\n\nInstruction: " + intent + "\n\nCurrent inner HTML:\n" + t.html
-      : "You are editing a note. Rewrite the selected text per the instruction. Output ONLY the replacement as plain prose — no markdown, no fences, no explanation. Use the rest of the note as context.\n\nInstruction: " + intent + "\n\nSelected text:\n" + (t.text || "(none — generate new text to insert)") + "\n\nFull note for context:\n" + docContext().slice(0, 8000);
+      : t.mode === "author"
+      ? "You are co-authoring a note; the cursor is at an empty spot. Decide the best format for the request:\n- If it's text/prose, output plain prose (no markdown syntax, no fences).\n- If it's visual or structured (diagram, table, chart, grid, timeline, flow, comparison, etc.), output a SELF-CONTAINED HTML fragment: inline styles and inline SVG are fine; NO <script>, NO external URLs, NO code fences.\nOutput ONLY the content.\n\nInstruction: " + intent + "\n\nFull note for context:\n" + docContext().slice(0, 8000)
+      : "You are editing a note. Rewrite the selected text per the instruction. Output ONLY the replacement as plain prose — no markdown, no fences, no explanation. Use the rest of the note as context.\n\nInstruction: " + intent + "\n\nSelected text:\n" + t.text + "\n\nFull note for context:\n" + docContext().slice(0, 8000);
     try {
       const r = await fetch("/rewrite", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt, mode: t.mode }) }).then((x) => x.json());
       if (!r.ok || !r.text) { cmdkInput.disabled = false; cmdkHint.textContent = "failed: " + (r.error || "empty"); return; }
       if (t.mode === "rich") {
         if (r.text.indexOf("<") < 0) { cmdkInput.disabled = false; cmdkHint.textContent = "AI didn't return HTML — try again"; return; }
-        const pos = findRichPos(t.html); // re-find by content; tolerant of position drift
+        // trust the captured pos if it still points at this block; else re-find by content
+        let pos: number | null = t.pos;
+        const at = pos == null ? null : editor.state.doc.nodeAt(pos);
+        if (!at || at.type.name !== "richBlock" || at.attrs.html !== t.html) pos = findRichPos(t.html);
         if (pos == null) { cmdkInput.disabled = false; cmdkHint.textContent = "block moved — try again"; return; }
         const node = editor.state.doc.nodeAt(pos);
-        editor.chain().command(({ tr }: any) => { tr.setNodeMarkup(pos, undefined, { ...(node ? node.attrs : {}), html: r.text }); return true; }).run(); // undoable via cmd+Z
+        editor.chain().command(({ tr }: any) => { tr.setNodeMarkup(pos as number, undefined, { ...(node ? node.attrs : {}), html: r.text }); return true; }).run(); // undoable via cmd+Z
+      } else if (t.mode === "author") {
+        const at = Math.min(t.from, editor.state.doc.content.size);
+        if (r.html) editor.chain().focus().insertContentAt(at, { type: "richBlock", attrs: { html: r.text } }).run();
+        else editor.chain().focus().insertContentAt(at, r.text).run();
       } else {
-        editor.chain().focus().insertContentAt({ from: t.from, to: t.to }, r.text).run();
+        const to = Math.min(t.to, editor.state.doc.content.size); const from = Math.min(t.from, to);
+        editor.chain().focus().insertContentAt({ from, to }, r.text).run();
       }
       closeCmdk(); flash("rewritten → saved");
     } catch { cmdkInput.disabled = false; cmdkHint.textContent = "failed"; }
@@ -302,8 +344,10 @@ if (note && mount) {
   async function loadNotes() { try { const { files } = await fetch("/list?dir=" + encodeURIComponent(ROOT)).then((r) => r.json()); allNotes = files || []; renderSidebar(); } catch { renderSidebar(); } }
   async function newNote() {
     const name = window.prompt("New note name:"); if (!name) return;
-    const clean = name.replace(/[^a-zA-Z0-9 _-]/g, "").trim(); if (!clean) { flash("invalid name", false); return; }
-    const path = ROOT + "/" + clean + (/\.html?$/i.test(name) ? "" : ".md");
+    const wantsHtml = /\.html?$/i.test(name.trim()); // decide ext from raw input…
+    const clean = name.replace(/\.[a-z0-9]+$/i, "").replace(/[^a-zA-Z0-9 _-]/g, "").trim(); // …then strip the ext before cleaning so the dot doesn't get eaten
+    if (!clean) { flash("invalid name", false); return; }
+    const path = ROOT + "/" + clean + (wantsHtml ? ".html" : ".md");
     const r = await fetch("/create", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ file: path, content: "# " + clean + "\n\n" }) }).then((x) => x.json());
     if (!r.ok) { flash(r.error || "couldn't create", false); return; }
     go("/?file=" + encodeURIComponent(path));
