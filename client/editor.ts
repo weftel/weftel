@@ -169,6 +169,89 @@ const TaskInputRule = Extension.create({
   },
 });
 
+// Slash menu. Cross-references into the main scope (Ask AI → cmd+K, calendar prompt)
+// go through this hooks object, populated once the editor + helpers exist.
+const slashHooks: { askAI?: () => void; insertEmbed?: (k: string) => void } = {};
+type SlashItem = { title: string; group: string; hint?: string; aliases?: string; run: (editor: any, range: any) => void };
+const del = (editor: any, range: any) => editor.chain().focus().deleteRange(range);
+const SLASH_ITEMS: SlashItem[] = [
+  { title: "Text", group: "Writing", aliases: "paragraph body", run: (e, r) => del(e, r).setNode("paragraph").run() },
+  { title: "Heading 1", group: "Writing", hint: "#", aliases: "title h1", run: (e, r) => del(e, r).setNode("heading", { level: 1 }).run() },
+  { title: "Heading 2", group: "Writing", hint: "##", aliases: "h2 subtitle", run: (e, r) => del(e, r).setNode("heading", { level: 2 }).run() },
+  { title: "Heading 3", group: "Writing", hint: "###", aliases: "h3", run: (e, r) => del(e, r).setNode("heading", { level: 3 }).run() },
+  { title: "Bullet list", group: "Writing", hint: "-", aliases: "unordered ul", run: (e, r) => del(e, r).toggleBulletList().run() },
+  { title: "Numbered list", group: "Writing", hint: "1.", aliases: "ordered ol", run: (e, r) => del(e, r).toggleOrderedList().run() },
+  { title: "To-do", group: "Writing", hint: "[]", aliases: "task checkbox todo", run: (e, r) => del(e, r).toggleList("taskList", "taskItem").run() },
+  { title: "Quote", group: "Writing", hint: ">", aliases: "blockquote", run: (e, r) => del(e, r).toggleBlockquote().run() },
+  { title: "Callout", group: "Writing", aliases: "info note admonition", run: (e, r) => del(e, r).insertContent({ type: "callout", attrs: { kind: "info" }, content: [{ type: "paragraph" }] }).run() },
+  { title: "Table", group: "Writing", aliases: "grid", run: (e, r) => del(e, r).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
+  { title: "Code block", group: "Writing", hint: "```", aliases: "pre monospace", run: (e, r) => del(e, r).toggleCodeBlock().run() },
+  { title: "Divider", group: "Writing", hint: "---", aliases: "hr rule separator", run: (e, r) => del(e, r).setHorizontalRule().run() },
+  { title: "Rich HTML block", group: "Embeds", aliases: "html custom design", run: (e, r) => { del(e, r).run(); slashHooks.insertEmbed?.("rich"); } },
+  { title: "Calendar", group: "Embeds", aliases: "gcal google schedule", run: (e, r) => { del(e, r).run(); slashHooks.insertEmbed?.("calendar"); } },
+  { title: "Clock", group: "Embeds", aliases: "time live", run: (e, r) => { del(e, r).run(); slashHooks.insertEmbed?.("clock"); } },
+  { title: "Ask AI to write…", group: "AI", aliases: "generate cmdk diagram", run: (e, r) => { del(e, r).run(); slashHooks.askAI?.(); } },
+];
+function filterSlash(query: string): SlashItem[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return SLASH_ITEMS;
+  return SLASH_ITEMS.filter((it) => (it.title + " " + (it.aliases || "")).toLowerCase().includes(q));
+}
+const SlashMenu = Extension.create({
+  name: "slashMenu",
+  addProseMirrorPlugins() {
+    return [Suggestion({
+      editor: this.editor,
+      char: "/",
+      startOfLine: false,
+      // only trigger at the start of a block or after whitespace, so "6/5" or "and/or" don't pop the menu
+      allow: ({ state, range }: any) => {
+        const before = state.doc.textBetween(Math.max(0, range.from - 1), range.from, "\n", "\n");
+        return before === "" || /\s/.test(before);
+      },
+      command: ({ editor, range, props }: any) => props.run(editor, range),
+      items: ({ query }: any) => filterSlash(query),
+      render: () => {
+        let el: HTMLElement | null = null; let items: SlashItem[] = []; let sel = 0; let pick: ((i: SlashItem) => void) | null = null;
+        const destroy = () => { el?.remove(); el = null; };
+        const paint = () => {
+          if (!el) return;
+          if (!items.length) { el.innerHTML = '<div class="slash-empty">No matches</div>'; return; }
+          let html = ""; let lastGroup = "";
+          items.forEach((it, i) => {
+            if (it.group !== lastGroup) { html += '<div class="slash-group">' + it.group + "</div>"; lastGroup = it.group; }
+            html += '<div class="slash-item' + (i === sel ? " sel" : "") + '" data-i="' + i + '"><span class="t">' + it.title + "</span>" + (it.hint ? '<span class="k">' + it.hint + "</span>" : "") + "</div>";
+          });
+          el.innerHTML = html;
+          el.querySelectorAll(".slash-item").forEach((n) => {
+            n.addEventListener("mousedown", (ev) => { ev.preventDefault(); const i = Number((n as HTMLElement).dataset.i); if (items[i] && pick) pick(items[i]); });
+            n.addEventListener("mousemove", () => { sel = Number((n as HTMLElement).dataset.i); paint(); });
+          });
+          const cur = el.querySelector(".slash-item.sel"); if (cur) (cur as HTMLElement).scrollIntoView({ block: "nearest" });
+        };
+        const place = (rect: any) => { if (!el || !rect) return; const r = rect(); if (!r) return; el.style.left = Math.min(r.left, window.innerWidth - 280) + "px"; el.style.top = (r.bottom + window.scrollY + 6) + "px"; };
+        return {
+          onStart: (props: any) => {
+            items = props.items; sel = 0; pick = props.command;
+            el = document.createElement("div"); el.className = "slash"; document.body.appendChild(el);
+            paint(); place(props.clientRect);
+          },
+          onUpdate: (props: any) => { items = props.items; pick = props.command; if (sel >= items.length) sel = 0; paint(); place(props.clientRect); },
+          onKeyDown: (props: any) => {
+            const k = props.event.key;
+            if (k === "ArrowDown") { sel = (sel + 1) % Math.max(items.length, 1); paint(); return true; }
+            if (k === "ArrowUp") { sel = (sel - 1 + items.length) % Math.max(items.length, 1); paint(); return true; }
+            if (k === "Enter") { if (items[sel] && pick) pick(items[sel]); return true; }
+            if (k === "Escape") { destroy(); return true; }
+            return false;
+          },
+          onExit: destroy,
+        };
+      },
+    })];
+  },
+});
+
 // ============================ html load/save (lossless) ============================
 const PROSE_TAGS = new Set(["H1","H2","H3","H4","H5","H6","P","UL","OL","BLOCKQUOTE","PRE","HR","TABLE"]);
 let htmlTemplate: string | null = null; // full original doc with %%NOTE_BODY%% where editable content goes
@@ -224,6 +307,7 @@ if (note && mount) {
     Table.configure({ resizable: true }), TableRow, TableHeader, TableCell,
     Callout,
     RichBlock, CalendarBlock, ClockBlock,
+    SlashMenu,
     Placeholder.configure({ placeholder: ({ node }: any) => (node.type.name === "heading" ? "Heading" : "Write, or press “/” for commands…"), showOnlyCurrent: true }),
   ];
   let content = note.content;
@@ -455,6 +539,9 @@ if (note && mount) {
   });
   document.getElementById("askchip")?.addEventListener("click", openCmdk);
   document.getElementById("chatchip")?.addEventListener("click", toggleChat);
+  // wire slash-menu cross-references now that openCmdk + insertBlock exist
+  slashHooks.askAI = () => openCmdk();
+  slashHooks.insertEmbed = (k: string) => insertBlock(k);
   document.getElementById("insertchip")?.addEventListener("click", () => {
     const k = window.prompt("Insert block: type 'calendar', 'clock', or 'rich'", "clock");
     if (k) insertBlock(k.trim().toLowerCase());

@@ -207,6 +207,13 @@ function styles(): string {
   .cmdk.show{display:block}
   .cmdk input{width:100%;border:none;outline:none;background:transparent;color:var(--text);font-size:14px;padding:6px}
   .cmdk-hint{font-size:11.5px;color:var(--muted);padding:3px 6px 1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .slash{position:absolute;width:256px;max-height:320px;overflow:auto;background:var(--surface);border:1px solid var(--border-strong);border-radius:10px;box-shadow:0 14px 40px rgba(0,0,0,.22);padding:6px;z-index:52}
+  .slash-group{font-family:ui-monospace,Menlo,monospace;font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--subtle);padding:7px 9px 3px}
+  .slash-item{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:7px;cursor:pointer;font-size:13.5px}
+  .slash-item .t{flex:1}
+  .slash-item .k{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--accent-ink);background:var(--accent-tint);border-radius:3px;padding:0 5px}
+  .slash-item.sel{background:var(--accent-tint)}
+  .slash-empty{padding:10px 12px;font-size:12.5px;color:var(--muted)}
   .switcher{position:fixed;inset:0;display:none;align-items:flex-start;justify-content:center;background:rgba(0,0,0,.28);z-index:60}
   .switcher.show{display:flex}
   .switcher .box{margin-top:12vh;width:min(560px,92vw);background:var(--surface);border:1px solid var(--border-strong);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden}
