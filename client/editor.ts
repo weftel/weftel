@@ -8,9 +8,17 @@
 // top-level elements wrapped, never flattened); sequence-guarded autosave with a
 // status pill, flush-on-navigate, and beforeunload flush; hardened cmd+K.
 //
-import { Editor, Node } from "@tiptap/core";
+import { Editor, Node, Extension, InputRule } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "tiptap-markdown";
+import TaskList from "@tiptap/extension-task-list";
+import TaskItem from "@tiptap/extension-task-item";
+import { Table } from "@tiptap/extension-table";
+import { TableRow } from "@tiptap/extension-table-row";
+import { TableHeader } from "@tiptap/extension-table-header";
+import { TableCell } from "@tiptap/extension-table-cell";
+import Placeholder from "@tiptap/extension-placeholder";
+import Suggestion from "@tiptap/suggestion";
 
 type Note = { file: string; format: string; content: string; root: string };
 const W = window as any;
@@ -115,6 +123,52 @@ const ClockBlock = Node.create({
   },
 });
 
+// Callout: a styled, editable container (info/warn/tip). Holds real prose, so it's a
+// content node, not an atom. Serializes to an HTML <div data-callout> with a blank line
+// before/after the inner content so markdown-it re-parses the inside as markdown on load
+// (the div wrapper round-trips via parseHTML).
+const CALLOUT_KINDS: Record<string, { icon: string; label: string }> = {
+  info: { icon: "ℹ", label: "Info" }, tip: { icon: "✦", label: "Tip" }, warn: { icon: "▲", label: "Warning" },
+};
+const Callout = Node.create({
+  name: "callout", group: "block", content: "block+", defining: true,
+  addAttributes() { return { kind: { default: "info", parseHTML: (el: any) => el.getAttribute("data-kind") || "info", renderHTML: (a: any) => ({ "data-kind": a.kind }) } }; },
+  addStorage() {
+    return { markdown: { serialize(state: any, node: any) {
+      state.write(`<div data-callout data-kind="${escapeAttr(node.attrs.kind)}">\n\n`);
+      state.renderContent(node);
+      state.write(`</div>`); state.closeBlock(node);
+    } } };
+  },
+  parseHTML() { return [{ tag: "div[data-callout]" }]; },
+  renderHTML({ node, HTMLAttributes }: any) { return ["div", { ...HTMLAttributes, "data-callout": "", class: "callout callout-" + node.attrs.kind }, 0]; },
+  addNodeView() {
+    return ({ node }: any) => {
+      const dom = document.createElement("div"); dom.className = "callout callout-" + node.attrs.kind; dom.setAttribute("data-callout", ""); dom.setAttribute("data-kind", node.attrs.kind);
+      const icon = document.createElement("div"); icon.className = "callout-icon"; icon.contentEditable = "false"; icon.textContent = (CALLOUT_KINDS[node.attrs.kind] || CALLOUT_KINDS.info).icon;
+      const content = document.createElement("div"); content.className = "callout-body";
+      dom.appendChild(icon); dom.appendChild(content);
+      return { dom, contentDOM: content };
+    };
+  },
+});
+
+// Markdown-style shortcuts for to-dos: "[] ", "[ ] ", or "[x] " at the start of a line
+// turns the line into a checklist item.
+const TaskInputRule = Extension.create({
+  name: "taskInputRule",
+  addInputRules() {
+    return [new InputRule({
+      find: /^\[( |x|X)?\]\s$/,
+      handler: ({ state, range, match, chain }: any) => {
+        const checked = (match[1] || "").toLowerCase() === "x";
+        chain().deleteRange(range).toggleList("taskList", "taskItem").run();
+        if (checked) chain().updateAttributes("taskItem", { checked: true }).run();
+      },
+    })];
+  },
+});
+
 // ============================ html load/save (lossless) ============================
 const PROSE_TAGS = new Set(["H1","H2","H3","H4","H5","H6","P","UL","OL","BLOCKQUOTE","PRE","HR","TABLE"]);
 let htmlTemplate: string | null = null; // full original doc with %%NOTE_BODY%% where editable content goes
@@ -164,7 +218,14 @@ const mount = document.getElementById("editor");
 let editor: Editor | null = null;
 
 if (note && mount) {
-  const extensions: any[] = [StarterKit, RichBlock, CalendarBlock, ClockBlock];
+  const extensions: any[] = [
+    StarterKit,
+    TaskList, TaskItem.configure({ nested: true }), TaskInputRule,
+    Table.configure({ resizable: true }), TableRow, TableHeader, TableCell,
+    Callout,
+    RichBlock, CalendarBlock, ClockBlock,
+    Placeholder.configure({ placeholder: ({ node }: any) => (node.type.name === "heading" ? "Heading" : "Write, or press “/” for commands…"), showOnlyCurrent: true }),
+  ];
   let content = note.content;
   if (note.format === "md") extensions.push(Markdown.configure({ html: true, linkify: true }));
   else if (note.format === "html") { try { content = prepareHtml(note.content); } catch { htmlTemplate = null; content = note.content; } }
@@ -234,15 +295,7 @@ if (note && mount) {
   // navigate helper: flush first; if the save fails, stay put so edits aren't lost
   async function go(href: string) { const ok = await flushSave(); if (!ok) { flash("save failed — staying so you don't lose edits", false); return; } location.href = href; }
 
-  // -------- placeholder on empty doc --------
-  const updatePlaceholder = () => {
-    if (!editor) return;
-    const first = mount!.querySelector(".ProseMirror > p:first-child");
-    const empty = editor.isEmpty;
-    mount!.querySelectorAll(".ProseMirror > p.is-empty").forEach((e) => { e.classList.remove("is-empty"); });
-    if (empty && first) { first.classList.add("is-empty"); first.setAttribute("data-placeholder", "Type, or press ⌘K to ask AI…"); }
-  };
-  editor.on("update", updatePlaceholder); editor.on("create", updatePlaceholder); updatePlaceholder();
+  // placeholder is handled by the Placeholder extension (per-node, current line only)
 
   // ============================ cmd+K ============================
   const cmdk = document.createElement("div"); cmdk.className = "cmdk";

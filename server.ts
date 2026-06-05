@@ -156,7 +156,32 @@ function styles(): string {
   .main{flex:1;min-width:0}
   .doc{max-width:760px;margin:0 auto;padding:40px 32px 22vh}
   .ProseMirror{outline:none;min-height:60vh}
-  .ProseMirror p.is-empty:first-child::before{content:attr(data-placeholder);color:var(--subtle);float:left;height:0;pointer-events:none}
+  .ProseMirror .is-empty::before{content:attr(data-placeholder);color:var(--subtle);float:left;height:0;pointer-events:none}
+  /* to-dos */
+  .ProseMirror ul[data-type="taskList"]{list-style:none;margin:0 0 14px;padding:0}
+  .ProseMirror ul[data-type="taskList"] li{display:flex;align-items:flex-start;gap:9px;margin-bottom:5px}
+  .ProseMirror ul[data-type="taskList"] li>label{flex:none;margin-top:3px;user-select:none}
+  .ProseMirror ul[data-type="taskList"] li>div{flex:1 1 auto;min-width:0}
+  .ProseMirror ul[data-type="taskList"] li>div>p{margin:0}
+  .ProseMirror ul[data-type="taskList"] input[type=checkbox]{appearance:none;-webkit-appearance:none;width:16px;height:16px;border:1.5px solid var(--border-strong);border-radius:4px;cursor:pointer;position:relative;background:var(--surface);transition:background .12s,border-color .12s}
+  .ProseMirror ul[data-type="taskList"] input[type=checkbox]:checked{background:var(--accent);border-color:var(--accent)}
+  .ProseMirror ul[data-type="taskList"] input[type=checkbox]:checked::after{content:"✓";position:absolute;inset:0;color:#fff;font-size:11px;line-height:13px;text-align:center;font-weight:700}
+  .ProseMirror ul[data-type="taskList"] li[data-checked="true"]>div{color:var(--muted);text-decoration:line-through}
+  /* callouts */
+  .ProseMirror .callout{display:flex;gap:11px;margin:16px 0;padding:13px 15px;border-radius:9px;border:1px solid var(--border);background:var(--surface)}
+  .ProseMirror .callout-icon{flex:none;width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px;color:#fff;background:var(--accent)}
+  .ProseMirror .callout-body{flex:1 1 auto;min-width:0}.ProseMirror .callout-body>*{margin-bottom:6px}.ProseMirror .callout-body>*:last-child{margin-bottom:0}
+  .ProseMirror .callout-info{border-color:var(--accent-line);background:var(--accent-tint)}.ProseMirror .callout-info .callout-icon{background:var(--accent)}
+  .ProseMirror .callout-tip{border-color:rgba(26,157,99,.4);background:rgba(26,157,99,.08)}.ProseMirror .callout-tip .callout-icon{background:var(--win)}
+  .ProseMirror .callout-warn{border-color:rgba(194,121,10,.4);background:rgba(194,121,10,.08)}.ProseMirror .callout-warn .callout-icon{background:var(--warn)}
+  /* tables */
+  .ProseMirror table{border-collapse:collapse;margin:14px 0;width:100%;table-layout:fixed;overflow:hidden}
+  .ProseMirror table td,.ProseMirror table th{border:1px solid var(--border-strong);padding:7px 10px;vertical-align:top;position:relative;min-width:60px}
+  .ProseMirror table th{background:var(--code-bg);font-weight:600;text-align:left}
+  .ProseMirror table td>p,.ProseMirror table th>p{margin:0}
+  .ProseMirror table .selectedCell::after{content:"";position:absolute;inset:0;background:var(--accent-tint);pointer-events:none}
+  .ProseMirror table .column-resize-handle{position:absolute;right:-2px;top:0;bottom:0;width:4px;background:var(--accent);cursor:col-resize}
+  .ProseMirror .tableWrapper{overflow-x:auto}
   .ProseMirror h1{font-size:30px;letter-spacing:-.021em;margin:0 0 16px}.ProseMirror h2{font-size:21px;letter-spacing:-.012em;margin:28px 0 10px}.ProseMirror h3{font-size:17px;margin:22px 0 8px}
   .ProseMirror p{margin:0 0 14px}.ProseMirror ul,.ProseMirror ol{margin:0 0 14px 22px}.ProseMirror li{margin-bottom:4px}.ProseMirror li>p{margin:0}
   .ProseMirror a{color:var(--accent-ink);text-underline-offset:2px}
