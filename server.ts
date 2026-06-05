@@ -196,14 +196,39 @@ function styles(): string {
   .onboard p{color:var(--muted);margin-bottom:20px}
   .onboard .actions{display:flex;gap:10px;justify-content:center}
   .onboard button{font:inherit;font-size:14px;border-radius:8px;padding:9px 16px;cursor:pointer;border:1px solid var(--border-strong);background:var(--surface);color:var(--text)}
-  .onboard button.primary{background:var(--accent);border-color:var(--accent);color:#fff}`;
+  .onboard button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .chat{position:fixed;top:0;right:0;width:384px;max-width:92vw;height:100vh;background:var(--surface);border-left:1px solid var(--border);box-shadow:-10px 0 34px rgba(0,0,0,.08);display:flex;flex-direction:column;transform:translateX(102%);transition:transform .18s ease;z-index:55}
+  .chat.show{transform:none}
+  .chat-head{display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600}
+  .chat-head .spacer{flex:1}
+  .chat-head button{font:inherit;font-size:12px;color:var(--muted);background:transparent;border:1px solid var(--border);border-radius:6px;padding:3px 9px;cursor:pointer}
+  .chat-head button:hover{color:var(--text);border-color:var(--border-strong)}
+  .chat-log{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:12px}
+  .chat-empty{color:var(--subtle);font-size:12.5px;text-align:center;margin:auto;max-width:230px;line-height:1.5}
+  .chat-msg{font-size:13.5px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
+  .chat-msg.user{align-self:flex-end;background:var(--accent-tint);padding:8px 12px;border-radius:12px 12px 3px 12px;max-width:86%}
+  .chat-msg.assistant{align-self:flex-start;max-width:96%}
+  .chat-msg.thinking{color:var(--muted);font-style:italic}
+  .chat-msg .insert{margin-top:7px;font:inherit;font-size:11px;color:var(--accent-ink);background:var(--accent-tint);border:none;border-radius:6px;padding:3px 9px;cursor:pointer}
+  .chat-msg .insert:hover{filter:brightness(.97)}
+  .chat-foot{border-top:1px solid var(--border);padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+  .chat-sel{font-size:11.5px;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:6px 9px;display:none;gap:6px;align-items:flex-start}
+  .chat-sel.show{display:flex}
+  .chat-sel .x{margin-left:auto;cursor:pointer;color:var(--subtle);flex:none}
+  .chat-addsel{font:inherit;font-size:11.5px;color:var(--muted);background:transparent;border:1px dashed var(--border-strong);border-radius:7px;padding:5px 9px;cursor:pointer;align-self:flex-start}
+  .chat-addsel:hover{color:var(--accent-ink);border-color:var(--accent-line)}
+  .chat-row{display:flex;gap:8px;align-items:flex-end}
+  .chat-input{flex:1;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:9px;padding:9px 11px;font:inherit;font-size:13.5px;line-height:1.45;resize:none;outline:none;max-height:140px}
+  .chat-input:focus{border-color:var(--accent-line)}
+  .chat-send{font:inherit;font-size:13px;color:#fff;background:var(--accent);border:none;border-radius:8px;padding:9px 14px;cursor:pointer}
+  .chat-send:disabled{opacity:.5;cursor:default}`;
 }
 
 function shell(note: { file: string; format: string; content: string } | null): string {
   const title = escHtml(note ? basename(note.file).replace(NOTE_RE, "") : "note-editor");
   const json = note ? JSON.stringify({ ...note, root: ROOT }).replace(/</g, "\\u003c") : `{"root":${JSON.stringify(ROOT).replace(/</g, "\\u003c")}}`;
   const body = note
-    ? `<div class="bar"><span class="title" id="title">${title}</span><span class="badge">${note.format}</span><span class="spacer"></span><span class="status dirty" id="savestatus"><span class="dot"></span><span class="lbl">—</span></span><button class="chip" id="askchip"><kbd>⌘K</kbd> Ask AI</button><button class="chip" id="insertchip">+ Insert</button></div>
+    ? `<div class="bar"><span class="title" id="title">${title}</span><span class="badge">${note.format}</span><span class="spacer"></span><span class="status dirty" id="savestatus"><span class="dot"></span><span class="lbl">—</span></span><button class="chip" id="askchip"><kbd>⌘K</kbd> Ask AI</button><button class="chip" id="chatchip"><kbd>⌘L</kbd> Chat</button><button class="chip" id="insertchip">+ Insert</button></div>
   <div class="layout"><aside class="sidebar" id="sidebar"></aside><main class="main"><div id="editor" class="doc"></div></main></div>`
     : `<div class="onboard"><h1>Your notes, in HTML, with AI.</h1><p>Open a folder of markdown or HTML notes, or create your first one. Everything stays local, in your own files.</p><div class="actions"><button class="primary" id="ob-open">Open folder…</button><button id="ob-new">New note</button></div></div>`;
   return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>
@@ -275,6 +300,22 @@ Bun.serve({
           if (body.mode === "author" && /<[a-z][\s\S]*>/i.test(text)) html = true; // AI chose to author HTML
           if (html) text = safeRichHtml(text);
           return json({ ok: !!text, text, html });
+        } catch (e) { return json({ ok: false, error: String(e) }, 500); }
+      }
+      if (url.pathname === "/chat") {
+        try {
+          const msgs = Array.isArray(body.messages) ? body.messages : [];
+          const noteCtx = String(body.note || "").slice(0, 12000);
+          const sel = String(body.selection || "").slice(0, 6000);
+          const convo = msgs.map((m: any) => (m.role === "user" ? "User" : "Assistant") + ": " + String(m.content || "")).join("\n\n");
+          const prompt = "You are a writing co-author embedded in the user's local notes app. You can see the current note and, when provided, a selected excerpt. Be concise and concrete. When asked to draft or rewrite, output the result directly (it can be inserted into the note). No code fences unless showing code.\n\n=== CURRENT NOTE ===\n" + (noteCtx || "(empty)") + "\n\n" + (sel ? "=== SELECTED EXCERPT ===\n" + sel + "\n\n" : "") + "=== CONVERSATION ===\n" + convo + "\n\nAssistant:";
+          const proc = Bun.spawn(["claude", "-p", prompt], { stdout: "pipe", stderr: "pipe" });
+          const killer = setTimeout(() => { try { proc.kill(); } catch {} }, 90000);
+          const out = await new Response(proc.stdout).text();
+          const code = await proc.exited; clearTimeout(killer);
+          if (code !== 0) { const err = await new Response(proc.stderr).text(); return json({ ok: false, error: err.slice(0, 200) || `claude exit ${code}` }); }
+          const reply = out.trim();
+          return json({ ok: !!reply, reply });
         } catch (e) { return json({ ok: false, error: String(e) }, 500); }
       }
       return json({ ok: false, error: "unknown" }, 404);
