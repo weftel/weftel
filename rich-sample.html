@@ -1,26 +1,8 @@
 <!DOCTYPE html>
-<html><head><meta charset="utf-8">
+<html><head><meta charset="utf-8"><title>Rich sample</title>
 <style>
-.qkv-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:4px 0}
-.qkv-card{border:1px solid #3f3f46;border-radius:8px;padding:14px 16px;background:#18181b}
-.qkv-letter{font:600 24px ui-monospace,Menlo,monospace;color:#a78bfa}
-.qkv-name{font-size:13px;color:#a1a1aa;margin-top:2px}
-.mask-grid{display:grid;grid-template-columns:repeat(5,42px);gap:4px;margin:4px 0}
-.mask-cell{height:42px;display:flex;align-items:center;justify-content:center;border-radius:4px;font:600 14px ui-monospace,Menlo,monospace}
-.mask-cell.on{background:#2e1065;color:#a78bfa}
-.mask-cell.off{background:#18181b;color:#52525b}
-.rb-callout{border-left:3px solid #7c3aed;background:#18181b;padding:10px 16px;border-radius:0 6px 6px 0;color:#e4e4e7}
-.rb-callout strong{color:#fff}
-</style>
-</head>
-<body><article>
-<h1>Attention, from scratch</h1><p>This note mixes prose you edit fluidly with rich blocks the AI owns.</p><p>Try editing this paragraph: delete across lines, hit Enter for a new one, type freely. Then look at the grid below: it stays pixel-perfect, and you can't fumble it.</p><div data-rich-block=""><div class="qkv-grid">
-    <div class="qkv-card"><div class="qkv-letter">Q</div><div class="qkv-name">query</div></div>
-    <div class="qkv-card"><div class="qkv-letter">K</div><div class="qkv-name">key</div></div>
-    <div class="qkv-card"><div class="qkv-letter">V</div><div class="qkv-name">value</div></div></div></div><h2>Causal mask (edited)</h2><p>The mask is lower-triangular. This grid is a <strong>rich block</strong>: atomic <strong>[insert random text here as edit test and bold it]</strong>, AI-editable, never mangled by the editor.</p><div data-rich-block=""><div class="mask-grid">
-    <div class="mask-cell on">1</div><div class="mask-cell off">0</div><div class="mask-cell off">0</div><div class="mask-cell off">0</div><div class="mask-cell off">0</div>
-    <div class="mask-cell on">1</div><div class="mask-cell on">1</div><div class="mask-cell off">0</div><div class="mask-cell off">0</div><div class="mask-cell off">0</div>
-    <div class="mask-cell on">1</div><div class="mask-cell on">1</div><div class="mask-cell on">1</div><div class="mask-cell off">0</div><div class="mask-cell off">0</div>
-    <div class="mask-cell on">1</div><div class="mask-cell on">1</div><div class="mask-cell on">1</div><div class="mask-cell on">1</div><div class="mask-cell off">0</div>
-    <div class="mask-cell on">1</div><div class="mask-cell on">1</div><div class="mask-cell on">1</div><div class="mask-cell on">1</div><div class="mask-cell on">1</div></div></div><div data-rich-block=""><div class="rb-callout"><strong>Residuals are unconditional.</strong> The residual connections are just adds, not gated, not weighted.</div></div><p>And prose keeps flowing fluidly <strong><em>[edit with italics and bold]</em></strong> after the rich blocks. Edit me too.</p><h2>Heading 2 add</h2><p>Create list:</p><ol><li><p>list 1 item</p></li><li><p>2 item</p></li></ol><div data-calendar="" data-src="https://calendar.google.com/calendar/embed?src=benjamingonzales121102%40gmail.com&amp;ctz=America%2FLos_Angeles"></div><p>Done — I've layered all of your calendars onto the dynamic calendar above, not just your main one. Alongside Main, the embed now also pulls in block, Ben&amp;Ellie, benz@utexas.edu, Non-work, External, School, Partiful, Holidays in United States, and rahulusa11@gmail.com, each tacked onto the calendar block's URL as its own src parameter. They all render together in that one view above, color-coded so you can tell them apart at a glance. If you ever want to drop one back out, just tell me which and I'll strip its src parameter from the block.</p><h3>heading 3 insert</h3><p>all of this is below the dynamic calendar.</p><p></p>
-</article></body></html>
+.mask-grid{display:grid;grid-template-columns:repeat(3,42px);gap:4px;margin:4px 0}
+.mask-cell{height:42px;display:flex;align-items:center;justify-content:center;border-radius:4px;font:600 14px ui-monospace,Menlo,monospace;background:#2e1065;color:#a78bfa}
+</style></head>
+<body><article><h1>Rich sample</h1><p>A grid below. Select it and press cmd+K to have AI rewrite it.</p><div data-rich-block=""><div class="mask-grid"><div class="mask-cell">A</div><div class="mask-cell">A</div><div class="mask-cell">A</div></div></div><p>Prose after.</p></article>
+</body></html>
