@@ -190,6 +190,7 @@ if (note && mount) {
   // -------- save system: single-flight chain, flushable --------
   let lastSaved = serialize();
   let dirty = false;
+  let armed = false; // never auto-save until a genuine user edit — opening/normalizing a note must NOT rewrite it
   let timer: ReturnType<typeof setTimeout> | undefined;
   let saveChain: Promise<boolean> = Promise.resolve(true);
   // One save at a time: chain so a new save never races a /save already in flight
@@ -207,10 +208,19 @@ if (note && mount) {
     })();
   }
   function doSave(): Promise<boolean> { saveChain = saveChain.then(actualSave, actualSave); return saveChain; }
-  function scheduleSave() { dirty = true; setStatus("dirty", "Unsaved"); clearTimeout(timer); timer = setTimeout(doSave, 600); }
+  function scheduleSave() { if (!armed) return; dirty = true; setStatus("dirty", "Unsaved"); clearTimeout(timer); timer = setTimeout(doSave, 600); }
   async function flushSave(): Promise<boolean> { clearTimeout(timer); if (dirty) return await doSave(); await saveChain; return true; }
   editor.on("update", scheduleSave);
   setStatus("saved", "Saved");
+  // Arm auto-save only on real user input. Programmatic edits (cmd+K, chat insert, block
+  // insert) call markEdited() themselves. Load-time normalization fires neither, so just
+  // viewing a note never writes it back to disk.
+  function markEdited() { armed = true; scheduleSave(); }
+  const armNow = () => { armed = true; };
+  editor.view.dom.addEventListener("beforeinput", armNow);
+  editor.view.dom.addEventListener("paste", armNow);
+  editor.view.dom.addEventListener("cut", armNow);
+  editor.view.dom.addEventListener("drop", armNow);
 
   // flush before leaving (covers cmd+W / refresh). sendBeacon caps payload (~64KB in
   // some engines); if it refuses, block the unload so the user keeps their edits.
@@ -296,7 +306,7 @@ if (note && mount) {
         const to = Math.min(t.to, editor.state.doc.content.size); const from = Math.min(t.from, to);
         editor.chain().focus().insertContentAt({ from, to }, r.text).run();
       }
-      closeCmdk(); flash("rewritten → saved");
+      markEdited(); closeCmdk(); flash("rewritten → saved");
     } catch { cmdkInput.disabled = false; cmdkHint.textContent = "failed"; }
   });
 
@@ -338,7 +348,7 @@ if (note && mount) {
     const at = editor.state.doc.content.size;
     if (/<[a-z][\s\S]*>/i.test(text)) editor.chain().focus().insertContentAt(at, { type: "richBlock", attrs: { html: stripActive(text) } }).run();
     else editor.chain().focus().insertContentAt(at, text).run();
-    flash("inserted → saved");
+    markEdited(); flash("inserted → saved");
   }
   function renderChatMsg(role: string, content: string, opts: { thinking?: boolean; insertable?: boolean } = {}): HTMLElement {
     const empty = chatLog.querySelector(".chat-empty"); if (empty) empty.remove();
@@ -376,9 +386,9 @@ if (note && mount) {
   // ============================ insert menu ============================
   function insertBlock(kind: string) {
     if (!editor) return;
-    if (kind === "calendar") { const def = "https://calendar.google.com/calendar/embed?src=benjamingonzales121102%40gmail.com&ctz=America%2FLos_Angeles"; const url = window.prompt("Google Calendar embed URL:", def); if (url) editor.chain().focus().insertContent({ type: "calendarBlock", attrs: { src: url } }).run(); }
-    else if (kind === "clock") editor.chain().focus().insertContent({ type: "clockBlock", attrs: { tz: "local" } }).run();
-    else if (kind === "rich") editor.chain().focus().insertContent('<div data-rich-block><div style="padding:16px;border:1px dashed var(--border-strong);border-radius:8px;text-align:center;color:var(--muted)">empty rich block — ⌘K to fill it with AI</div></div>').run();
+    if (kind === "calendar") { const def = "https://calendar.google.com/calendar/embed?src=benjamingonzales121102%40gmail.com&ctz=America%2FLos_Angeles"; const url = window.prompt("Google Calendar embed URL:", def); if (url) { editor.chain().focus().insertContent({ type: "calendarBlock", attrs: { src: url } }).run(); markEdited(); } }
+    else if (kind === "clock") { editor.chain().focus().insertContent({ type: "clockBlock", attrs: { tz: "local" } }).run(); markEdited(); }
+    else if (kind === "rich") { editor.chain().focus().insertContent('<div data-rich-block><div style="padding:16px;border:1px dashed var(--border-strong);border-radius:8px;text-align:center;color:var(--muted)">empty rich block — ⌘K to fill it with AI</div></div>').run(); markEdited(); }
   }
 
   // ============================ chrome wiring ============================
