@@ -129,3 +129,23 @@ test("cmd+K 'a 2x2 table' yields a NATIVE EDITABLE table, not a frozen rich bloc
   const cellEditable = await page.evaluate(() => { const c = document.querySelector(".ProseMirror table td, .ProseMirror table th"); return !!c && !c.closest("[contenteditable=false]"); });
   expect(cellEditable).toBe(true);
 });
+
+// QUALITY BAR — expected to FAIL until the AI rebuild. A "2x2 pros/cons table" should be a
+// clean 2-column table, not today's 5-column mess with empty spacer cells. test.fail()
+// keeps the suite green now and flags us the instant AI quality crosses the bar (the test
+// will "pass unexpectedly" → time to delete this marker and the AI work is done).
+test("QUALITY (pending AI rebuild): cmd+K 2x2 table is a clean 2-column Pros/Cons", async ({ page }) => {
+  test.fail();
+  await openNote(page, "aitableq.md", "# t\n\n");
+  await clearAndFocus(page);
+  await page.keyboard.press("Meta+k");
+  const input = page.locator(".cmdk input");
+  await expect(input).toBeVisible();
+  await input.fill("a 2x2 pros and cons table");
+  await input.press("Enter");
+  await expect(page.locator(".ProseMirror table")).toBeVisible({ timeout: 60_000 });
+  const cols = await page.evaluate(() => { const r = document.querySelector(".ProseMirror table tr"); return r ? r.children.length : 0; });
+  expect(cols).toBeLessThanOrEqual(2); // a pros/cons table is 2 columns; today the AI emits ~5
+  await expect(page.locator(".ProseMirror table")).toContainText("Pros");
+  await expect(page.locator(".ProseMirror table")).toContainText("Cons");
+});
