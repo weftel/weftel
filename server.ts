@@ -11,9 +11,32 @@
 //
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, renameSync, mkdirSync, realpathSync } from "node:fs";
 import { resolve, extname, basename, dirname, sep, join } from "node:path";
+import { createHash } from "node:crypto";
+
+// AI record/replay cache — for deterministic e2e tests. AI_CACHE=<dir>: hash the prompt,
+// replay the cached response if present, else call claude once and save it. AI_OFFLINE=1:
+// error on a cache miss instead of calling out (CI with a committed cache).
+const AI_CACHE = process.env.AI_CACHE || "";
+const AI_OFFLINE = process.env.AI_OFFLINE === "1";
+async function runClaude(prompt: string, timeoutMs = 90000): Promise<{ ok: true; out: string } | { ok: false; error: string }> {
+  let cacheFile = "";
+  if (AI_CACHE) {
+    const h = createHash("sha256").update(prompt).digest("hex").slice(0, 40);
+    cacheFile = join(AI_CACHE, h + ".txt");
+    try { return { ok: true, out: readFileSync(cacheFile, "utf8") }; } catch {}
+    if (AI_OFFLINE) return { ok: false, error: "ai cache miss (AI_OFFLINE)" };
+  }
+  const proc = Bun.spawn(["claude", "-p", prompt], { stdout: "pipe", stderr: "pipe" });
+  const killer = setTimeout(() => { try { proc.kill(); } catch {} }, timeoutMs);
+  const out = await new Response(proc.stdout).text();
+  const code = await proc.exited; clearTimeout(killer);
+  if (code !== 0) { const err = await new Response(proc.stderr).text(); return { ok: false, error: err.slice(0, 200) || `claude exit ${code}` }; }
+  if (AI_CACHE && cacheFile) { try { mkdirSync(AI_CACHE, { recursive: true }); writeFileSync(cacheFile, out); } catch {} }
+  return { ok: true, out };
+}
 import sanitizeHtml from "sanitize-html";
 
-const PORT = 4321;
+const PORT = Number(process.env.PORT) || 4321;
 const ARG = resolve(process.argv[2] ?? "./sample.md");
 let ROOT: string;
 let LAUNCH_FILE: string | null;
@@ -338,13 +361,9 @@ Bun.serve({
       }
       if (url.pathname === "/rewrite") {
         try {
-          const proc = Bun.spawn(["claude", "-p", String(body.prompt || "")], { stdout: "pipe", stderr: "pipe" });
-          const killer = setTimeout(() => { try { proc.kill(); } catch {} }, 60000);
-          const out = await new Response(proc.stdout).text();
-          const code = await proc.exited;
-          clearTimeout(killer);
-          if (code !== 0) { const err = await new Response(proc.stderr).text(); return json({ ok: false, error: err.slice(0, 200) || `claude exit ${code}` }); }
-          let text = out.trim();
+          const r = await runClaude(String(body.prompt || ""), 60000);
+          if (!r.ok) return json({ ok: false, error: r.error });
+          let text = r.out.trim();
           const fence = text.match(/^```[a-zA-Z]*\n([\s\S]*?)\n```$/);
           if (fence) text = fence[1].trim();
           let html = body.mode === "rich";
@@ -360,12 +379,9 @@ Bun.serve({
           const sel = String(body.selection || "").slice(0, 6000);
           const convo = msgs.map((m: any) => (m.role === "user" ? "User" : "Assistant") + ": " + String(m.content || "")).join("\n\n");
           const prompt = "You are a writing co-author embedded in the user's local notes app. You can see the current note and, when provided, a selected excerpt. Be concise and concrete. When asked to draft or rewrite, output the result directly (it can be inserted into the note). No code fences unless showing code.\n\n=== CURRENT NOTE ===\n" + (noteCtx || "(empty)") + "\n\n" + (sel ? "=== SELECTED EXCERPT ===\n" + sel + "\n\n" : "") + "=== CONVERSATION ===\n" + convo + "\n\nAssistant:";
-          const proc = Bun.spawn(["claude", "-p", prompt], { stdout: "pipe", stderr: "pipe" });
-          const killer = setTimeout(() => { try { proc.kill(); } catch {} }, 90000);
-          const out = await new Response(proc.stdout).text();
-          const code = await proc.exited; clearTimeout(killer);
-          if (code !== 0) { const err = await new Response(proc.stderr).text(); return json({ ok: false, error: err.slice(0, 200) || `claude exit ${code}` }); }
-          const reply = out.trim();
+          const r = await runClaude(prompt, 90000);
+          if (!r.ok) return json({ ok: false, error: r.error });
+          const reply = r.out.trim();
           return json({ ok: !!reply, reply });
         } catch (e) { return json({ ok: false, error: String(e) }, 500); }
       }
