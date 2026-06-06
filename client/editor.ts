@@ -50,7 +50,10 @@ function escapeAttr(s: any): string { return String(s).replace(/&/g, "&amp;").re
 // content (known tags + only styles we model as marks)?" If yes, we insert/unwrap it as
 // editable prose instead of locking it in an atomic block.
 const PROSE_OK_TAGS = new Set(["P", "H1", "H2", "H3", "H4", "H5", "H6", "UL", "OL", "LI", "BLOCKQUOTE", "BR", "HR", "STRONG", "EM", "B", "I", "U", "S", "DEL", "CODE", "A", "SPAN", "MARK"]);
-const MODELED_STYLE_PROPS = new Set(["color", "background-color", "background", "font-family", "font-size", "font-weight", "font-style", "text-decoration"]);
+// ONLY styles we actually capture as marks today. Anything else (font-family, font-size,
+// letter-spacing, …) must keep the text in an atomic block so it's PRESERVED, never
+// silently dropped. The generic inline-style mark (planned) will widen this safely.
+const MODELED_STYLE_PROPS = new Set(["color", "background-color", "background", "font-weight", "font-style", "text-decoration"]);
 function proseModelable(html: string): boolean {
   const t = document.createElement("template"); t.innerHTML = html || "";
   const els = Array.from(t.content.querySelectorAll("*"));
