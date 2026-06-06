@@ -1,0 +1,1 @@
+This note is about the team's plan to ship the editor in June.

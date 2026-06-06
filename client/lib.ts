@@ -60,6 +60,14 @@ export function proseModelable(html: string): boolean {
   return true;
 }
 
+// Should AI-produced HTML be inserted as editable native content (vs an atomic rich
+// block)? Yes if it's prose-modelable, OR if it's a table — we have a native editable
+// table, and the inline cell styling the AI adds is dropped and re-themed by our CSS
+// (which is what we want: an editable, readable table, not a frozen styled one).
+export function nativeInsertable(html: string): boolean {
+  return proseModelable(html) || /<table[\s>]/i.test(html);
+}
+
 // Minimal, SAFE markdown for chat bubbles: HTML is escaped FIRST, then a small set of
 // inline/list transforms are applied — so AI output can never inject live markup.
 export function mdLite(src: string): string {

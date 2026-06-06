@@ -93,13 +93,39 @@ test("data safety: opening an HTML note does not rewrite it on disk", async ({ p
   expect(readFileSync(path, "utf8")).toBe(html);
 });
 
-test("cmd+K author inserts content (AI replayed from cache)", async ({ page }) => {
-  await openNote(page, "ai.md", "# ai\n\n");
+test("'/callout' inserts an editable callout (not a rich block)", async ({ page }) => {
+  await openNote(page, "callout.md", "seed\n");
+  await clearAndFocus(page);
+  await page.keyboard.type("/callout");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".ProseMirror .callout")).toBeVisible();
+  await page.keyboard.type("a tip here");
+  await expect(page.locator(".ProseMirror .callout")).toContainText("a tip here"); // typed inside it = editable
+});
+
+test("chat returns a reply and 'Insert into note' works (AI replayed)", async ({ page }) => {
+  await openNote(page, "chat.md", "# Roadmap\n\nWe ship the editor in June.\n");
+  await page.locator("#chatchip").click();
+  const input = page.locator(".chat-input");
+  await expect(input).toBeVisible();
+  await input.fill("In one short sentence, what is this note about?");
+  await input.press("Enter");
+  await expect(page.locator(".chat-msg.assistant").last()).toContainText(/.{8,}/, { timeout: 60_000 }); // a real reply
+  await page.locator(".chat-msg.assistant .insert").last().click();
+  await expect(page.locator(".ProseMirror")).toContainText(/.{8,}/); // reply landed in the note
+});
+
+test("cmd+K 'a 2x2 table' yields a NATIVE EDITABLE table, not a frozen rich block", async ({ page }) => {
+  await openNote(page, "aitable.md", "# t\n\n");
   await clearAndFocus(page);
   await page.keyboard.press("Meta+k");
   const input = page.locator(".cmdk input");
   await expect(input).toBeVisible();
-  await input.fill("write the single word: cats");
+  await input.fill("a 2x2 pros and cons table");
   await input.press("Enter");
-  await expect(page.locator(".ProseMirror")).toContainText(/cat/i, { timeout: 60_000 });
+  await expect(page.locator(".ProseMirror table")).toBeVisible({ timeout: 60_000 }); // a real table rendered
+  // the table is NOT trapped inside an atomic rich block, and its cells are editable
+  await expect(page.locator(".ProseMirror [data-rich-block] table")).toHaveCount(0);
+  const cellEditable = await page.evaluate(() => { const c = document.querySelector(".ProseMirror table td, .ProseMirror table th"); return !!c && !c.closest("[contenteditable=false]"); });
+  expect(cellEditable).toBe(true);
 });

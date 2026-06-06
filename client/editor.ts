@@ -22,7 +22,7 @@ import Suggestion from "@tiptap/suggestion";
 import { TextStyle } from "@tiptap/extension-text-style";
 import { Color } from "@tiptap/extension-color";
 import { Highlight } from "@tiptap/extension-highlight";
-import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, mdLite } from "./lib";
+import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, nativeInsertable, mdLite } from "./lib";
 
 type Note = { file: string; format: string; content: string; root: string };
 const W = window as any;
@@ -458,7 +458,7 @@ if (note && mount) {
       } else if (t.mode === "author") {
         const at = Math.min(t.from, editor.state.doc.content.size);
         // prefer editable: only lock into an atomic rich block if the HTML isn't prose-modelable
-        if (r.html && !proseModelable(r.text)) editor.chain().focus().insertContentAt(at, { type: "richBlock", attrs: { html: r.text } }).run();
+        if (r.html && !nativeInsertable(r.text)) editor.chain().focus().insertContentAt(at, { type: "richBlock", attrs: { html: r.text } }).run();
         else editor.chain().focus().insertContentAt(at, r.text).run();
       } else {
         const to = Math.min(t.to, editor.state.doc.content.size); const from = Math.min(t.from, to);
@@ -507,7 +507,7 @@ if (note && mount) {
     const looksHtml = /<[a-z][\s\S]*>/i.test(text);
     const safe = looksHtml ? stripActive(text) : text;
     // prefer editable: prose-modelable HTML inserts as editable prose+marks, not an atomic block
-    if (looksHtml && !proseModelable(safe)) editor.chain().focus().insertContentAt(at, { type: "richBlock", attrs: { html: safe } }).run();
+    if (looksHtml && !nativeInsertable(safe)) editor.chain().focus().insertContentAt(at, { type: "richBlock", attrs: { html: safe } }).run();
     else editor.chain().focus().insertContentAt(at, safe).run();
     markEdited(); flash("inserted → saved");
   }

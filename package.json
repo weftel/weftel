@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "bun run server.ts",
-    "test": "bun test",
+    "test": "bun test tests/unit",
     "e2e": "playwright test"
   },
   "dependencies": {
