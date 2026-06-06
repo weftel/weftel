@@ -8,7 +8,7 @@
 // top-level elements wrapped, never flattened); sequence-guarded autosave with a
 // status pill, flush-on-navigate, and beforeunload flush; hardened cmd+K.
 //
-import { Editor, Node, Extension, InputRule } from "@tiptap/core";
+import { Editor, Node, Mark, Extension, InputRule } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "tiptap-markdown";
 import TaskList from "@tiptap/extension-task-list";
@@ -50,10 +50,18 @@ function escapeAttr(s: any): string { return String(s).replace(/&/g, "&amp;").re
 // content (known tags + only styles we model as marks)?" If yes, we insert/unwrap it as
 // editable prose instead of locking it in an atomic block.
 const PROSE_OK_TAGS = new Set(["P", "H1", "H2", "H3", "H4", "H5", "H6", "UL", "OL", "LI", "BLOCKQUOTE", "BR", "HR", "STRONG", "EM", "B", "I", "U", "S", "DEL", "CODE", "A", "SPAN", "MARK"]);
-// ONLY styles we actually capture as marks today. Anything else (font-family, font-size,
-// letter-spacing, …) must keep the text in an atomic block so it's PRESERVED, never
-// silently dropped. The generic inline-style mark (planned) will widen this safely.
-const MODELED_STYLE_PROPS = new Set(["color", "background-color", "background", "font-weight", "font-style", "text-decoration"]);
+// Inline text-presentation styles the generic InlineStyle mark carries — everything safe
+// the specific marks (color/highlight/bold/italic/underline) don't already own. Add a
+// property here and it becomes editable+preserved with no other code: the whole point.
+const GENERIC_INLINE_PROPS = new Set(["font-family", "font-size", "letter-spacing", "text-transform", "font-variant", "word-spacing", "line-height", "text-shadow", "font-stretch", "background-color", "background"]);
+function filterInlineStyle(style: string): string | null {
+  const keep = (style || "").split(";").map((s) => s.trim()).filter(Boolean).filter((decl) => GENERIC_INLINE_PROPS.has(decl.split(":")[0].trim().toLowerCase()));
+  return keep.length ? keep.join("; ") : null;
+}
+// Everything we can model as an editable mark today (specific marks + the generic carrier).
+// proseModelable lets text through as editable prose iff ALL its styles live in here — so
+// "editable vs atomic" is a category question (text-presentation vs layout), not a list.
+const MODELED_STYLE_PROPS = new Set(["color", "font-weight", "font-style", "text-decoration", "text-decoration-line", ...GENERIC_INLINE_PROPS]);
 function proseModelable(html: string): boolean {
   const t = document.createElement("template"); t.innerHTML = html || "";
   const els = Array.from(t.content.querySelectorAll("*"));
@@ -111,6 +119,24 @@ const StyledHighlight = Highlight.extend({
     return { markdown: { serialize: {
       open(_s: any, mark: any) { const c = mark.attrs && mark.attrs.color; return c ? '<mark style="background-color:' + c + '">' : "<mark>"; },
       close() { return "</mark>"; },
+      mixable: true, expelEnclosingWhitespace: true,
+    } } };
+  },
+});
+
+// GENERIC carrier mark: preserves ANY whitelisted inline text-presentation CSS (font,
+// size, spacing, …) as an editable mark, so styled words stay editable prose without a
+// hard-coded mark per property. Only claims a span if it carries a whitelisted prop;
+// color/weight/etc. are left to their specific marks (composes — they nest cleanly).
+const InlineStyle = Mark.create({
+  name: "inlineStyle",
+  addAttributes() { return { style: { default: null, parseHTML: (el: any) => filterInlineStyle(el.getAttribute("style") || ""), renderHTML: (attrs: any) => (attrs.style ? { style: attrs.style } : {}) } }; },
+  parseHTML() { return [{ tag: "span[style]", getAttrs: (el: any) => (filterInlineStyle(el.getAttribute("style") || "") ? null : false) }]; },
+  renderHTML({ HTMLAttributes }: any) { return ["span", HTMLAttributes, 0]; },
+  addStorage() {
+    return { markdown: { serialize: {
+      open(_s: any, mark: any) { return mark.attrs.style ? '<span style="' + mark.attrs.style + '">' : ""; },
+      close(_s: any, mark: any) { return mark.attrs.style ? "</span>" : ""; },
       mixable: true, expelEnclosingWhitespace: true,
     } } };
   },
@@ -362,7 +388,7 @@ let editor: Editor | null = null;
 if (note && mount) {
   const extensions: any[] = [
     StarterKit,
-    StyledTextStyle, Color, StyledHighlight.configure({ multicolor: true }),
+    StyledTextStyle, Color, StyledHighlight.configure({ multicolor: true }), InlineStyle,
     TaskList, TaskItem.configure({ nested: true }), TaskInputRule,
     Table.configure({ resizable: true }), TableRow, TableHeader, TableCell,
     Callout,
