@@ -60,13 +60,24 @@ export function proseModelable(html: string): boolean {
   return true;
 }
 
-// Should AI-produced HTML be inserted as editable native content (vs an atomic rich
-// block)? Yes if it's prose-modelable, OR if it's a table — we have a native editable
-// table, and the inline cell styling the AI adds is dropped and re-themed by our CSS
-// (which is what we want: an editable, readable table, not a frozen styled one).
-export function nativeInsertable(html: string): boolean {
-  return proseModelable(html) || /<table[\s>]/i.test(html);
+// Broader classifier for (b): can this HTML become editable NESTED nodes (styled-box
+// containers + editable prose + native blocks) rather than a frozen atomic block? Yes if
+// every element is one we model — prose tags, native blocks (table…), and div/span
+// containers carrying INLINE styles — with no unmodelable element (svg/img/canvas/iframe)
+// and no class (a class's appearance lives in CSS we don't carry → freeze to preserve).
+const EDITABLE_TAGS = new Set([...PROSE_OK_TAGS, "DIV", "TABLE", "THEAD", "TBODY", "TR", "TD", "TH", "COLGROUP", "COL", "CAPTION", "FIGURE", "FIGCAPTION"]);
+export function editableModelable(html: string): boolean {
+  const t = document.createElement("template"); t.innerHTML = html || "";
+  const els = Array.from(t.content.querySelectorAll("*"));
+  if (!els.length) return false;
+  for (const el of els) {
+    if (!EDITABLE_TAGS.has(el.tagName)) return false;  // svg / img / canvas / iframe / style → freeze (preserve verbatim)
+    if (el.getAttribute("class")) return false;        // class-styled → can't reproduce its look → freeze
+  }
+  return true;
 }
+// Whether AI output should insert as editable native content vs an atomic rich block.
+export function nativeInsertable(html: string): boolean { return editableModelable(html); }
 
 // Minimal, SAFE markdown for chat bubbles: HTML is escaped FIRST, then a small set of
 // inline/list transforms are applied — so AI output can never inject live markup.

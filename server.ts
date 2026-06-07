@@ -212,6 +212,9 @@ function styles(): string {
   .ProseMirror pre{background:var(--code-bg);border:1px solid var(--border);border-radius:8px;padding:14px;overflow:auto}.ProseMirror pre code{background:none;color:inherit;padding:0}
   .ProseMirror blockquote{border-left:3px solid var(--border-strong);margin:0 0 14px;padding-left:14px;color:var(--muted)}
   .ProseMirror>*:first-child{margin-top:0}
+  /* editable styled boxes ((b)): keep ProseMirror's paragraph margins from blowing out tight designs */
+  .ProseMirror [data-sbox] p{margin:0}
+  .ProseMirror [data-sbox]{position:relative}
   .ProseMirror .rich-block{margin:16px 0;border-radius:8px;position:relative}
   .ProseMirror .rich-block.ProseMirror-selectednode{outline:2px solid var(--accent);outline-offset:4px}
   .ProseMirror .rich-block::after{content:"rich block · ⌘K to edit";position:absolute;top:-9px;right:8px;font-family:ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);background:var(--bg);padding:1px 6px;border-radius:3px;opacity:0;transition:opacity .12s}

@@ -22,7 +22,8 @@ import Suggestion from "@tiptap/suggestion";
 import { TextStyle } from "@tiptap/extension-text-style";
 import { Color } from "@tiptap/extension-color";
 import { Highlight } from "@tiptap/extension-highlight";
-import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, nativeInsertable, mdLite } from "./lib";
+import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, nativeInsertable, mdLite } from "./lib";
+import { DOMSerializer } from "@tiptap/pm/model";
 
 type Note = { file: string; format: string; content: string; root: string };
 const W = window as any;
@@ -77,6 +78,24 @@ const InlineStyle = Mark.create({
 });
 
 // ============================ custom nodes ============================
+// (b) Styled box — a <div> carrying its INLINE style, with editable block content inside.
+// Lets bespoke HTML designs (stat cards, comparisons…) be editable prose in a preserved
+// layout instead of a frozen rich block. Serializes the whole subtree as one raw-HTML blob
+// so nested boxes round-trip cleanly (esp. in markdown).
+const StyledBox = Node.create({
+  name: "styledBox", group: "block", content: "block+", defining: true,
+  addAttributes() { return { style: { default: null, parseHTML: (el: any) => el.getAttribute("style"), renderHTML: (a: any) => (a.style ? { style: a.style } : {}) } }; },
+  parseHTML() { return [{ tag: "div", getAttrs: (el: any) => (!el.getAttribute("class") && el.getAttribute("style") ? {} : false) }]; },
+  renderHTML({ HTMLAttributes }: any) { return ["div", { ...HTMLAttributes, "data-sbox": "" }, 0]; },
+  addStorage() {
+    return { markdown: { serialize(state: any, node: any) {
+      const dom = DOMSerializer.fromSchema(node.type.schema).serializeNode(node) as HTMLElement;
+      dom.querySelectorAll("[data-sbox]").forEach((e) => e.removeAttribute("data-sbox")); dom.removeAttribute("data-sbox");
+      state.write(dom.outerHTML); state.closeBlock(node);
+    } } };
+  },
+});
+
 const richMd = { markdown: { serialize(state: any, node: any) { state.write("<div data-rich-block>" + (node.attrs.html || "") + "</div>"); state.closeBlock(node); } } };
 
 const RichBlock = Node.create({
@@ -85,7 +104,7 @@ const RichBlock = Node.create({
   addStorage() { return richMd; },
   // If the block's content is fully prose-modelable, REJECT the atomic rule (getAttrs:false)
   // so TipTap parses the inner HTML as editable prose+marks instead. Shrinks the atomic set.
-  parseHTML() { return [{ tag: "div[data-rich-block]", getAttrs: (el: any) => (proseModelable(el.innerHTML) ? false : null) }]; },
+  parseHTML() { return [{ tag: "div[data-rich-block]", getAttrs: (el: any) => (editableModelable(el.innerHTML) ? false : null) }]; },
   renderHTML({ node }: any) { const d = document.createElement("div"); d.setAttribute("data-rich-block", ""); d.innerHTML = node.attrs.html; return d; },
   addNodeView() {
     return ({ node }: any) => {
@@ -335,7 +354,7 @@ if (note && mount) {
     TaskList, TaskItem.configure({ nested: true }), TaskInputRule,
     Table.configure({ resizable: true }), TableRow, TableHeader, TableCell,
     Callout,
-    RichBlock, CalendarBlock, ClockBlock,
+    StyledBox, RichBlock, CalendarBlock, ClockBlock,
     SlashMenu,
     Placeholder.configure({ placeholder: ({ node }: any) => (node.type.name === "heading" ? "Heading" : "Write, or press “/” for commands…"), showOnlyCurrent: true }),
   ];
