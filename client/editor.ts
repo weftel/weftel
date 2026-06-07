@@ -472,8 +472,23 @@ if (note && mount) {
       ? "Insert content at the cursor per the instruction — prose as text, or a structured/visual HTML fragment when appropriate.\n\nInstruction: " + intent + "\n\nNote so far (context):\n" + docContext().slice(0, 8000)
       : "Rewrite the selected text per the instruction.\n\nInstruction: " + intent + "\n\nSelected text:\n" + t.text + "\n\nNote (context):\n" + docContext().slice(0, 8000);
     try {
-      const r = await fetch("/rewrite", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt, mode: t.mode }) }).then((x) => x.json());
-      if (!r.ok || !r.text) { cmdkInput.disabled = false; cmdkHint.textContent = "failed: " + (r.error || "empty"); return; }
+      // stream the result so the output appears live (perceived speed)
+      const res = await fetch("/rewrite", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt, mode: t.mode }) });
+      const reader = res.body!.getReader(); const dec = new TextDecoder(); let buf = ""; let preview = ""; let r: any = null;
+      while (true) {
+        const { value, done } = await reader.read(); if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i: number;
+        while ((i = buf.indexOf("\n\n")) >= 0) {
+          const line = buf.slice(0, i); buf = buf.slice(i + 2);
+          if (!line.startsWith("data: ")) continue;
+          const obj = JSON.parse(line.slice(6));
+          if (obj.chunk) { preview += obj.chunk; cmdkHint.textContent = preview.replace(/\s+/g, " ").trim().slice(-90) || "…"; }
+          else if (obj.done) r = obj.done;
+          else if (obj.error) { cmdkInput.disabled = false; cmdkHint.textContent = "failed: " + obj.error; return; }
+        }
+      }
+      if (!r || !r.ok || !r.text) { cmdkInput.disabled = false; cmdkHint.textContent = "failed: " + ((r && r.error) || "empty"); return; }
       if (t.mode === "rich") {
         if (r.text.indexOf("<") < 0) { cmdkInput.disabled = false; cmdkHint.textContent = "AI didn't return HTML — try again"; return; }
         // trust the captured pos if it still points at this block; else re-find by content
@@ -493,7 +508,7 @@ if (note && mount) {
         editor.chain().focus().insertContentAt({ from, to }, r.text).run();
       }
       markEdited(); closeCmdk(); flash("rewritten → saved");
-    } catch { cmdkInput.disabled = false; cmdkHint.textContent = "failed"; }
+    } catch { cmdkInput.disabled = false; cmdkHint.textContent = "failed — try again"; }
   });
 
   // chat panel removed — chat is Claude Code for now (deferred). A future in-app chat will

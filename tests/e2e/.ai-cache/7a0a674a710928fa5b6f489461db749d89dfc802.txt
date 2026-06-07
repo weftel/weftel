@@ -1,0 +1,10 @@
+<table style="width: 100%; border-collapse: collapse;">
+  <tr>
+    <th style="border: 1px solid #ccc; padding: 12px; text-align: left;">Pros</th>
+    <th style="border: 1px solid #ccc; padding: 12px; text-align: left;">Cons</th>
+  </tr>
+  <tr>
+    <td style="border: 1px solid #ccc; padding: 12px; vertical-align: top;"></td>
+    <td style="border: 1px solid #ccc; padding: 12px; vertical-align: top;"></td>
+  </tr>
+</table>
