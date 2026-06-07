@@ -88,7 +88,14 @@ const RichBlock = Node.create({
   parseHTML() { return [{ tag: "div[data-rich-block]", getAttrs: (el: any) => (proseModelable(el.innerHTML) ? false : null) }]; },
   renderHTML({ node }: any) { const d = document.createElement("div"); d.setAttribute("data-rich-block", ""); d.innerHTML = node.attrs.html; return d; },
   addNodeView() {
-    return ({ node }: any) => { const d = document.createElement("div"); d.setAttribute("data-rich-block", ""); d.className = "rich-block"; d.contentEditable = "false"; d.innerHTML = node.attrs.html; return { dom: d }; };
+    return ({ node }: any) => {
+      const d = document.createElement("div"); d.setAttribute("data-rich-block", ""); d.className = "rich-block"; d.contentEditable = "false";
+      // Render the (already-sanitized) HTML + the doc's styles in a SHADOW ROOT so the
+      // content's CSS is fully contained — it can't reach out and restyle the editor.
+      const shadow = d.attachShadow({ mode: "open" });
+      shadow.innerHTML = (RICH_STYLES || "") + (node.attrs.html || "");
+      return { dom: d };
+    };
   },
 });
 
@@ -275,15 +282,17 @@ const SlashMenu = Extension.create({
 const PROSE_TAGS = new Set(["H1","H2","H3","H4","H5","H6","P","UL","OL","BLOCKQUOTE","PRE","HR","TABLE"]);
 let htmlTemplate: string | null = null; // full original doc with %%NOTE_BODY%% where editable content goes
 let BODY_TOKEN = "%%NOTE_BODY%%"; // reassigned per-load to a collision-free value (see prepareHtml)
+let RICH_STYLES = ""; // an imported doc's <style> blocks — injected into each rich block's SHADOW root (scoped, no global leak)
 
 function prepareHtml(raw: string): string {
   const doc = new DOMParser().parseFromString(raw, "text/html");
   // Preserve every <style>/<script> by relocating into <head> BEFORE tokenizing the
   // body — otherwise styles living inside <body>/<article> get wiped on save.
   doc.querySelectorAll("style, script").forEach((el) => doc.head.appendChild(el));
-  // Render styles live so rich blocks show with their CSS (styles only, not scripts).
-  const styleHtml = Array.from(doc.head.querySelectorAll("style")).map((s) => s.outerHTML).join("\n");
-  if (styleHtml) { const h = document.createElement("div"); h.innerHTML = styleHtml; document.head.append(...Array.from(h.children)); }
+  // Capture the doc's styles to inject into each rich block's SHADOW root — scoped, so
+  // they render the content but NEVER leak into the editor chrome (the white-bg bug).
+  // Rewrite :root → :host so a doc's custom props (e.g. --font-mono) resolve in the shadow.
+  RICH_STYLES = Array.from(doc.querySelectorAll("style")).map((s) => "<style>" + (s.textContent || "").replace(/:root\b/g, ":host") + "</style>").join("\n");
   const container = (doc.querySelector("article, main") as HTMLElement) || doc.body;
   const hasMarkers = !!container.querySelector("[data-rich-block],[data-calendar],[data-clock]");
   if (hasMarkers) {
