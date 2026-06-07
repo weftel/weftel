@@ -343,6 +343,16 @@ Bun.serve({
         if (!existsSync(p)) return json({ ok: false, error: "missing" });
         try { toTrash(p); return json({ ok: true }); } catch (e) { return json({ ok: false, error: String(e) }, 500); }
       }
+      if (url.pathname === "/pick-folder") {
+        // native macOS folder picker (used by the desktop app / browser). Cancel → cancelled.
+        try {
+          const proc = Bun.spawn(["osascript", "-e", 'POSIX path of (choose folder with prompt "Choose your vault folder")'], { stdout: "pipe", stderr: "pipe" });
+          const out = (await new Response(proc.stdout).text()).trim();
+          const code = await proc.exited;
+          if (code !== 0) return json({ ok: false, cancelled: true });
+          return out ? json({ ok: true, path: out.replace(/\/$/, "") }) : json({ ok: false });
+        } catch { return json({ ok: false }); }
+      }
       if (url.pathname === "/open-folder") {
         let d: string; try { d = realpathSync(resolve(String(body.dir || ""))); } catch { return json({ ok: false, error: "not a folder" }); }
         if (!statSync(d).isDirectory()) return json({ ok: false, error: "not a folder" });

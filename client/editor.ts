@@ -597,8 +597,16 @@ if (note && mount) {
   const GLYPH: Record<string, string> = { md: "·", html: "<>", txt: "·" };
   let allNotes: any[] = [];
   function noteTitle(f: any): string { return f.name.replace(/\.(md|markdown|html?|htm)$/i, "").replace(/[-_]+/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()); }
-  // Open/switch the vault to any folder (Obsidian-style). Browser → prompt for a path;
-  // the native app will swap this for a real folder picker via the same /open-folder route.
+  // native folder picker (macOS via /pick-folder); falls back to a path prompt if unavailable
+  (window as any).__pickFolder = async (): Promise<string | null> => {
+    let r: any = null;
+    try { r = await fetch("/pick-folder", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }).then((x) => x.json()); } catch {}
+    if (r && r.ok) return r.path;
+    if (r && r.cancelled) return null;
+    return window.prompt("Open a folder as your vault (absolute path):", ROOT);
+  };
+
+  // Open/switch the vault to any folder (Obsidian-style). Uses the native picker above.
   async function openVault() {
     const W2 = window as any;
     const dir = W2.__pickFolder ? await W2.__pickFolder() : window.prompt("Open a folder as your vault (absolute path):", ROOT);

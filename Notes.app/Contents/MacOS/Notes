@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# macOS .app launcher → runs the repo's desktop.sh (the .app lives inside the repo).
+HERE="$(cd "$(dirname "$0")" && pwd)"        # .../Notes.app/Contents/MacOS
+REPO="$(cd "$HERE/../../.." && pwd)"          # repo root
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"  # so `bun` resolves when launched from Finder
+exec "$REPO/desktop.sh"
