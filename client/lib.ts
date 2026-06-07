@@ -90,6 +90,11 @@ export function tidyInsertHtml(html: string): string {
       if (n.nodeType === 3 && !(n.textContent || "").trim()) el.removeChild(n);
     });
   });
+  // a tableCell needs block content — an empty <td> (common from Haiku) is invalid, so
+  // give empty cells an empty paragraph.
+  t.content.querySelectorAll("td, th").forEach((cell) => {
+    if (!cell.querySelector("*") && !(cell.textContent || "").trim()) cell.innerHTML = "<p></p>";
+  });
   return t.innerHTML;
 }
 

@@ -29,25 +29,24 @@ const SYSTEM = `You generate content that is inserted DIRECTLY into a user's not
 // AI_OFFLINE=1: error on a cache miss instead of calling out (CI with a committed cache).
 const AI_CACHE = process.env.AI_CACHE || "";
 const AI_OFFLINE = process.env.AI_OFFLINE === "1";
-// One-shot completion via the Agent SDK (runs on the user's Claude subscription, no tools).
-async function runAI(prompt: string, opts: { model?: string; system?: string } = {}): Promise<{ ok: true; out: string } | { ok: false; error: string }> {
-  const model = opts.model || "sonnet";
-  const system = opts.system || SYSTEM;
-  let cacheFile = "";
-  if (AI_CACHE) {
-    const h = createHash("sha256").update(model + "\n" + system + "\n" + prompt).digest("hex").slice(0, 40);
-    cacheFile = join(AI_CACHE, h + ".txt");
-    try { return { ok: true, out: readFileSync(cacheFile, "utf8") }; } catch {}
-    if (AI_OFFLINE) return { ok: false, error: "ai cache miss (AI_OFFLINE)" };
-  }
+function aiKey(model: string, prompt: string) { return createHash("sha256").update(model + "\n" + SYSTEM + "\n" + prompt).digest("hex").slice(0, 40); }
+function aiCacheGet(key: string): string | null { if (!AI_CACHE) return null; try { return readFileSync(join(AI_CACHE, key + ".txt"), "utf8"); } catch { return null; } }
+function aiCacheSet(key: string, val: string) { if (!AI_CACHE) return; try { mkdirSync(AI_CACHE, { recursive: true }); writeFileSync(join(AI_CACHE, key + ".txt"), val); } catch {} }
+// Stream a one-shot completion via the Agent SDK (subscription auth, no tools). onChunk
+// receives each text delta; returns the full text. Honors the AI_CACHE (record/replay).
+async function streamAI(prompt: string, model: string, onChunk: (s: string) => void): Promise<{ ok: true; out: string } | { ok: false; error: string }> {
+  const key = aiKey(model, prompt);
+  const cached = aiCacheGet(key);
+  if (cached != null) { onChunk(cached); return { ok: true, out: cached }; }
+  if (AI_OFFLINE) return { ok: false, error: "ai cache miss (AI_OFFLINE)" };
   try {
     let text = "";
-    for await (const m of query({ prompt, options: { model, systemPrompt: system, allowedTools: [], maxTurns: 1 } } as any)) {
-      if (m.type === "assistant") for (const b of (m as any).message.content) { if (b.type === "text") text += b.text; }
+    for await (const m of query({ prompt, options: { model, systemPrompt: SYSTEM, allowedTools: [], maxTurns: 1 } } as any)) {
+      if (m.type === "assistant") for (const b of (m as any).message.content) { if (b.type === "text") { text += b.text; onChunk(b.text); } }
       if (m.type === "result" && (m as any).is_error) return { ok: false, error: String((m as any).subtype || "ai error") };
     }
     text = text.trim();
-    if (AI_CACHE && cacheFile) { try { mkdirSync(AI_CACHE, { recursive: true }); writeFileSync(cacheFile, text); } catch {} }
+    aiCacheSet(key, text);
     return { ok: true, out: text };
   } catch (e) { return { ok: false, error: String(e).slice(0, 200) }; }
 }
@@ -351,19 +350,24 @@ Bun.serve({
         return json({ ok: true, first: firstNote() });
       }
       if (url.pathname === "/rewrite") {
-        try {
-          // model tiering: simple prose rewrites use fast Haiku; structured/visual uses Sonnet
-          const model = body.mode === "prose" ? "haiku" : "sonnet";
-          const r = await runAI(String(body.prompt || ""), { model });
-          if (!r.ok) return json({ ok: false, error: r.error });
-          let text = r.out.trim();
-          const fence = text.match(/^```[a-zA-Z]*\n([\s\S]*?)\n```$/);
-          if (fence) text = fence[1].trim();
-          let html = body.mode === "rich";
-          if (body.mode === "author" && /<[a-z][\s\S]*>/i.test(text)) html = true; // AI chose to author HTML
-          if (html) text = safeRichHtml(text);
-          return json({ ok: !!text, text, html });
-        } catch (e) { return json({ ok: false, error: String(e) }, 500); }
+        const mode = String(body.mode || "");
+        const prompt = String(body.prompt || "");
+        const model = "haiku"; // fast; the system prompt now carries the structure/quality
+        const stream = new ReadableStream({
+          async start(controller) {
+            const enc = new TextEncoder();
+            const send = (o: any) => { try { controller.enqueue(enc.encode("data: " + JSON.stringify(o) + "\n\n")); } catch {} };
+            const r = await streamAI(prompt, model, (chunk) => send({ chunk }));
+            if (!r.ok) { send({ error: r.error }); controller.close(); return; }
+            let text = r.out.trim();
+            const fence = text.match(/^```[a-zA-Z]*\n([\s\S]*?)\n```$/); if (fence) text = fence[1].trim();
+            let html = mode === "rich"; if (mode === "author" && /<[a-z][\s\S]*>/i.test(text)) html = true;
+            if (html) text = safeRichHtml(text);
+            send({ done: { ok: !!text, text, html } });
+            controller.close();
+          },
+        });
+        return new Response(stream, { headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache" } });
       }
       return json({ ok: false, error: "unknown" }, 404);
     }
