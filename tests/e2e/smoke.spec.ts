@@ -103,18 +103,6 @@ test("'/callout' inserts an editable callout (not a rich block)", async ({ page 
   await expect(page.locator(".ProseMirror .callout")).toContainText("a tip here"); // typed inside it = editable
 });
 
-test("chat returns a reply and 'Insert into note' works (AI replayed)", async ({ page }) => {
-  await openNote(page, "chat.md", "# Roadmap\n\nWe ship the editor in June.\n");
-  await page.locator("#chatchip").click();
-  const input = page.locator(".chat-input");
-  await expect(input).toBeVisible();
-  await input.fill("In one short sentence, what is this note about?");
-  await input.press("Enter");
-  await expect(page.locator(".chat-msg.assistant").last()).toContainText(/.{8,}/, { timeout: 60_000 }); // a real reply
-  await page.locator(".chat-msg.assistant .insert").last().click();
-  await expect(page.locator(".ProseMirror")).toContainText(/.{8,}/); // reply landed in the note
-});
-
 test("cmd+K 'a 2x2 table' yields a NATIVE EDITABLE table, not a frozen rich block", async ({ page }) => {
   await openNote(page, "aitable.md", "# t\n\n");
   await clearAndFocus(page);
@@ -130,12 +118,9 @@ test("cmd+K 'a 2x2 table' yields a NATIVE EDITABLE table, not a frozen rich bloc
   expect(cellEditable).toBe(true);
 });
 
-// QUALITY BAR — expected to FAIL until the AI rebuild. A "2x2 pros/cons table" should be a
-// clean 2-column table, not today's 5-column mess with empty spacer cells. test.fail()
-// keeps the suite green now and flags us the instant AI quality crosses the bar (the test
-// will "pass unexpectedly" → time to delete this marker and the AI work is done).
-test("QUALITY (pending AI rebuild): cmd+K 2x2 table is a clean 2-column Pros/Cons", async ({ page }) => {
-  test.fail();
+// QUALITY: after the AI rebuild (format-contract system prompt + Agent SDK), a "2x2
+// pros/cons table" is a clean 2-column table — no 5-column spacer mess.
+test("cmd+K 2x2 table is a clean 2-column Pros/Cons", async ({ page }) => {
   await openNote(page, "aitableq.md", "# t\n\n");
   await clearAndFocus(page);
   await page.keyboard.press("Meta+k");

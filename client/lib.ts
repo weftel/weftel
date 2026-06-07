@@ -79,6 +79,20 @@ export function editableModelable(html: string): boolean {
 // Whether AI output should insert as editable native content vs an atomic rich block.
 export function nativeInsertable(html: string): boolean { return editableModelable(html); }
 
+// ProseMirror turns whitespace text-nodes between table cells (pretty-printed HTML) into
+// spurious empty cells — a clean 2-col table parses as 5. Strip whitespace-only text nodes
+// that are direct children of table-structural elements before inserting.
+export function tidyInsertHtml(html: string): string {
+  if (!/<table[\s>]/i.test(html)) return html;
+  const t = document.createElement("template"); t.innerHTML = html;
+  t.content.querySelectorAll("table, thead, tbody, tfoot, tr, colgroup").forEach((el) => {
+    Array.from(el.childNodes).forEach((n) => {
+      if (n.nodeType === 3 && !(n.textContent || "").trim()) el.removeChild(n);
+    });
+  });
+  return t.innerHTML;
+}
+
 // Minimal, SAFE markdown for chat bubbles: HTML is escaped FIRST, then a small set of
 // inline/list transforms are applied — so AI output can never inject live markup.
 export function mdLite(src: string): string {
