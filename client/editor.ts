@@ -216,7 +216,7 @@ const SLASH_ITEMS: SlashItem[] = [
   { title: "Rich HTML block", group: "Embeds", aliases: "html custom design", run: (e, r) => { del(e, r).run(); slashHooks.insertEmbed?.("rich"); } },
   { title: "Calendar", group: "Embeds", aliases: "gcal google schedule", run: (e, r) => { del(e, r).run(); slashHooks.insertEmbed?.("calendar"); } },
   { title: "Clock", group: "Embeds", aliases: "time live", run: (e, r) => { del(e, r).run(); slashHooks.insertEmbed?.("clock"); } },
-  { title: "Ask AI to write…", group: "AI", aliases: "generate cmdk diagram", run: (e, r) => { del(e, r).run(); slashHooks.askAI?.(); } },
+  { title: "Write with AI…", group: "AI", aliases: "generate cmdk diagram ask", run: (e, r) => { del(e, r).run(); slashHooks.askAI?.(); } },
 ];
 function filterSlash(query: string): SlashItem[] {
   const q = query.trim().toLowerCase();
@@ -412,7 +412,7 @@ if (note && mount) {
 
   // ============================ cmd+K ============================
   const cmdk = document.createElement("div"); cmdk.className = "cmdk";
-  cmdk.innerHTML = '<input type="text" placeholder="Ask AI… (Enter to run, Esc to cancel)"><div class="cmdk-hint"></div>';
+  cmdk.innerHTML = '<input type="text" placeholder="Tell AI what to edit or write… (Enter to run, Esc to cancel)"><div class="cmdk-hint"></div>';
   document.body.appendChild(cmdk);
   const cmdkInput = cmdk.querySelector("input") as HTMLInputElement;
   const cmdkHint = cmdk.querySelector(".cmdk-hint") as HTMLElement;
@@ -489,8 +489,8 @@ if (note && mount) {
   const chatMsgs: { role: string; content: string }[] = [];
   let chatSel = "";
 
-  function openChat() { chat.classList.add("show"); chatInput.focus(); }
-  function closeChat() { chat.classList.remove("show"); if (editor) editor.commands.focus(); }
+  function openChat() { chat.classList.add("show"); document.body.classList.add("chat-open"); chatInput.focus(); }
+  function closeChat() { chat.classList.remove("show"); document.body.classList.remove("chat-open"); if (editor) editor.commands.focus(); }
   function toggleChat() { if (chat.classList.contains("show")) closeChat(); else openChat(); }
 
   function selectionText(): string {
@@ -562,7 +562,7 @@ if (note && mount) {
     + '<label class="cswatch" title="Text color"><input type="color" value="#7c3aed"></label>'
     + '<button data-a="hilite" title="Highlight"><span class="hl">H</span></button>'
     + '<span class="bsep"></span>'
-    + '<button data-a="ai" class="accent">✦ Ask AI</button>'
+    + '<button data-a="ai" class="accent">✦ AI edit</button>'
     + '<button data-a="chat">+ Chat</button>';
   document.body.appendChild(bubble);
   const colorInput = bubble.querySelector(".cswatch input") as HTMLInputElement;

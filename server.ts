@@ -268,6 +268,10 @@ function styles(): string {
   .onboard button{font:inherit;font-size:14px;border-radius:8px;padding:9px 16px;cursor:pointer;border:1px solid var(--border-strong);background:var(--surface);color:var(--text)}
   .onboard button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
   .chat{position:fixed;top:0;right:0;width:384px;max-width:92vw;height:100vh;background:var(--surface);border-left:1px solid var(--border);box-shadow:-10px 0 34px rgba(0,0,0,.08);display:flex;flex-direction:column;transform:translateX(102%);transition:transform .18s ease;z-index:55}
+  /* when chat is open, push the bar + note body left so the drawer never covers the note */
+  .bar,.layout{transition:margin-right .18s ease}
+  body.chat-open .bar,body.chat-open .layout{margin-right:384px}
+  @media(max-width:720px){body.chat-open .bar,body.chat-open .layout{margin-right:0}}
   .chat.show{transform:none}
   .chat-head{display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600}
   .chat-head .spacer{flex:1}
@@ -302,7 +306,7 @@ function shell(note: { file: string; format: string; content: string } | null): 
   const title = escHtml(note ? basename(note.file).replace(NOTE_RE, "") : "note-editor");
   const json = note ? JSON.stringify({ ...note, root: ROOT }).replace(/</g, "\\u003c") : `{"root":${JSON.stringify(ROOT).replace(/</g, "\\u003c")}}`;
   const body = note
-    ? `<div class="bar"><span class="title" id="title">${title}</span><span class="badge">${note.format}</span><span class="spacer"></span><span class="status dirty" id="savestatus"><span class="dot"></span><span class="lbl">—</span></span><button class="chip" id="askchip"><kbd>⌘K</kbd> Ask AI</button><button class="chip" id="chatchip"><kbd>⌘L</kbd> Chat</button><button class="chip" id="insertchip">+ Insert</button></div>
+    ? `<div class="bar"><span class="title" id="title">${title}</span><span class="badge">${note.format}</span><span class="spacer"></span><span class="status dirty" id="savestatus"><span class="dot"></span><span class="lbl">—</span></span><button class="chip" id="askchip"><kbd>⌘K</kbd> AI edit</button><button class="chip" id="chatchip"><kbd>⌘L</kbd> Chat</button><button class="chip" id="insertchip">+ Insert</button></div>
   <div class="layout"><aside class="sidebar" id="sidebar"></aside><main class="main"><div id="editor" class="doc"></div></main></div>`
     : `<div class="onboard"><h1>Your notes, in HTML, with AI.</h1><p>Open a folder of markdown or HTML notes, or create your first one. Everything stays local, in your own files.</p><div class="actions"><button class="primary" id="ob-open">Open folder…</button><button id="ob-new">New note</button></div></div>`;
   return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>
