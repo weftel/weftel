@@ -177,7 +177,10 @@ function styles(): string {
   .bar .chip kbd{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--accent-ink);background:var(--accent-tint);border-radius:3px;padding:0 4px}
   .layout{display:flex;align-items:flex-start}
   .sidebar{width:256px;flex:none;border-right:1px solid var(--border);height:calc(100vh - 40px);overflow:auto;padding:10px 8px;position:sticky;top:40px}
-  .sidebar .vault{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--muted);padding:4px 8px 2px}
+  .sidebar .vault{display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;font:inherit;font-size:12px;font-weight:600;color:var(--muted);background:transparent;border:none;padding:5px 8px;border-radius:7px;cursor:pointer;text-align:left}
+  .sidebar .vault:hover{background:var(--accent-tint);color:var(--text)}
+  .sidebar .vault .vcaret{opacity:.5;font-size:11px;flex:none}
+  .sidebar .vault .vname{overflow:hidden;text-overflow:ellipsis}
   .sidebar .filter{width:100%;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:7px;padding:6px 9px;font:inherit;font-size:12.5px;margin:6px 0 8px;outline:none}
   .sidebar .filter:focus{border-color:var(--accent-line)}
   .sidebar .new{display:flex;align-items:center;gap:7px;width:100%;text-align:left;font:inherit;font-size:13px;color:var(--muted);background:transparent;border:1px dashed var(--border-strong);border-radius:7px;padding:7px 10px;margin-bottom:8px;cursor:pointer}

@@ -597,11 +597,26 @@ if (note && mount) {
   const GLYPH: Record<string, string> = { md: "·", html: "<>", txt: "·" };
   let allNotes: any[] = [];
   function noteTitle(f: any): string { return f.name.replace(/\.(md|markdown|html?|htm)$/i, "").replace(/[-_]+/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()); }
+  // Open/switch the vault to any folder (Obsidian-style). Browser → prompt for a path;
+  // the native app will swap this for a real folder picker via the same /open-folder route.
+  async function openVault() {
+    const W2 = window as any;
+    const dir = W2.__pickFolder ? await W2.__pickFolder() : window.prompt("Open a folder as your vault (absolute path):", ROOT);
+    if (!dir) return;
+    await flushSave();
+    const r = await fetch("/open-folder", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ dir }) }).then((x) => x.json());
+    if (!r.ok) { flash(r.error || "couldn't open that folder", false); return; }
+    go(r.first ? "/?file=" + encodeURIComponent(r.first) : "/");
+  }
+
   function renderSidebar(filterStr = "") {
     const sb = document.getElementById("sidebar"); if (!sb) return;
     const dir = ROOT;
     sb.innerHTML = "";
-    const head = document.createElement("div"); head.className = "vault"; head.textContent = "📁 " + (dir.split("/").pop() || dir); sb.appendChild(head);
+    const head = document.createElement("button"); head.className = "vault"; head.title = "Switch vault — open another folder";
+    head.innerHTML = '<span>📁 <span class="vname"></span></span><span class="vcaret">⌄</span>';
+    (head.querySelector(".vname") as HTMLElement).textContent = dir.split("/").pop() || dir;
+    head.onclick = openVault; sb.appendChild(head);
     const filter = document.createElement("input"); filter.className = "filter"; filter.placeholder = "Filter notes…"; filter.value = filterStr;
     filter.oninput = () => renderList(filter.value);
     sb.appendChild(filter);
@@ -680,7 +695,8 @@ if (note && mount) {
 // ============================ onboarding (no note) ============================
 if (!note) {
   document.getElementById("ob-open")?.addEventListener("click", async () => {
-    const dir = window.prompt("Open folder (absolute path to your notes vault):", ROOT);
+    const W2 = window as any;
+    const dir = W2.__pickFolder ? await W2.__pickFolder() : window.prompt("Open folder (absolute path to your notes vault):", ROOT);
     if (!dir) return;
     const r = await fetch("/open-folder", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ dir }) }).then((x) => x.json());
     if (!r.ok) { alert(r.error || "couldn't open folder"); return; }
