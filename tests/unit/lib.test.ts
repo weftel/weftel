@@ -4,7 +4,7 @@ import { test, expect } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 if (typeof (globalThis as any).document === "undefined") GlobalRegistrator.register();
 
-import { stripActive, spliceBody, proseModelable, filterInlineStyle, escapeAttr, mdLite } from "../../client/lib";
+import { stripActive, spliceBody, proseModelable, filterInlineStyle, escapeAttr, mdLite, buildTree, countFiles } from "../../client/lib";
 
 // ───────────────────────── spliceBody — the $-corruption bug ─────────────────────────
 const TOKEN = "%%NOTE_BODY%%";
@@ -93,4 +93,41 @@ test("mdLite escapes HTML before formatting (no live markup)", () => {
 test("mdLite renders bold/italic/code and lists", () => {
   expect(mdLite("a **b** c")).toContain("<strong>b</strong>");
   expect(mdLite("- one\n- two")).toContain("<ul><li>one</li><li>two</li></ul>");
+});
+
+// ───────────────────────── buildTree / countFiles — sidebar folder tree ─────────────────────────
+test("buildTree groups notes by their rel path into nested folders", () => {
+  const notes = [
+    { rel: "inbox.md" },
+    { rel: "Projects/Alpha/spec.md" },
+    { rel: "Projects/Alpha/notes.md" },
+    { rel: "Projects/roadmap.md" },
+    { rel: "Journal/2026-06-01.md" },
+  ];
+  const t = buildTree(notes);
+  // root holds the one top-level file + two folders
+  expect(t.files.map((f) => f.rel)).toEqual(["inbox.md"]);
+  expect([...t.dirs.keys()].sort()).toEqual(["Journal", "Projects"]);
+  // nested folder carries its full rel path (used as the collapse key)
+  const projects = t.dirs.get("Projects")!;
+  expect(projects.rel).toBe("Projects");
+  expect(projects.files.map((f) => f.rel)).toEqual(["Projects/roadmap.md"]);
+  const alpha = projects.dirs.get("Alpha")!;
+  expect(alpha.rel).toBe("Projects/Alpha");
+  expect(alpha.files.length).toBe(2);
+});
+
+test("countFiles totals notes recursively, not just direct children", () => {
+  const t = buildTree([
+    { rel: "Projects/Alpha/spec.md" },
+    { rel: "Projects/Alpha/notes.md" },
+    { rel: "Projects/roadmap.md" },
+  ]);
+  expect(countFiles(t.dirs.get("Projects")!)).toBe(3); // 1 direct + 2 nested
+});
+
+test("buildTree on a flat vault yields no folders", () => {
+  const t = buildTree([{ rel: "a.md" }, { rel: "b.html" }]);
+  expect(t.dirs.size).toBe(0);
+  expect(t.files.length).toBe(2);
 });
