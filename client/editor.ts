@@ -22,7 +22,7 @@ import Suggestion from "@tiptap/suggestion";
 import { TextStyle } from "@tiptap/extension-text-style";
 import { Color } from "@tiptap/extension-color";
 import { Highlight } from "@tiptap/extension-highlight";
-import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, nativeInsertable, tidyInsertHtml, mdLite } from "./lib";
+import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, nativeInsertable, tidyInsertHtml, mdLite, buildTree, countFiles, type TreeNode } from "./lib";
 import { DOMSerializer } from "@tiptap/pm/model";
 
 type Note = { file: string; format: string; content: string; root: string };
@@ -597,6 +597,12 @@ if (note && mount) {
   const GLYPH: Record<string, string> = { md: "·", html: "<>", txt: "·" };
   let allNotes: any[] = [];
   function noteTitle(f: any): string { return f.name.replace(/\.(md|markdown|html?|htm)$/i, "").replace(/[-_]+/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()); }
+
+  // folder tree helpers (buildTree/countFiles) live in lib.ts (pure, unit-tested)
+  // collapsed-folder state survives the full-page navigations, keyed per vault
+  function collapseKey(): string { return "tree-collapsed:" + ROOT; }
+  function loadCollapsed(): Set<string> { try { return new Set(JSON.parse(localStorage.getItem(collapseKey()) || "[]")); } catch { return new Set(); } }
+  function toggleCollapsed(rel: string) { const s = loadCollapsed(); s.has(rel) ? s.delete(rel) : s.add(rel); try { localStorage.setItem(collapseKey(), JSON.stringify([...s])); } catch {} }
   // native folder picker (macOS via /pick-folder); falls back to a path prompt if unavailable
   (window as any).__pickFolder = async (): Promise<string | null> => {
     let r: any = null;
@@ -628,33 +634,61 @@ if (note && mount) {
     const filter = document.createElement("input"); filter.className = "filter"; filter.placeholder = "Filter notes…"; filter.value = filterStr;
     filter.oninput = () => renderList(filter.value);
     sb.appendChild(filter);
-    const nb = document.createElement("button"); nb.className = "new"; nb.textContent = "＋ New note"; nb.onclick = newNote; sb.appendChild(nb);
+    const nb = document.createElement("button"); nb.className = "new"; nb.textContent = "＋ New note"; nb.onclick = () => newNote(); sb.appendChild(nb);
     const list = document.createElement("div"); list.id = "notelist"; sb.appendChild(list);
     renderList(filterStr);
     function renderList(q: string) {
       const ql = q.toLowerCase();
       list.innerHTML = "";
-      allNotes.filter((f) => !ql || f.rel.toLowerCase().includes(ql) || noteTitle(f).toLowerCase().includes(ql)).forEach((f) => {
-        const a = document.createElement("a"); a.className = "note-link" + (note && f.path === note.file ? " active" : "");
-        const gl = document.createElement("span"); gl.className = "gl"; gl.textContent = GLYPH[f.fmt] || "·";
-        const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = noteTitle(f); nm.title = f.rel;
-        a.appendChild(gl); a.appendChild(nm);
-        const acts = document.createElement("span"); acts.className = "row-act";
-        const rn = document.createElement("button"); rn.textContent = "rename"; rn.title = "rename"; rn.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); renameNote(f); };
-        const dl = document.createElement("button"); dl.textContent = "✕"; dl.title = "delete"; dl.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); deleteNote(f); };
-        acts.appendChild(rn); acts.appendChild(dl); a.appendChild(acts);
-        a.onclick = (ev) => { ev.preventDefault(); go("/?file=" + encodeURIComponent(f.path)); };
-        list.appendChild(a);
-      });
+      const filtered = allNotes.filter((f) => !ql || f.rel.toLowerCase().includes(ql) || noteTitle(f).toLowerCase().includes(ql));
+      if (!filtered.length) { const e = document.createElement("div"); e.className = "note-empty"; e.textContent = ql ? "No matching notes" : "No notes yet"; list.appendChild(e); return; }
+      const tree = buildTree(filtered);
+      const filtering = !!ql; // while filtering, force-expand so every match is visible
+      const collapsed = loadCollapsed();
+      renderNode(tree, 0);
+
+      // dirs first (alpha), then files (by title); indentation by depth
+      function renderNode(node: TreeNode, depth: number) {
+        [...node.dirs.keys()].sort((a, b) => a.localeCompare(b)).forEach((seg) => {
+          const child = node.dirs.get(seg)!;
+          const isCollapsed = !filtering && collapsed.has(child.rel);
+          const row = document.createElement("div"); row.className = "folder-row"; row.style.paddingLeft = (10 + depth * 13) + "px"; row.title = child.rel;
+          const car = document.createElement("span"); car.className = "fcaret"; car.textContent = isCollapsed ? "▶" : "▼";
+          const ic = document.createElement("span"); ic.className = "ficon"; ic.textContent = isCollapsed ? "📁" : "📂";
+          const nm = document.createElement("span"); nm.className = "fname"; nm.textContent = seg;
+          const ct = document.createElement("span"); ct.className = "fcount"; ct.textContent = String(countFiles(child));
+          row.appendChild(car); row.appendChild(ic); row.appendChild(nm); row.appendChild(ct);
+          const acts = document.createElement("span"); acts.className = "row-act";
+          const nn = document.createElement("button"); nn.textContent = "＋"; nn.title = "New note in this folder"; nn.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); newNote(child.rel); };
+          acts.appendChild(nn); row.appendChild(acts);
+          row.onclick = () => { if (!filtering) { toggleCollapsed(child.rel); renderList(q); } };
+          list.appendChild(row);
+          if (!isCollapsed) renderNode(child, depth + 1);
+        });
+        node.files.sort((a, b) => noteTitle(a).localeCompare(noteTitle(b))).forEach((f) => {
+          const a = document.createElement("a"); a.className = "note-link" + (note && f.path === note.file ? " active" : ""); a.style.paddingLeft = (10 + depth * 13) + "px";
+          const gl = document.createElement("span"); gl.className = "gl"; gl.textContent = GLYPH[f.fmt] || "·";
+          const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = noteTitle(f); nm.title = f.rel;
+          a.appendChild(gl); a.appendChild(nm);
+          const acts = document.createElement("span"); acts.className = "row-act";
+          const rn = document.createElement("button"); rn.textContent = "rename"; rn.title = "rename"; rn.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); renameNote(f); };
+          const dl = document.createElement("button"); dl.textContent = "✕"; dl.title = "delete"; dl.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); deleteNote(f); };
+          acts.appendChild(rn); acts.appendChild(dl); a.appendChild(acts);
+          a.onclick = (ev) => { ev.preventDefault(); go("/?file=" + encodeURIComponent(f.path)); };
+          list.appendChild(a);
+        });
+      }
     }
   }
   async function loadNotes() { try { const { files } = await fetch("/list?dir=" + encodeURIComponent(ROOT)).then((r) => r.json()); allNotes = files || []; renderSidebar(); } catch { renderSidebar(); } }
-  async function newNote() {
-    const name = window.prompt("New note name:"); if (!name) return;
+  async function newNote(folderRel?: string) {
+    const where = folderRel ? ` (in ${folderRel}/)` : "";
+    const name = window.prompt("New note name" + where + ":"); if (!name) return;
     const wantsHtml = /\.html?$/i.test(name.trim()); // decide ext from raw input…
     const clean = name.replace(/\.[a-z0-9]+$/i, "").replace(/[^a-zA-Z0-9 _-]/g, "").trim(); // …then strip the ext before cleaning so the dot doesn't get eaten
     if (!clean) { flash("invalid name", false); return; }
-    const path = ROOT + "/" + clean + (wantsHtml ? ".html" : ".md");
+    const dir = folderRel ? ROOT + "/" + folderRel : ROOT;
+    const path = dir + "/" + clean + (wantsHtml ? ".html" : ".md");
     const r = await fetch("/create", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ file: path, content: "# " + clean + "\n\n" }) }).then((x) => x.json());
     if (!r.ok) { flash(r.error || "couldn't create", false); return; }
     go("/?file=" + encodeURIComponent(path));

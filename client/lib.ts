@@ -114,3 +114,30 @@ export function mdLite(src: string): string {
     return "<p>" + lines.map(inline).join("<br>") + "</p>";
   }).join("");
 }
+
+// ---- folder tree -------------------------------------------------------------
+// Build a nested tree from each note's `rel` path (e.g. "Projects/Alpha/spec.md").
+// The server already walks subdirs and emits `rel`; this groups them for the sidebar.
+export type NoteRef = { rel: string; [k: string]: any };
+export type TreeNode = { rel: string; dirs: Map<string, TreeNode>; files: NoteRef[] };
+export function buildTree(notes: NoteRef[]): TreeNode {
+  const root: TreeNode = { rel: "", dirs: new Map(), files: [] };
+  for (const f of notes) {
+    const parts = String(f.rel).split("/");
+    let cur = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const seg = parts[i];
+      let child = cur.dirs.get(seg);
+      if (!child) { child = { rel: parts.slice(0, i + 1).join("/"), dirs: new Map(), files: [] }; cur.dirs.set(seg, child); }
+      cur = child;
+    }
+    cur.files.push(f);
+  }
+  return root;
+}
+// Total notes under a node, recursively (the count shown next to a folder).
+export function countFiles(n: TreeNode): number {
+  let c = n.files.length;
+  n.dirs.forEach((d) => (c += countFiles(d)));
+  return c;
+}

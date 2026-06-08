@@ -195,6 +195,17 @@ function styles(): string {
   .note-link:hover .row-act{display:inline-flex}
   .note-link .row-act button{font:inherit;font-size:11px;color:var(--subtle);background:transparent;border:none;cursor:pointer;padding:1px 4px;border-radius:4px}
   .note-link .row-act button:hover{color:var(--text);background:var(--surface)}
+  .folder-row{position:relative;display:flex;align-items:center;gap:5px;font-size:12.5px;color:var(--muted);padding:5px 10px;border-radius:7px;white-space:nowrap;overflow:hidden;cursor:pointer;user-select:none}
+  .folder-row:hover{background:var(--accent-tint);color:var(--text)}
+  .folder-row .fcaret{font-size:9px;color:var(--subtle);flex:none;width:9px;text-align:center;transition:transform .12s}
+  .folder-row .ficon{font-size:11px;flex:none}
+  .folder-row .fname{overflow:hidden;text-overflow:ellipsis;font-weight:500}
+  .folder-row .fcount{margin-left:6px;font-size:10.5px;color:var(--subtle);flex:none}
+  .folder-row .row-act{margin-left:auto;display:none;gap:2px}
+  .folder-row:hover .row-act{display:inline-flex}
+  .folder-row .row-act button{font:inherit;font-size:11px;color:var(--subtle);background:transparent;border:none;cursor:pointer;padding:1px 4px;border-radius:4px}
+  .folder-row .row-act button:hover{color:var(--text);background:var(--surface)}
+  .note-empty{font-size:12px;color:var(--subtle);padding:8px 10px;font-style:italic}
   .main{flex:1;min-width:0}
   .doc{max-width:760px;margin:0 auto;padding:40px 32px 22vh}
   .ProseMirror{outline:none;min-height:60vh}
