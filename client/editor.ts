@@ -599,10 +599,20 @@ if (note && mount) {
   function noteTitle(f: any): string { return f.name.replace(/\.(md|markdown|html?|htm)$/i, "").replace(/[-_]+/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()); }
 
   // folder tree helpers (buildTree/countFiles) live in lib.ts (pure, unit-tested)
-  // collapsed-folder state survives the full-page navigations, keyed per vault
-  function collapseKey(): string { return "tree-collapsed:" + ROOT; }
-  function loadCollapsed(): Set<string> { try { return new Set(JSON.parse(localStorage.getItem(collapseKey()) || "[]")); } catch { return new Set(); } }
-  function toggleCollapsed(rel: string) { const s = loadCollapsed(); s.has(rel) ? s.delete(rel) : s.add(rel); try { localStorage.setItem(collapseKey(), JSON.stringify([...s])); } catch {} }
+  // expanded-folder state survives the full-page navigations, keyed per vault.
+  // We track which folders are OPEN (default: all closed) so a fresh vault starts tidy.
+  function expandKey(): string { return "tree-expanded:" + ROOT; }
+  function loadExpanded(): Set<string> { try { return new Set(JSON.parse(localStorage.getItem(expandKey()) || "[]")); } catch { return new Set(); } }
+  function toggleExpanded(rel: string) { const s = loadExpanded(); s.has(rel) ? s.delete(rel) : s.add(rel); try { localStorage.setItem(expandKey(), JSON.stringify([...s])); } catch {} }
+  // ancestor folders of the open note are always shown so the active note stays visible
+  function activeAncestors(): Set<string> {
+    const s = new Set<string>();
+    if (!note || !note.file) return s;
+    const rel = note.file.startsWith(ROOT) ? note.file.slice(ROOT.length).replace(/^\//, "") : "";
+    const parts = rel.split("/");
+    for (let i = 0; i < parts.length - 1; i++) s.add(parts.slice(0, i + 1).join("/"));
+    return s;
+  }
   // native folder picker (macOS via /pick-folder); falls back to a path prompt if unavailable
   (window as any).__pickFolder = async (): Promise<string | null> => {
     let r: any = null;
@@ -644,14 +654,15 @@ if (note && mount) {
       if (!filtered.length) { const e = document.createElement("div"); e.className = "note-empty"; e.textContent = ql ? "No matching notes" : "No notes yet"; list.appendChild(e); return; }
       const tree = buildTree(filtered);
       const filtering = !!ql; // while filtering, force-expand so every match is visible
-      const collapsed = loadCollapsed();
+      const expanded = loadExpanded();
+      const pinned = activeAncestors(); // ancestors of the open note: always expanded
       renderNode(tree, 0);
 
       // dirs first (alpha), then files (by title); indentation by depth
       function renderNode(node: TreeNode, depth: number) {
         [...node.dirs.keys()].sort((a, b) => a.localeCompare(b)).forEach((seg) => {
           const child = node.dirs.get(seg)!;
-          const isCollapsed = !filtering && collapsed.has(child.rel);
+          const isCollapsed = !filtering && !expanded.has(child.rel) && !pinned.has(child.rel);
           const row = document.createElement("div"); row.className = "folder-row"; row.style.paddingLeft = (10 + depth * 13) + "px"; row.title = child.rel;
           const car = document.createElement("span"); car.className = "fcaret"; car.textContent = isCollapsed ? "▶" : "▼";
           const ic = document.createElement("span"); ic.className = "ficon"; ic.textContent = isCollapsed ? "📁" : "📂";
@@ -661,7 +672,7 @@ if (note && mount) {
           const acts = document.createElement("span"); acts.className = "row-act";
           const nn = document.createElement("button"); nn.textContent = "＋"; nn.title = "New note in this folder"; nn.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); newNote(child.rel); };
           acts.appendChild(nn); row.appendChild(acts);
-          row.onclick = () => { if (!filtering) { toggleCollapsed(child.rel); renderList(q); } };
+          row.onclick = () => { if (!filtering) { toggleExpanded(child.rel); renderList(q); } };
           list.appendChild(row);
           if (!isCollapsed) renderNode(child, depth + 1);
         });
