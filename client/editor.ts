@@ -391,8 +391,13 @@ function isolateRich(el: HTMLElement, doc: Document) {
 
 function prepareHtml(raw: string): string {
   const doc = new DOMParser().parseFromString(raw, "text/html");
-  // Preserve every <style>/<script> by relocating into <head> BEFORE tokenizing the
-  // body — otherwise styles living inside <body>/<article> get wiped on save.
+  // Preserve every <style>/<script> by relocating into <head> BEFORE tokenizing the body —
+  // otherwise document-level styles/scripts get wiped on save. PRESERVING a user's script is
+  // lossless (their files, often Claude-Code-authored — deleting it is the worse failure); it
+  // is SAFE in-app because the head is never injected into the live page (htmlTemplate is only
+  // a save-splice string) and rich blocks render via innerHTML, which never executes <script>.
+  // Body active content is still neutralized by stripActive for live render. Hardening against
+  // genuinely untrusted imported HTML is deferred — see the corpus 'security' subset.
   doc.querySelectorAll("style, script").forEach((el) => doc.head.appendChild(el));
   // Capture the doc's styles to inject into each rich block's SHADOW root — scoped, so
   // they render the content but NEVER leak into the editor chrome (the white-bg bug).
@@ -493,6 +498,7 @@ if (note && mount) {
     if (htmlTemplate) return spliceBody(htmlTemplate, BODY_TOKEN, bodyHtml);
     return `<!DOCTYPE html>\n<html><head><meta charset="utf-8"></head><body><article>\n${bodyHtml}\n</article></body></html>\n`;
   };
+  W.__serialize = serialize; // test seam: read the exact bytes a save would write (corpus harness)
 
   // -------- toast + save status --------
   const toast = document.createElement("div"); toast.className = "toast"; document.body.appendChild(toast);
