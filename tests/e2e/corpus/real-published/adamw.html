@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data:; script-src 'none'; object-src 'none'; base-uri 'self'; frame-ancestors 'self';">
+<title>AdamW</title>
+<style>
+/*
+ * md-to-redesigned-html default theme
+ * Linear / Vercel docs lineage. Sharp, modern, technical, calm-precise.
+ *
+ * Three layers, three different contracts with the LLM:
+ *
+ *   1. TOKENS (color, type, spacing, radii) — the shared visual language. Every
+ *      page should reference them. This is what makes a folder of notes feel like
+ *      one site. HARD contract: the render prompt instructs Claude to use these.
+ *
+ *   2. BASE STYLES (h1-h6, p, ul, table, code, details, ...) — every standard
+ *      HTML element is styled regardless of class. Pure semantic HTML still looks
+ *      decent. No special opt-in.
+ *
+ *   3. NAMED PATTERNS (.callout, .eyebrow, .index-card, .page--with-toc, ...) —
+ *      pre-baked moves for common shapes. SUGGESTIONS, not rules. The LLM is free
+ *      to invent: per-page <style> blocks and inline styles referencing tokens are
+ *      both encouraged. Coherence comes from tokens, not from class-name policing.
+ *
+ * Edit pattern names with care (they're referenced by the render prompt). Edit
+ * tokens deliberately (they're the entire visual contract).
+ */
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Tokens
+   ────────────────────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: light dark;
+
+  /* Color — light (zinc ramp + violet accent) */
+  --bg:            #ffffff;
+  --bg-elev:       #fafafa;
+  --bg-code:       #f4f4f5;
+  --fg:            #18181b;
+  --fg-secondary:  #3f3f46;
+  --fg-muted:      #71717a;
+  --rule:          #e4e4e7;
+  --rule-strong:   #d4d4d8;
+  --accent:        #6d28d9;
+  --accent-fg:     #ffffff;
+  --accent-soft:   #faf5ff;
+  --accent-rule:   #c4b5fd;
+  --good:          #15803d;
+  --bad:           #b91c1c;
+  --warn:          #b45309;
+
+  /* Type stacks */
+  --font-sans: "Inter", "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Type scale (anchored at 15px body) */
+  --text-3xs:  0.6875rem; /* 11 — micro-labels */
+  --text-2xs:  0.75rem;   /* 12 */
+  --text-xs:   0.8125rem; /* 13 */
+  --text-sm:   0.875rem;  /* 14 */
+  --text-base: 0.9375rem; /* 15 — body */
+  --text-md:   1rem;      /* 16 */
+  --text-lg:   1.125rem;  /* 18 */
+  --text-xl:   1.375rem;  /* 22 — h2 */
+  --text-2xl:  1.75rem;   /* 28 — h1 alt */
+  --text-3xl:  2rem;      /* 32 — h1 */
+
+  --leading-tight:   1.2;
+  --leading-snug:    1.35;
+  --leading-base:    1.55;
+  --leading-relaxed: 1.65;
+
+  --tracking-tight:  -0.015em;
+  --tracking-base:   0;
+  --tracking-wide:   0.06em;
+
+  /* Spacing (4px scale) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 2.5rem;
+  --space-8: 3rem;
+  --space-10: 4rem;
+  --space-12: 5rem;
+
+  /* Layout */
+  --content-width: 680px;
+  --page-width:    1080px;
+  --sidebar-width: 220px;
+  --aside-width:   240px;
+
+  /* Radii — sharp; ≤4px per design doc */
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 6px; /* reserved for larger cards if needed */
+
+  --border: 1px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:            #09090b;
+    --bg-elev:       #18181b;
+    --bg-code:       #18181b;
+    --fg:            #fafafa;
+    --fg-secondary:  #d4d4d8;
+    --fg-muted:      #a1a1aa;
+    --rule:          #27272a;
+    --rule-strong:   #3f3f46;
+    --accent:        #a78bfa;
+    --accent-fg:     #18181b;
+    --accent-soft:   #1e1631;
+    --accent-rule:   #5b21b6;
+    --good:          #4ade80;
+    --bad:           #fca5a5;
+    --warn:          #fbbf24;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Reset
+   ────────────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+* { margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; tab-size: 4; }
+body { min-height: 100vh; }
+img, picture, video, canvas, svg { display: block; max-width: 100%; }
+input, button, textarea, select { font: inherit; color: inherit; }
+button { background: none; border: none; cursor: pointer; }
+p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Base
+   ────────────────────────────────────────────────────────────────────────── */
+html {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: var(--leading-base);
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv11", "ss01", "ss03"; /* Inter stylistic sets — gracefully ignored elsewhere */
+}
+
+body {
+  font-size: var(--text-base);
+  color: var(--fg-secondary);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Typography
+   ────────────────────────────────────────────────────────────────────────── */
+h1, h2, h3, h4, h5, h6 {
+  color: var(--fg);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-tight);
+  scroll-margin-top: var(--space-6);
+}
+h1 { font-size: var(--text-3xl); margin-bottom: var(--space-4); }
+h2 { font-size: var(--text-xl); margin: var(--space-7) 0 var(--space-3); }
+h3 { font-size: var(--text-lg); margin: var(--space-5) 0 var(--space-2); }
+h4 { font-size: var(--text-md); margin: var(--space-4) 0 var(--space-2); }
+h5 { font-size: var(--text-base); margin: var(--space-4) 0 var(--space-2); }
+h6 {
+  font-size: var(--text-3xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+p { margin-bottom: var(--space-3); max-width: var(--content-width); }
+p:last-child { margin-bottom: 0; }
+
+small { font-size: var(--text-xs); color: var(--fg-muted); }
+strong { color: var(--fg); font-weight: 600; }
+em { font-style: italic; }
+mark {
+  background: var(--accent-soft);
+  color: var(--fg);
+  padding: 0 0.2em;
+  border-radius: var(--radius-sm);
+}
+abbr[title] {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: help;
+}
+
+ul, ol {
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-5);
+  max-width: var(--content-width);
+}
+ul { list-style: disc; }
+ol { list-style: decimal; }
+li { margin-bottom: var(--space-1); }
+li > ul, li > ol { margin-top: var(--space-1); margin-bottom: 0; }
+
+dl { margin: 0 0 var(--space-3); max-width: var(--content-width); }
+dt { color: var(--fg); font-weight: 600; margin-top: var(--space-3); }
+dd { margin-left: var(--space-4); color: var(--fg-secondary); }
+
+blockquote {
+  margin: var(--space-4) 0;
+  padding: var(--space-1) var(--space-4);
+  border-left: 2px solid var(--rule-strong);
+  color: var(--fg-secondary);
+  font-style: normal;
+  max-width: var(--content-width);
+}
+blockquote > p:last-child { margin-bottom: 0; }
+
+hr {
+  border: none;
+  border-top: 1px solid var(--rule);
+  margin: var(--space-6) 0;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Inline code + pre
+   ────────────────────────────────────────────────────────────────────────── */
+code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--bg-code);
+  color: var(--fg);
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--rule);
+}
+
+pre {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  background: var(--bg-code);
+  color: var(--fg);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--rule);
+  overflow-x: auto;
+  margin: var(--space-4) 0;
+  max-width: 100%;
+}
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+kbd {
+  font-family: var(--font-mono);
+  font-size: 0.75em;
+  background: var(--bg-elev);
+  color: var(--fg);
+  padding: 0.15em 0.4em;
+  border: 1px solid var(--rule-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Links
+   ────────────────────────────────────────────────────────────────────────── */
+a {
+  color: var(--accent);
+  text-decoration: none;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+a:hover { text-decoration: underline; }
+a.muted { color: var(--fg-secondary); }
+a.muted:hover { color: var(--fg); }
+a.ext::after { content: " ↗"; color: var(--fg-muted); font-size: 0.85em; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Tables
+   ────────────────────────────────────────────────────────────────────────── */
+table {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: var(--content-width);
+  margin: var(--space-4) 0;
+  font-size: var(--text-sm);
+}
+th, td {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+th {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  font-weight: 600;
+  border-bottom-color: var(--rule-strong);
+}
+tbody tr:last-child td { border-bottom: none; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Component primitives — the LLM composes against these
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Eyebrow: a micro-label above a heading. e.g. "GUIDE" / "REFERENCE" */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  margin-bottom: var(--space-2);
+  display: inline-block;
+}
+
+/* Lede: the first paragraph after h1, slightly larger */
+.lede {
+  font-size: var(--text-md);
+  color: var(--fg-secondary);
+  margin-bottom: var(--space-5);
+  max-width: var(--content-width);
+  line-height: var(--leading-relaxed);
+}
+
+/* Callout: bordered block with a colored left rule. */
+.callout {
+  background: var(--bg-elev);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-4) 0;
+  max-width: var(--content-width);
+  font-size: var(--text-sm);
+}
+.callout > :last-child { margin-bottom: 0; }
+.callout--note    { border-left-color: var(--accent); }
+.callout--good    { border-left-color: var(--good);  background: color-mix(in srgb, var(--good) 5%, var(--bg-elev)); }
+.callout--warn    { border-left-color: var(--warn);  background: color-mix(in srgb, var(--warn) 6%, var(--bg-elev)); }
+.callout--bad     { border-left-color: var(--bad);   background: color-mix(in srgb, var(--bad) 5%, var(--bg-elev)); }
+.callout strong { color: var(--fg); }
+
+/* Card: bordered surface for grouped content (e.g. index entries) */
+.card {
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  transition: border-color 120ms ease;
+}
+a.card:hover, .card:hover { border-color: var(--rule-strong); }
+.card h2, .card h3 { margin-top: 0; }
+
+/* Tag chip: free-form taxonomy from the LLM */
+.tag {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  color: var(--fg-muted);
+  background: var(--bg-elev);
+  border: 1px solid var(--rule);
+  padding: 0.1em 0.45em;
+  border-radius: var(--radius-sm);
+  text-transform: lowercase;
+  letter-spacing: 0;
+}
+.tag + .tag { margin-left: var(--space-1); }
+a.tag:hover { color: var(--fg); border-color: var(--rule-strong); }
+
+/* Badge: status / category indicator (more prominent than .tag) */
+.badge {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  padding: 0.15em 0.5em;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent-rule);
+}
+
+/* Term: glossary term inline */
+.term {
+  border-bottom: 1px dotted var(--accent-rule);
+  color: var(--fg);
+  cursor: help;
+}
+
+/* Native details — collapsibles */
+details {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  margin: var(--space-3) 0;
+  max-width: var(--content-width);
+  background: var(--bg);
+  overflow: hidden;
+}
+details summary {
+  list-style: none;
+  cursor: pointer;
+  padding: var(--space-3) var(--space-4);
+  color: var(--fg);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+details summary::-webkit-details-marker { display: none; }
+details summary::before {
+  content: "›";
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  display: inline-block;
+  transition: transform 120ms ease;
+  font-size: 1.1em;
+  line-height: 1;
+}
+details[open] summary::before { transform: rotate(90deg); }
+details > :not(summary) {
+  padding: 0 var(--space-4) var(--space-3);
+}
+
+/* Figure + caption */
+figure { margin: var(--space-4) 0; max-width: var(--content-width); }
+figcaption {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  margin-top: var(--space-2);
+  text-align: left;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Layout primitives
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* .page: a generous single-column page wrapper with default padding */
+.page {
+  max-width: var(--page-width);
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-5) var(--space-12);
+}
+
+/* .page--with-aside: main content + sticky aside grid */
+.page--with-aside {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--aside-width);
+  gap: var(--space-7);
+}
+.page--with-aside > aside {
+  position: sticky;
+  top: var(--space-6);
+  align-self: start;
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+@media (max-width: 880px) {
+  .page--with-aside { grid-template-columns: 1fr; }
+  .page--with-aside > aside { position: static; }
+}
+
+/* .page--with-toc: sticky TOC on the LEFT */
+.page--with-toc {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  gap: var(--space-7);
+}
+.page--with-toc > nav {
+  position: sticky;
+  top: var(--space-6);
+  align-self: start;
+  font-size: var(--text-xs);
+}
+.page--with-toc > nav a {
+  display: block;
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
+  border-left: 1px solid var(--rule);
+  color: var(--fg-muted);
+}
+.page--with-toc > nav a:hover, .page--with-toc > nav a[aria-current="page"] {
+  color: var(--fg);
+  border-left-color: var(--accent);
+}
+@media (max-width: 880px) {
+  .page--with-toc { grid-template-columns: 1fr; }
+  .page--with-toc > nav { display: none; }
+}
+
+/* article: the content body */
+article { max-width: var(--content-width); }
+article > * + h2 { margin-top: var(--space-7); }
+article > * + h3 { margin-top: var(--space-5); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Index page — the hub
+   ────────────────────────────────────────────────────────────────────────── */
+.index-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-4);
+  margin: var(--space-5) 0;
+  max-width: 100%;
+}
+.index-card {
+  display: block;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  color: var(--fg-secondary);
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+.index-card:hover { border-color: var(--rule-strong); text-decoration: none; }
+.index-card h3 {
+  font-size: var(--text-md);
+  margin: 0 0 var(--space-2);
+  color: var(--fg);
+}
+.index-card p {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  margin-bottom: var(--space-3);
+  line-height: var(--leading-snug);
+}
+.index-card .tags { margin-top: auto; }
+
+/* Filter bar — for tag-driven grouping on index */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: var(--space-4) 0;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--rule);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Utilities
+   ────────────────────────────────────────────────────────────────────────── */
+.muted { color: var(--fg-muted); }
+.mono  { font-family: var(--font-mono); }
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0);
+  white-space: nowrap; border: 0;
+}
+
+</style>
+</head>
+<body>
+<main class="page">
+
+<style>
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: var(--space-3);
+    margin: var(--space-4) 0;
+    max-width: var(--content-width);
+  }
+  .stat-card {
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-md);
+    padding: var(--space-3);
+    background: var(--bg);
+  }
+  .stat-card .stat-label {
+    font-family: var(--font-mono);
+    font-size: var(--text-3xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--fg-muted);
+    margin-bottom: var(--space-1);
+  }
+  .stat-card .stat-value {
+    font-family: var(--font-mono);
+    font-size: var(--text-md);
+    color: var(--fg);
+  }
+  .stat-card .stat-note {
+    font-size: var(--text-xs);
+    color: var(--fg-muted);
+    margin-top: var(--space-1);
+    line-height: var(--leading-snug);
+  }
+  .moment-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-3);
+    margin: var(--space-4) 0;
+    max-width: var(--content-width);
+  }
+  .moment-pair .card h4 {
+    margin-top: 0;
+    font-family: var(--font-mono);
+    color: var(--accent);
+  }
+  .memory-bar {
+    display: flex;
+    width: 100%;
+    max-width: var(--content-width);
+    margin: var(--space-3) 0 var(--space-2);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    height: 28px;
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+  }
+  .memory-bar > div {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--fg);
+  }
+  .mem-weights { background: var(--bg-elev); flex: 4; }
+  .mem-grads   { background: color-mix(in srgb, var(--fg-muted) 18%, var(--bg-elev)); flex: 4; }
+  .mem-m       { background: color-mix(in srgb, var(--accent) 25%, var(--bg-elev)); flex: 4; color: var(--fg); }
+  .mem-v       { background: color-mix(in srgb, var(--accent) 45%, var(--bg-elev)); flex: 4; color: var(--accent-fg); }
+  .memory-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    font-size: var(--text-xs);
+    color: var(--fg-muted);
+    margin-bottom: var(--space-4);
+    max-width: var(--content-width);
+  }
+  .memory-legend span::before {
+    content: "";
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    margin-right: var(--space-1);
+    border-radius: var(--radius-sm);
+    vertical-align: middle;
+    border: 1px solid var(--rule);
+  }
+  .memory-legend .lg-w::before { background: var(--bg-elev); }
+  .memory-legend .lg-g::before { background: color-mix(in srgb, var(--fg-muted) 18%, var(--bg-elev)); }
+  .memory-legend .lg-m::before { background: color-mix(in srgb, var(--accent) 25%, var(--bg-elev)); }
+  .memory-legend .lg-v::before { background: color-mix(in srgb, var(--accent) 45%, var(--bg-elev)); }
+  .decay-compare {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-3);
+    margin: var(--space-4) 0;
+    max-width: var(--content-width);
+  }
+  .decay-compare .card h4 {
+    margin-top: 0;
+    font-size: var(--text-base);
+  }
+  .decay-compare pre {
+    margin: var(--space-2) 0 0;
+    font-size: var(--text-3xs);
+  }
+</style>
+<article>
+
+  <span class="eyebrow">Optimizer</span>
+  <h1>AdamW</h1>
+
+  <p class="lede">
+    AdamW is the optimizer everyone uses to train LLMs. "Adam" is the
+    per-parameter adaptive-learning-rate optimizer from Kingma &amp; Ba 2014;
+    the "W" is for "decoupled weight decay" (Loshchilov &amp; Hutter 2019),
+    which separates weight decay from the gradient update. Every Karpathy
+    training script — bigram, MLP, makemore, nanoGPT, build-nanogpt,
+    llama2.c, llm.c — uses AdamW.
+  </p>
+
+  <h2>What Adam does</h2>
+
+  <p>For each parameter <code>p</code>, Adam keeps two running statistics:</p>
+
+  <div class="moment-pair">
+    <div class="card">
+      <h4>m</h4>
+      <p>Exponential moving average of the gradient — the <strong>first moment</strong>, "momentum".</p>
+    </div>
+    <div class="card">
+      <h4>v</h4>
+      <p>Exponential moving average of the squared gradient — the <strong>second moment</strong>, "RMSprop".</p>
+    </div>
+  </div>
+
+  <p>Each step:</p>
+
+<pre><code>m = beta1 * m + (1 - beta1) * grad
+v = beta2 * v + (1 - beta2) * grad^2
+m_hat = m / (1 - beta1^t)    # bias correction
+v_hat = v / (1 - beta2^t)
+p = p - lr * m_hat / (sqrt(v_hat) + eps)</code></pre>
+
+  <p>
+    The intuition: <code>m_hat</code> is the smoothed direction of the
+    gradient. <code>sqrt(v_hat)</code> is the smoothed magnitude. Dividing
+    one by the other gives an update that's roughly <strong>scale-free</strong>
+    in the gradient — each parameter gets an update of roughly fixed magnitude
+    regardless of whether its gradient is huge or tiny. This is what
+    "adaptive" means.
+  </p>
+
+  <p>
+    The bias correction (<code>/ (1 - beta1^t)</code>) accounts for the fact
+    that <code>m</code> and <code>v</code> start at zero and need a few steps
+    to reach their true running averages. Without it, the early steps would be
+    unfairly damped.
+  </p>
+
+  <h2>AdamW: decoupled weight decay</h2>
+
+  <p>
+    Classic Adam adds an L2 penalty to the loss:
+    <code>loss + 0.5 * wd * ||p||^2</code>. The gradient of that penalty is
+    <code>wd * p</code>, which gets added into <code>grad</code> and then runs
+    through the adaptive scaling. This is wrong — the weight decay should be a
+    pull toward zero of constant magnitude, not modulated by
+    <code>1/sqrt(v)</code>.
+  </p>
+
+  <p>AdamW fixes this by applying weight decay directly to the parameter:</p>
+
+  <div class="decay-compare">
+    <div class="card">
+      <h4>Classic Adam <span class="badge" style="background:color-mix(in srgb, var(--bad) 10%, var(--bg-elev));color:var(--bad);border-color:color-mix(in srgb, var(--bad) 30%, var(--rule))">coupled</span></h4>
+      <p class="muted" style="font-size:var(--text-xs)">Weight decay flows through the adaptive scaling — parameters with large gradients effectively get less decay.</p>
+<pre><code>loss = loss + 0.5 * wd * ||p||^2
+grad = grad + wd * p
+p = p - lr * m_hat / (sqrt(v_hat) + eps)</code></pre>
+    </div>
+    <div class="card">
+      <h4>AdamW <span class="badge" style="background:color-mix(in srgb, var(--good) 10%, var(--bg-elev));color:var(--good);border-color:color-mix(in srgb, var(--good) 30%, var(--rule))">decoupled</span></h4>
+      <p class="muted" style="font-size:var(--text-xs)">Weight decay is applied directly to the parameter, outside the adaptive scaling.</p>
+<pre><code>p = p - lr * (m_hat / (sqrt(v_hat) + eps)
+              + wd * p)</code></pre>
+    </div>
+  </div>
+
+  <p>In Karpathy's CUDA implementation:</p>
+
+<pre><code>// from llm.c/llmc/adamw.cuh
+float param = old_param - (learning_rate * (m / (sqrtf(v) + eps) + weight_decay * old_param));</code></pre>
+
+  <p>
+    This decoupling matters: with classic Adam, larger gradient parameters
+    effectively got less weight decay. AdamW makes the decay genuinely
+    uniform.
+  </p>
+
+  <h2>Selective weight decay</h2>
+
+  <p>
+    A standard trick in <code>nanoGPT/model.py</code>,
+    <code>llama2.c/model.py</code>, and
+    <code>build-nanogpt/train_gpt2.py</code>:
+  </p>
+
+<pre><code># any parameters that is 2D will be weight decayed, otherwise no.
+# i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
+decay_params = [p for n, p in param_dict.items() if p.dim() &gt;= 2]
+nodecay_params = [p for n, p in param_dict.items() if p.dim() &lt; 2]
+optim_groups = [
+    {'params': decay_params, 'weight_decay': weight_decay},
+    {'params': nodecay_params, 'weight_decay': 0.0}
+]</code></pre>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Group</th>
+        <th>Examples</th>
+        <th>Weight decay</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>p.dim() &gt;= 2</code></td>
+        <td>matmul weight tensors, embeddings</td>
+        <td><code>weight_decay</code></td>
+      </tr>
+      <tr>
+        <td><code>p.dim() &lt; 2</code></td>
+        <td>biases, LayerNorm gains/biases</td>
+        <td><code>0.0</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    Biases and LayerNorm gains/biases (1D tensors) don't get weight decay.
+    Matrix weights and embeddings (2D tensors) do. The intuition: you want to
+    regularize the bulk of the model, but pulling LayerNorm weights toward
+    zero would suppress the entire layer's contribution to the residual
+    stream.
+  </p>
+
+  <p>
+    The standard value is <code>weight_decay = 0.1</code> for LLM pretraining.
+    Karpathy uses this throughout.
+  </p>
+
+  <h2>Hyperparameters</h2>
+
+  <p>The defaults from build-nanogpt that reproduce GPT-2 (124M):</p>
+
+<pre><code>optimizer = torch.optim.AdamW(
+    optim_groups,
+    lr=6e-4,
+    betas=(0.9, 0.95),
+    eps=1e-8,
+    fused=use_fused,
+)</code></pre>
+
+  <div class="stat-grid">
+    <div class="stat-card">
+      <div class="stat-label">betas</div>
+      <div class="stat-value">(0.9, 0.95)</div>
+      <div class="stat-note">PyTorch default is (0.9, 0.999). The lower beta2 is from the GPT-2 / GPT-3 papers and adapts faster to changing gradient magnitudes. Worth knowing because the PyTorch default isn't great for LLM training.</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">eps</div>
+      <div class="stat-value">1e-8</div>
+      <div class="stat-note">Standard.</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">fused</div>
+      <div class="stat-value">True (CUDA)</div>
+      <div class="stat-note">PyTorch has a fused AdamW kernel; it's a free speedup.</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">lr</div>
+      <div class="stat-value">6e-4</div>
+      <div class="stat-note">Follows a <a href="learning-rate-schedules.html">cosine warmup schedule</a>.</div>
+    </div>
+  </div>
+
+  <h2>Memory cost</h2>
+
+  <p>
+    AdamW stores <code>m</code> and <code>v</code> per parameter, both in
+    fp32. For a model with N parameters at fp32, that's <code>8N</code> bytes
+    of optimizer state on top of <code>4N</code> bytes of weights and
+    <code>4N</code> of gradients — <strong>3× the model size in memory for
+    the optimizer alone.</strong>
+  </p>
+
+  <figure>
+    <div class="memory-bar" aria-label="Memory layout for AdamW training, fp32: weights 4N, gradients 4N, m 4N, v 4N">
+      <div class="mem-weights">weights 4N</div>
+      <div class="mem-grads">grads 4N</div>
+      <div class="mem-m">m 4N</div>
+      <div class="mem-v">v 4N</div>
+    </div>
+    <div class="memory-legend">
+      <span class="lg-w">weights (4N)</span>
+      <span class="lg-g">gradients (4N)</span>
+      <span class="lg-m">m — first moment (4N)</span>
+      <span class="lg-v">v — second moment (4N)</span>
+    </div>
+    <figcaption>Per-parameter memory in fp32. Optimizer state (m + v) is 8N — twice the size of the weights themselves.</figcaption>
+  </figure>
+
+  <div class="callout callout--note">
+    This is why optimizer state is the dominant memory cost in LLM training
+    (more than gradients, often more than weights) and why "ZeRO" / FSDP
+    optimizer-state sharding is a big win.
+  </div>
+
+  <p>
+    <code>llm.c</code> keeps a master copy of params in fp32 plus an
+    fp16/bfloat16 working copy, so the cost is even higher — but this is what
+    lets <a href="mixed-precision-and-mfu.html">mixed precision</a> training
+    maintain accuracy.
+  </p>
+
+  <h2>Related</h2>
+
+  <dl>
+    <dt><a href="learning-rate-schedules.html">learning-rate-schedules</a></dt>
+    <dd>the LR is what gets passed in</dd>
+    <dt><a href="backpropagation.html">backpropagation</a></dt>
+    <dd>produces the gradients AdamW consumes</dd>
+    <dt><a href="mixed-precision-and-mfu.html">mixed-precision-and-mfu</a></dt>
+    <dd>why master params exist</dd>
+  </dl>
+
+</article>
+
+
+</main>
+</body>
+</html>

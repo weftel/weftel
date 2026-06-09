@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data:; script-src 'none'; object-src 'none'; base-uri 'self'; frame-ancestors 'self';">
+<title>The Transformer Block</title>
+<style>
+/*
+ * md-to-redesigned-html default theme
+ * Linear / Vercel docs lineage. Sharp, modern, technical, calm-precise.
+ *
+ * Three layers, three different contracts with the LLM:
+ *
+ *   1. TOKENS (color, type, spacing, radii) — the shared visual language. Every
+ *      page should reference them. This is what makes a folder of notes feel like
+ *      one site. HARD contract: the render prompt instructs Claude to use these.
+ *
+ *   2. BASE STYLES (h1-h6, p, ul, table, code, details, ...) — every standard
+ *      HTML element is styled regardless of class. Pure semantic HTML still looks
+ *      decent. No special opt-in.
+ *
+ *   3. NAMED PATTERNS (.callout, .eyebrow, .index-card, .page--with-toc, ...) —
+ *      pre-baked moves for common shapes. SUGGESTIONS, not rules. The LLM is free
+ *      to invent: per-page <style> blocks and inline styles referencing tokens are
+ *      both encouraged. Coherence comes from tokens, not from class-name policing.
+ *
+ * Edit pattern names with care (they're referenced by the render prompt). Edit
+ * tokens deliberately (they're the entire visual contract).
+ */
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Tokens
+   ────────────────────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: light dark;
+
+  /* Color — light (zinc ramp + violet accent) */
+  --bg:            #ffffff;
+  --bg-elev:       #fafafa;
+  --bg-code:       #f4f4f5;
+  --fg:            #18181b;
+  --fg-secondary:  #3f3f46;
+  --fg-muted:      #71717a;
+  --rule:          #e4e4e7;
+  --rule-strong:   #d4d4d8;
+  --accent:        #6d28d9;
+  --accent-fg:     #ffffff;
+  --accent-soft:   #faf5ff;
+  --accent-rule:   #c4b5fd;
+  --good:          #15803d;
+  --bad:           #b91c1c;
+  --warn:          #b45309;
+
+  /* Type stacks */
+  --font-sans: "Inter", "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Type scale (anchored at 15px body) */
+  --text-3xs:  0.6875rem; /* 11 — micro-labels */
+  --text-2xs:  0.75rem;   /* 12 */
+  --text-xs:   0.8125rem; /* 13 */
+  --text-sm:   0.875rem;  /* 14 */
+  --text-base: 0.9375rem; /* 15 — body */
+  --text-md:   1rem;      /* 16 */
+  --text-lg:   1.125rem;  /* 18 */
+  --text-xl:   1.375rem;  /* 22 — h2 */
+  --text-2xl:  1.75rem;   /* 28 — h1 alt */
+  --text-3xl:  2rem;      /* 32 — h1 */
+
+  --leading-tight:   1.2;
+  --leading-snug:    1.35;
+  --leading-base:    1.55;
+  --leading-relaxed: 1.65;
+
+  --tracking-tight:  -0.015em;
+  --tracking-base:   0;
+  --tracking-wide:   0.06em;
+
+  /* Spacing (4px scale) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 2.5rem;
+  --space-8: 3rem;
+  --space-10: 4rem;
+  --space-12: 5rem;
+
+  /* Layout */
+  --content-width: 680px;
+  --page-width:    1080px;
+  --sidebar-width: 220px;
+  --aside-width:   240px;
+
+  /* Radii — sharp; ≤4px per design doc */
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 6px; /* reserved for larger cards if needed */
+
+  --border: 1px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:            #09090b;
+    --bg-elev:       #18181b;
+    --bg-code:       #18181b;
+    --fg:            #fafafa;
+    --fg-secondary:  #d4d4d8;
+    --fg-muted:      #a1a1aa;
+    --rule:          #27272a;
+    --rule-strong:   #3f3f46;
+    --accent:        #a78bfa;
+    --accent-fg:     #18181b;
+    --accent-soft:   #1e1631;
+    --accent-rule:   #5b21b6;
+    --good:          #4ade80;
+    --bad:           #fca5a5;
+    --warn:          #fbbf24;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Reset
+   ────────────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+* { margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; tab-size: 4; }
+body { min-height: 100vh; }
+img, picture, video, canvas, svg { display: block; max-width: 100%; }
+input, button, textarea, select { font: inherit; color: inherit; }
+button { background: none; border: none; cursor: pointer; }
+p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Base
+   ────────────────────────────────────────────────────────────────────────── */
+html {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: var(--leading-base);
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv11", "ss01", "ss03"; /* Inter stylistic sets — gracefully ignored elsewhere */
+}
+
+body {
+  font-size: var(--text-base);
+  color: var(--fg-secondary);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Typography
+   ────────────────────────────────────────────────────────────────────────── */
+h1, h2, h3, h4, h5, h6 {
+  color: var(--fg);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-tight);
+  scroll-margin-top: var(--space-6);
+}
+h1 { font-size: var(--text-3xl); margin-bottom: var(--space-4); }
+h2 { font-size: var(--text-xl); margin: var(--space-7) 0 var(--space-3); }
+h3 { font-size: var(--text-lg); margin: var(--space-5) 0 var(--space-2); }
+h4 { font-size: var(--text-md); margin: var(--space-4) 0 var(--space-2); }
+h5 { font-size: var(--text-base); margin: var(--space-4) 0 var(--space-2); }
+h6 {
+  font-size: var(--text-3xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+p { margin-bottom: var(--space-3); max-width: var(--content-width); }
+p:last-child { margin-bottom: 0; }
+
+small { font-size: var(--text-xs); color: var(--fg-muted); }
+strong { color: var(--fg); font-weight: 600; }
+em { font-style: italic; }
+mark {
+  background: var(--accent-soft);
+  color: var(--fg);
+  padding: 0 0.2em;
+  border-radius: var(--radius-sm);
+}
+abbr[title] {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: help;
+}
+
+ul, ol {
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-5);
+  max-width: var(--content-width);
+}
+ul { list-style: disc; }
+ol { list-style: decimal; }
+li { margin-bottom: var(--space-1); }
+li > ul, li > ol { margin-top: var(--space-1); margin-bottom: 0; }
+
+dl { margin: 0 0 var(--space-3); max-width: var(--content-width); }
+dt { color: var(--fg); font-weight: 600; margin-top: var(--space-3); }
+dd { margin-left: var(--space-4); color: var(--fg-secondary); }
+
+blockquote {
+  margin: var(--space-4) 0;
+  padding: var(--space-1) var(--space-4);
+  border-left: 2px solid var(--rule-strong);
+  color: var(--fg-secondary);
+  font-style: normal;
+  max-width: var(--content-width);
+}
+blockquote > p:last-child { margin-bottom: 0; }
+
+hr {
+  border: none;
+  border-top: 1px solid var(--rule);
+  margin: var(--space-6) 0;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Inline code + pre
+   ────────────────────────────────────────────────────────────────────────── */
+code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--bg-code);
+  color: var(--fg);
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--rule);
+}
+
+pre {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  background: var(--bg-code);
+  color: var(--fg);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--rule);
+  overflow-x: auto;
+  margin: var(--space-4) 0;
+  max-width: 100%;
+}
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+kbd {
+  font-family: var(--font-mono);
+  font-size: 0.75em;
+  background: var(--bg-elev);
+  color: var(--fg);
+  padding: 0.15em 0.4em;
+  border: 1px solid var(--rule-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Links
+   ────────────────────────────────────────────────────────────────────────── */
+a {
+  color: var(--accent);
+  text-decoration: none;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+a:hover { text-decoration: underline; }
+a.muted { color: var(--fg-secondary); }
+a.muted:hover { color: var(--fg); }
+a.ext::after { content: " ↗"; color: var(--fg-muted); font-size: 0.85em; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Tables
+   ────────────────────────────────────────────────────────────────────────── */
+table {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: var(--content-width);
+  margin: var(--space-4) 0;
+  font-size: var(--text-sm);
+}
+th, td {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+th {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  font-weight: 600;
+  border-bottom-color: var(--rule-strong);
+}
+tbody tr:last-child td { border-bottom: none; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Component primitives — the LLM composes against these
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Eyebrow: a micro-label above a heading. e.g. "GUIDE" / "REFERENCE" */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  margin-bottom: var(--space-2);
+  display: inline-block;
+}
+
+/* Lede: the first paragraph after h1, slightly larger */
+.lede {
+  font-size: var(--text-md);
+  color: var(--fg-secondary);
+  margin-bottom: var(--space-5);
+  max-width: var(--content-width);
+  line-height: var(--leading-relaxed);
+}
+
+/* Callout: bordered block with a colored left rule. */
+.callout {
+  background: var(--bg-elev);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-4) 0;
+  max-width: var(--content-width);
+  font-size: var(--text-sm);
+}
+.callout > :last-child { margin-bottom: 0; }
+.callout--note    { border-left-color: var(--accent); }
+.callout--good    { border-left-color: var(--good);  background: color-mix(in srgb, var(--good) 5%, var(--bg-elev)); }
+.callout--warn    { border-left-color: var(--warn);  background: color-mix(in srgb, var(--warn) 6%, var(--bg-elev)); }
+.callout--bad     { border-left-color: var(--bad);   background: color-mix(in srgb, var(--bad) 5%, var(--bg-elev)); }
+.callout strong { color: var(--fg); }
+
+/* Card: bordered surface for grouped content (e.g. index entries) */
+.card {
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  transition: border-color 120ms ease;
+}
+a.card:hover, .card:hover { border-color: var(--rule-strong); }
+.card h2, .card h3 { margin-top: 0; }
+
+/* Tag chip: free-form taxonomy from the LLM */
+.tag {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  color: var(--fg-muted);
+  background: var(--bg-elev);
+  border: 1px solid var(--rule);
+  padding: 0.1em 0.45em;
+  border-radius: var(--radius-sm);
+  text-transform: lowercase;
+  letter-spacing: 0;
+}
+.tag + .tag { margin-left: var(--space-1); }
+a.tag:hover { color: var(--fg); border-color: var(--rule-strong); }
+
+/* Badge: status / category indicator (more prominent than .tag) */
+.badge {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  padding: 0.15em 0.5em;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent-rule);
+}
+
+/* Term: glossary term inline */
+.term {
+  border-bottom: 1px dotted var(--accent-rule);
+  color: var(--fg);
+  cursor: help;
+}
+
+/* Native details — collapsibles */
+details {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  margin: var(--space-3) 0;
+  max-width: var(--content-width);
+  background: var(--bg);
+  overflow: hidden;
+}
+details summary {
+  list-style: none;
+  cursor: pointer;
+  padding: var(--space-3) var(--space-4);
+  color: var(--fg);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+details summary::-webkit-details-marker { display: none; }
+details summary::before {
+  content: "›";
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  display: inline-block;
+  transition: transform 120ms ease;
+  font-size: 1.1em;
+  line-height: 1;
+}
+details[open] summary::before { transform: rotate(90deg); }
+details > :not(summary) {
+  padding: 0 var(--space-4) var(--space-3);
+}
+
+/* Figure + caption */
+figure { margin: var(--space-4) 0; max-width: var(--content-width); }
+figcaption {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  margin-top: var(--space-2);
+  text-align: left;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Layout primitives
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* .page: a generous single-column page wrapper with default padding */
+.page {
+  max-width: var(--page-width);
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-5) var(--space-12);
+}
+
+/* .page--with-aside: main content + sticky aside grid */
+.page--with-aside {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--aside-width);
+  gap: var(--space-7);
+}
+.page--with-aside > aside {
+  position: sticky;
+  top: var(--space-6);
+  align-self: start;
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+@media (max-width: 880px) {
+  .page--with-aside { grid-template-columns: 1fr; }
+  .page--with-aside > aside { position: static; }
+}
+
+/* .page--with-toc: sticky TOC on the LEFT */
+.page--with-toc {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  gap: var(--space-7);
+}
+.page--with-toc > nav {
+  position: sticky;
+  top: var(--space-6);
+  align-self: start;
+  font-size: var(--text-xs);
+}
+.page--with-toc > nav a {
+  display: block;
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
+  border-left: 1px solid var(--rule);
+  color: var(--fg-muted);
+}
+.page--with-toc > nav a:hover, .page--with-toc > nav a[aria-current="page"] {
+  color: var(--fg);
+  border-left-color: var(--accent);
+}
+@media (max-width: 880px) {
+  .page--with-toc { grid-template-columns: 1fr; }
+  .page--with-toc > nav { display: none; }
+}
+
+/* article: the content body */
+article { max-width: var(--content-width); }
+article > * + h2 { margin-top: var(--space-7); }
+article > * + h3 { margin-top: var(--space-5); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Index page — the hub
+   ────────────────────────────────────────────────────────────────────────── */
+.index-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-4);
+  margin: var(--space-5) 0;
+  max-width: 100%;
+}
+.index-card {
+  display: block;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  color: var(--fg-secondary);
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+.index-card:hover { border-color: var(--rule-strong); text-decoration: none; }
+.index-card h3 {
+  font-size: var(--text-md);
+  margin: 0 0 var(--space-2);
+  color: var(--fg);
+}
+.index-card p {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  margin-bottom: var(--space-3);
+  line-height: var(--leading-snug);
+}
+.index-card .tags { margin-top: auto; }
+
+/* Filter bar — for tag-driven grouping on index */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: var(--space-4) 0;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--rule);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Utilities
+   ────────────────────────────────────────────────────────────────────────── */
+.muted { color: var(--fg-muted); }
+.mono  { font-family: var(--font-mono); }
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0);
+  white-space: nowrap; border: 0;
+}
+
+</style>
+<style id="svg-var-fix">/* launch fix: var() is ignored in SVG presentation attributes; re-apply via CSS (attribute selectors override presentation attrs) */
+[fill="var(--accent)"]{fill:var(--accent)}[fill="var(--accent-soft)"]{fill:var(--accent-soft)}[fill="var(--bg)"]{fill:var(--bg)}[fill="var(--bg-elev)"]{fill:var(--bg-elev)}[fill="var(--fg)"]{fill:var(--fg)}[fill="var(--fg-muted)"]{fill:var(--fg-muted)}[fill="var(--fg-secondary)"]{fill:var(--fg-secondary)}
+[stroke="var(--accent)"]{stroke:var(--accent)}[stroke="var(--accent-rule)"]{stroke:var(--accent-rule)}[stroke="var(--fg-muted)"]{stroke:var(--fg-muted)}[stroke="var(--fg-secondary)"]{stroke:var(--fg-secondary)}[stroke="var(--rule)"]{stroke:var(--rule)}[stroke="var(--rule-strong)"]{stroke:var(--rule-strong)}
+[font-family="var(--font-mono)"]{font-family:var(--font-mono)}[font-family="var(--font-sans)"]{font-family:var(--font-sans)}
+</style>
+</head>
+<body>
+<main class="page">
+
+<style>
+  .block-diagram {
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-md);
+    padding: var(--space-5) var(--space-4);
+    margin: var(--space-5) 0;
+    background: var(--bg-elev);
+    max-width: var(--content-width);
+  }
+  .block-diagram svg { margin: 0 auto; }
+  .residual-stream {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-2);
+    margin: var(--space-4) 0;
+    max-width: var(--content-width);
+  }
+  .rs-step {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: var(--space-3);
+    align-items: center;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+    font-size: var(--text-sm);
+  }
+  .rs-step .step-label {
+    font-family: var(--font-mono);
+    font-size: var(--text-3xs);
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+  }
+  .rs-step .step-op { color: var(--fg); font-family: var(--font-mono); font-size: var(--text-xs); }
+  .swap-grid {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: var(--space-3);
+    align-items: center;
+    margin: var(--space-3) 0;
+    font-size: var(--text-sm);
+  }
+  .swap-grid .from, .swap-grid .to {
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+  }
+  .swap-grid .from { color: var(--fg-muted); }
+  .swap-grid .to { color: var(--fg); border-color: var(--accent-rule); background: var(--accent-soft); }
+  .swap-grid .arrow {
+    font-family: var(--font-mono);
+    color: var(--accent);
+    text-align: center;
+    font-size: var(--text-md);
+  }
+  .param-split {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 2px;
+    margin: var(--space-3) 0 var(--space-2);
+    max-width: var(--content-width);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+  .param-split > div {
+    padding: var(--space-3) var(--space-4);
+    color: var(--accent-fg);
+  }
+  .param-split .mlp-share { background: var(--accent); }
+  .param-split .attn-share { background: var(--accent-rule); color: var(--fg); }
+  .param-legend {
+    display: flex;
+    gap: var(--space-4);
+    font-size: var(--text-xs);
+    color: var(--fg-muted);
+    margin-bottom: var(--space-4);
+  }
+  .param-legend span::before {
+    content: "";
+    display: inline-block;
+    width: 0.7em; height: 0.7em;
+    margin-right: var(--space-1);
+    border-radius: var(--radius-sm);
+    vertical-align: middle;
+  }
+  .param-legend .lg-mlp::before  { background: var(--accent); }
+  .param-legend .lg-attn::before { background: var(--accent-rule); }
+</style>
+<article>
+  <span class="eyebrow">Architecture / Building Blocks</span>
+  <h1>The Transformer Block</h1>
+
+  <p class="lede">
+    A transformer is <code>n_layer</code> copies of the same building block stacked on top of
+    each other. Each block is the unit of "communication followed by computation": the
+    <a href="attention.html">attention</a> layer mixes information across positions, then the
+    MLP applies a per-position nonlinearity. Both are wrapped in residual connections and
+    preceded by <a href="layernorm-vs-rmsnorm.html">LayerNorm</a>.
+  </p>
+
+  <h2>The canonical pre-norm block</h2>
+
+  <p>Every Karpathy GPT implementation uses the same block, modulo small details:</p>
+
+  <pre><code># from ng-video-lecture/gpt.py
+class Block(nn.Module):
+    def __init__(self, n_embd, n_head):
+        super().__init__()
+        head_size = n_embd // n_head
+        self.sa = MultiHeadAttention(n_head, head_size)
+        self.ffwd = FeedFoward(n_embd)
+        self.ln1 = nn.LayerNorm(n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)
+
+    def forward(self, x):
+        x = x + self.sa(self.ln1(x))
+        x = x + self.ffwd(self.ln2(x))
+        return x</code></pre>
+
+  <figure class="block-diagram">
+    <svg viewBox="0 0 420 280" width="100%" style="max-width:420px" aria-label="Pre-norm transformer block dataflow">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--fg-muted)"></path>
+        </marker>
+      </defs>
+
+      
+      <line x1="60" y1="20" x2="60" y2="260" stroke="var(--rule-strong)" stroke-width="2"></line>
+      <text x="60" y="14" text-anchor="middle" font-family="var(--font-mono)" font-size="10" fill="var(--fg-muted)">x</text>
+
+      
+      <rect x="140" y="30" width="110" height="30" rx="2" fill="var(--bg)" stroke="var(--rule-strong)"></rect>
+      <text x="195" y="50" text-anchor="middle" font-family="var(--font-mono)" font-size="12" fill="var(--fg)">ln1</text>
+      
+      <rect x="140" y="75" width="110" height="36" rx="2" fill="var(--accent-soft)" stroke="var(--accent-rule)"></rect>
+      <text x="195" y="98" text-anchor="middle" font-family="var(--font-mono)" font-size="12" fill="var(--fg)">self-attention</text>
+      
+      <circle cx="60" cy="130" r="10" fill="var(--bg)" stroke="var(--accent)" stroke-width="1.5"></circle>
+      <text x="60" y="134" text-anchor="middle" font-family="var(--font-mono)" font-size="12" fill="var(--accent)">+</text>
+
+      
+      <line x1="60" y1="45" x2="140" y2="45" stroke="var(--fg-muted)"></line>
+      <line x1="195" y1="60" x2="195" y2="75" stroke="var(--fg-muted)"></line>
+      <path d="M 195 111 Q 195 130 75 130" fill="none" stroke="var(--fg-muted)"></path>
+
+      
+      <rect x="140" y="160" width="110" height="30" rx="2" fill="var(--bg)" stroke="var(--rule-strong)"></rect>
+      <text x="195" y="180" text-anchor="middle" font-family="var(--font-mono)" font-size="12" fill="var(--fg)">ln2</text>
+      
+      <rect x="140" y="205" width="110" height="36" rx="2" fill="var(--accent-soft)" stroke="var(--accent-rule)"></rect>
+      <text x="195" y="228" text-anchor="middle" font-family="var(--font-mono)" font-size="12" fill="var(--fg)">ffwd (MLP)</text>
+      
+      <circle cx="60" cy="260" r="10" fill="var(--bg)" stroke="var(--accent)" stroke-width="1.5"></circle>
+      <text x="60" y="264" text-anchor="middle" font-family="var(--font-mono)" font-size="12" fill="var(--accent)">+</text>
+
+      
+      <line x1="60" y1="175" x2="140" y2="175" stroke="var(--fg-muted)"></line>
+      <line x1="195" y1="190" x2="195" y2="205" stroke="var(--fg-muted)"></line>
+      <path d="M 195 241 Q 195 260 75 260" fill="none" stroke="var(--fg-muted)"></path>
+
+      
+      <text x="280" y="50" font-family="var(--font-mono)" font-size="10" fill="var(--fg-muted)">read</text>
+      <text x="280" y="98" font-family="var(--font-mono)" font-size="10" fill="var(--fg-muted)">mix across positions</text>
+      <text x="280" y="134" font-family="var(--font-mono)" font-size="10" fill="var(--accent)">residual add</text>
+      <text x="280" y="180" font-family="var(--font-mono)" font-size="10" fill="var(--fg-muted)">read</text>
+      <text x="280" y="228" font-family="var(--font-mono)" font-size="10" fill="var(--fg-muted)">per-position compute</text>
+      <text x="280" y="264" font-family="var(--font-mono)" font-size="10" fill="var(--accent)">residual add</text>
+    </svg>
+    <figcaption>Pre-norm block: the residual stream (left spine) is read via LayerNorm, processed, then added back.</figcaption>
+  </figure>
+
+  <p>Two things to notice.</p>
+
+  <div class="callout callout--note">
+    <p><strong>Residuals are unconditional.</strong> The <a href="residual-connections.html">residual connections</a> (<code>x + ...</code>) are not gated, not weighted, just adds.</p>
+  </div>
+
+  <div class="callout callout--note">
+    <p><strong>Pre-norm, not post-norm.</strong> The <a href="layernorm-vs-rmsnorm.html">LayerNorm</a> is applied <em>before</em> attention and MLP, not after. This is "pre-norm," and it's what stabilizes deep training. The original "Attention is All You Need" paper used post-norm; GPT-2 switched to pre-norm; everyone has used pre-norm since.</p>
+  </div>
+
+  <h2>The MLP / feedforward</h2>
+
+  <p>The MLP is two linear layers with a nonlinearity in between, and a 4× expansion in the hidden dimension:</p>
+
+  <pre><code># from nanoGPT/model.py
+class MLP(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+        self.gelu    = nn.GELU()
+        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+        self.dropout = nn.Dropout(config.dropout)</code></pre>
+
+  <p>
+    So the MLP holds <code>~8 * n_embd^2</code> parameters per block, compared to
+    <code>~4 * n_embd^2</code> for attention (Q, K, V, and output projections).
+  </p>
+
+  <div class="param-split" aria-label="Per-block parameter share">
+    <div class="mlp-share">MLP — ~8 · n_embd²</div>
+    <div class="attn-share">Attn — ~4 · n_embd²</div>
+  </div>
+  <div class="param-legend">
+    <span class="lg-mlp">MLP (~2/3)</span>
+    <span class="lg-attn">Attention (~1/3)</span>
+  </div>
+
+  <p>
+    For typical model sizes, <strong>the MLP is where most of the parameters live</strong> — about
+    2/3 of every block. The <a href="gelu-and-swiglu.html">GELU</a> activation is GPT's choice;
+    <a href="repos/llama2-c.html">Llama uses SwiGLU</a> instead, which trades a third linear for
+    a multiplicative gate.
+  </p>
+
+  <h2>What lives outside the block</h2>
+
+  <p>
+    Everything that isn't repeated <code>n_layer</code> times: token + position embeddings at
+    the input, a final LayerNorm, and the unembedding (<code>lm_head</code>) at the output. In
+    GPT-2 the embedding and unembedding share weights
+    (<a href="weight-tying.html">weight tying</a>).
+  </p>
+
+  <pre><code># from nanoGPT/model.py
+self.transformer = nn.ModuleDict(dict(
+    wte = nn.Embedding(config.vocab_size, config.n_embd),
+    wpe = nn.Embedding(config.block_size, config.n_embd),
+    drop = nn.Dropout(config.dropout),
+    h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
+    ln_f = LayerNorm(config.n_embd, bias=config.bias),
+))
+self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+self.transformer.wte.weight = self.lm_head.weight  # weight tying</code></pre>
+
+  <h3>The residual stream as central data structure</h3>
+
+  <p>
+    The residual stream — the running <code>x</code> that gets added into through every block —
+    is the central data structure. Think of each block as "reading from" the residual stream
+    via the LayerNorm and "writing to" it via the residual add. Attention writes information
+    that mixes across positions; the MLP writes information that's computed per-position. The
+    whole transformer is <code>n_layer</code> rounds of read → process → add-back.
+  </p>
+
+  <div class="residual-stream" aria-label="One block as read, process, add-back">
+    <div class="rs-step">
+      <span class="step-label">read</span>
+      <span class="step-op">ln1(x)</span>
+      <span class="muted mono">from stream</span>
+    </div>
+    <div class="rs-step">
+      <span class="step-label">process</span>
+      <span class="step-op">sa(...)</span>
+      <span class="muted mono">mixes positions</span>
+    </div>
+    <div class="rs-step">
+      <span class="step-label">add-back</span>
+      <span class="step-op">x = x + sa(ln1(x))</span>
+      <span class="muted mono">into stream</span>
+    </div>
+    <div class="rs-step">
+      <span class="step-label">read</span>
+      <span class="step-op">ln2(x)</span>
+      <span class="muted mono">from stream</span>
+    </div>
+    <div class="rs-step">
+      <span class="step-label">process</span>
+      <span class="step-op">ffwd(...)</span>
+      <span class="muted mono">per-position</span>
+    </div>
+    <div class="rs-step">
+      <span class="step-label">add-back</span>
+      <span class="step-op">x = x + ffwd(ln2(x))</span>
+      <span class="muted mono">into stream</span>
+    </div>
+  </div>
+
+  <h2>Llama 2 variant</h2>
+
+  <p>
+    In <a href="repos/llama2-c.html">llama2.c/model.py</a>, the block looks nearly identical,
+    with three substitutions:
+  </p>
+
+  <div class="swap-grid">
+    <div class="from"><a href="layernorm-vs-rmsnorm.html">LayerNorm</a></div>
+    <div class="arrow">→</div>
+    <div class="to"><a href="layernorm-vs-rmsnorm.html">RMSNorm</a></div>
+  </div>
+  <div class="swap-grid">
+    <div class="from">Learned positional embedding</div>
+    <div class="arrow">→</div>
+    <div class="to"><a href="rope.html">RoPE</a> <span class="muted">(applied inside attention)</span></div>
+  </div>
+  <div class="swap-grid">
+    <div class="from"><a href="gelu-and-swiglu.html">GELU</a> MLP</div>
+    <div class="arrow">→</div>
+    <div class="to"><a href="gelu-and-swiglu.html">SwiGLU</a> MLP</div>
+  </div>
+
+  <p>
+    These changes are independent of each other and orthogonal to the overall architecture.
+    The "transformer block" abstraction is robust enough that you can swap parts in and out
+    without changing anything else.
+  </p>
+
+  <h2>Related</h2>
+
+  <ul>
+    <li><a href="attention.html">attention</a> — the "communication" half</li>
+    <li><a href="residual-connections.html">residual-connections</a> — why the <code>+</code> matters</li>
+    <li><a href="layernorm-vs-rmsnorm.html">layernorm-vs-rmsnorm</a> — what does normalization actually do here</li>
+    <li><a href="weight-init.html">weight-init</a> — special scaling for residual projections</li>
+  </ul>
+</article>
+
+
+</main>
+</body>
+</html>

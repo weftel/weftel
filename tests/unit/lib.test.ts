@@ -4,7 +4,7 @@ import { test, expect } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 if (typeof (globalThis as any).document === "undefined") GlobalRegistrator.register();
 
-import { stripActive, spliceBody, proseModelable, filterInlineStyle, escapeAttr, mdLite, buildTree, countFiles } from "../../client/lib";
+import { stripActive, spliceBody, proseModelable, editableModelable, subtreeEditable, scopeCss, filterInlineStyle, escapeAttr, mdLite, buildTree, countFiles } from "../../client/lib";
 
 // ───────────────────────── spliceBody — the $-corruption bug ─────────────────────────
 const TOKEN = "%%NOTE_BODY%%";
@@ -68,6 +68,90 @@ test("proseModelable: SVG, layout, and styled components stay atomic", () => {
 test("proseModelable: empty / plain text returns false (nothing to unwrap)", () => {
   expect(proseModelable("")).toBe(false);
   expect(proseModelable("just words")).toBe(false);
+});
+
+// ───────────────────────── editableModelable — the FULL_PARSE relax gate ─────────────────────────
+test("editableModelable: strict (legacy) freezes any class", () => {
+  expect(editableModelable(`<div class="card"><h3>x</h3></div>`)).toBe(false);
+  expect(editableModelable(`<div style="padding:8px"><p>x</p></div>`)).toBe(true); // inline-style, no class → already editable
+});
+
+test("editableModelable: relaxClass=true makes class/<style>-driven content editable", () => {
+  expect(editableModelable(`<div class="card"><h3>x</h3></div>`, true)).toBe(true);
+  expect(editableModelable(`<strong class="t">x</strong>`, true)).toBe(true);
+  expect(editableModelable(`<span class="fu">x</span>`, true)).toBe(true);
+  expect(editableModelable(`<div class="wrap"><div class="sub">s</div><div class="card"><ul><li class="fu">a</li></ul></div></div>`, true)).toBe(true);
+});
+
+test("editableModelable: unmodelable elements still freeze even with relaxClass", () => {
+  expect(editableModelable(`<svg><circle r="4"/></svg>`, true)).toBe(false);
+  expect(editableModelable(`<div class="x"><img src="y"></div>`, true)).toBe(false);
+  expect(editableModelable(`<div class="x"><canvas></canvas></div>`, true)).toBe(false);
+});
+
+test("proseModelable: relaxClass lets classed prose through", () => {
+  expect(proseModelable(`<p class="lead">hi</p>`)).toBe(false);        // strict default
+  expect(proseModelable(`<p class="lead">hi</p>`, true)).toBe(true);   // relaxed
+});
+
+// ───────────────────────── subtreeEditable — the isolation predicate ─────────────────────────
+function el(html: string): Element { const t = document.createElement("template"); t.innerHTML = html; return t.content.firstElementChild as Element; }
+test("subtreeEditable: text-only leaves are editable (unlike editableModelable)", () => {
+  expect(subtreeEditable(el("<h1>Just a title</h1>"))).toBe(true);   // editableModelable would be false (no descendants)
+  expect(subtreeEditable(el('<p class="lede">intro <strong>x</strong></p>'))).toBe(true);
+  expect(subtreeEditable(el('<div class="card"><h3>t</h3><ul><li>a</li></ul></div>'))).toBe(true);
+});
+test("subtreeEditable: any unmodelable descendant makes the whole subtree non-editable", () => {
+  expect(subtreeEditable(el("<figure><svg><circle/></svg><figcaption>c</figcaption></figure>"))).toBe(false);
+  expect(subtreeEditable(el('<div class="x"><p>ok</p><img src="y"></div>'))).toBe(false);
+  expect(subtreeEditable(el("<svg><circle/></svg>"))).toBe(false);
+});
+
+// ───────────────────────── scopeCss — confine an imported sheet to the editor ─────────────────────────
+const CHEAT_STYLE = `
+  :root{--bg:#0b0c10;--accent:#7c7cf0;--radius:13px}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:#e8eaf0;font:16px/1.6 sans-serif}
+  h1{font-size:30px;margin:0 0 6px}
+  h2{font-size:12px;text-transform:uppercase;color:var(--accent)}
+  .card{background:#13151c;border-radius:var(--radius);padding:14px 18px}
+  .card h3{font-size:15px;color:#fff}
+  .card li::marker{color:var(--accent)}
+  .ask .fu{color:#9aa3b2;font-style:italic}
+  strong.t{color:#bcc3ff;font-weight:700}
+`;
+
+test("scopeCss: :root/body map to the scope itself; * and bare/class selectors become descendants", () => {
+  const out = scopeCss(CHEAT_STYLE, ".note-scope");
+  expect(out).toContain(".note-scope{--bg:#0b0c10;--accent:#7c7cf0;--radius:13px}");
+  expect(out).toContain(".note-scope *{box-sizing:border-box}");
+  expect(out).toContain("color:#e8eaf0"); // body → .note-scope
+  expect(out).toContain(".note-scope h2{");
+  expect(out).toContain(".note-scope .card{");
+  expect(out).toContain(".note-scope .card h3{");
+  expect(out).toContain(".note-scope .card li::marker{");
+  expect(out).toContain(".note-scope .ask .fu{");
+  expect(out).toContain(".note-scope strong.t{");
+  // chrome must never be matched: no bare body/:root/* selector survives unscoped
+  expect(out).not.toMatch(/(^|})\s*(body|:root|\*)\s*{/);
+});
+
+test("scopeCss: comma lists scope each selector independently", () => {
+  expect(scopeCss("h1,h2 .x{margin:0}", ".s")).toBe(".s h1,.s h2 .x{margin:0}");
+  expect(scopeCss(":is(h1,h2){margin:0}", ".s")).toBe(".s :is(h1,h2){margin:0}"); // comma inside :is() not split
+});
+
+test("scopeCss: @media recurses, @keyframes/@font-face pass through verbatim", () => {
+  const media = scopeCss("@media (max-width:600px){.card{padding:8px}body{margin:0}}", ".s");
+  expect(media).toBe("@media (max-width:600px){.s .card{padding:8px}.s{margin:0}}");
+  const kf = scopeCss("@keyframes spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}", ".s");
+  expect(kf).toBe("@keyframes spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}"); // 0%/100% NOT prefixed
+  expect(scopeCss("@import url(x.css);.card{x:1}", ".s")).toContain("@import url(x.css);");
+});
+
+test("scopeCss: leading body combinator keeps the combinator", () => {
+  expect(scopeCss("body > .x{margin:0}", ".s")).toBe(".s > .x{margin:0}");
+  expect(scopeCss("body .x{margin:0}", ".s")).toBe(".s .x{margin:0}");
 });
 
 // ───────────────────────── filterInlineStyle — generic mark whitelist ─────────────────────────
