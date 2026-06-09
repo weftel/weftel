@@ -118,6 +118,117 @@ test("cmd+K 'a 2x2 table' yields a NATIVE EDITABLE table, not a frozen rich bloc
   expect(cellEditable).toBe(true);
 });
 
+// FULL_PARSE: a class/<style>-driven bespoke doc (the cheat-sheet case) opens as EDITABLE
+// nested nodes — not one frozen rich block — renders with its real design, edits in place,
+// and round-trips (design + <style> intact, edit persisted) through save/reload.
+const CHEATSHEET = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Cheat Sheet</title>
+<style>
+  :root{--bg:#0b0c10;--panel:#13151c;--line:#262b38;--ink:#e8eaf0;--muted:#9aa3b2;--accent:#7c7cf0;--radius:13px}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 sans-serif}
+  .wrap{max-width:860px;margin:0 auto;padding:34px 22px}
+  h1{font-size:30px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:14px;margin-bottom:24px}
+  h2{font-size:12px;text-transform:uppercase;color:var(--accent);font-weight:700;margin:32px 0 14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 18px;margin:10px 0}
+  .card h3{font-size:15px;margin:0 0 8px;color:#fff}
+  .card ul{margin:0;padding-left:18px}
+  .card li{margin:6px 0;color:#d7dbe6}
+  b{color:#fff;font-weight:650}
+  strong.t{color:#bcc3ff;font-weight:700}
+</style></head>
+<body>
+<div class="wrap">
+  <h1>Technical Cheat Sheet</h1>
+  <div class="sub">Glance-only reference for the deep-dive.</div>
+  <h2>Questions to Expect</h2>
+  <div class="card"><h3>Tell me about yourself</h3><ul><li>I <b>co-founded a startup</b> and shipped over <b>nineteen months</b>.</li><li>Before that, <strong class="t">data pipelines</strong> at scale.</li></ul></div>
+  <div class="card"><h3>Why us</h3><ul><li>Mission-driven and <b>local to me</b>.</li></ul></div>
+  <div class="card"><h3>Strengths</h3><ul><li>Ownership and <b>shipping fast</b>.</li></ul></div>
+</div>
+</body></html>
+`;
+
+test("FULL_PARSE: class/<style> cheat-sheet is editable, styled, and round-trips", async ({ page }) => {
+  const path = await openNote(page, "cheatsheet.html", CHEATSHEET);
+  // 1. parsed into editable nodes, NOT one frozen rich block
+  await expect(page.locator(".ProseMirror [data-rich-block]")).toHaveCount(0);
+  await expect(page.locator(".ProseMirror .card")).toHaveCount(3);
+  await expect(page.locator(".ProseMirror .wrap")).toHaveCount(1);
+  // 2. the doc's <style> is live and scoped
+  await expect(page.locator("#note-scoped")).toHaveCount(1);
+  // 3. design intact: .card h3 is white via the scoped class rule; --accent resolves on the scope
+  const h3color = await page.evaluate(() => { const h = document.querySelector(".ProseMirror .card h3"); return h ? getComputedStyle(h).color : ""; });
+  expect(h3color).toBe("rgb(255, 255, 255)");
+  const accent = await page.evaluate(() => getComputedStyle(document.querySelector("#editor.note-scope") as Element).getPropertyValue("--accent").trim());
+  expect(accent).toBe("#7c7cf0");
+  // 4. the styled text is genuinely editable (not inside a contenteditable=false block)
+  const editable = await page.evaluate(() => { const els = Array.from(document.querySelectorAll(".ProseMirror .card b")); const b = els.find((e) => (e.textContent || "").includes("nineteen")); return !!b && !b.closest("[contenteditable=false]"); });
+  expect(editable).toBe(true);
+  // 5. edit a word in place — via real keystrokes (beforeinput arms autosave; synthetic
+  // transactions deliberately don't, so load-time normalization never writes to disk)
+  await page.evaluate(() => {
+    const e = (window as any).__editor; let from = 0, to = 0;
+    e.state.doc.descendants((n: any, pos: number) => { if (n.isText) { const i = n.text.indexOf("nineteen"); if (i >= 0) { from = pos + i; to = pos + i + "nineteen".length; } } });
+    e.chain().focus().setTextSelection({ from, to }).run(); e.view.focus();
+  });
+  await page.keyboard.type("twelve");
+  await expect(page.locator(".ProseMirror .card").first()).toContainText("twelve months");
+  // 6. round-trip: persist, reload, design + edit survive; saved file keeps <style> + classes verbatim, no editor-only hook
+  await page.waitForTimeout(1300); // past the 600ms autosave debounce
+  const saved = readFileSync(path, "utf8");
+  expect(saved).toContain("<style>");
+  expect(saved).toContain(":root{--bg:#0b0c10");
+  expect(saved).toContain('class="wrap"');
+  expect(saved).toContain('class="card"');
+  expect(saved).toContain("twelve months");
+  expect(saved).not.toContain("nineteen months");
+  expect(saved).not.toContain("data-sbox");
+  await page.reload();
+  await page.waitForSelector(".ProseMirror");
+  await expect(page.locator(".ProseMirror .card")).toHaveCount(3);
+  await expect(page.locator(".ProseMirror .card").first()).toContainText("twelve months");
+  const h3color2 = await page.evaluate(() => { const h = document.querySelector(".ProseMirror .card h3"); return h ? getComputedStyle(h).color : ""; });
+  expect(h3color2).toBe("rgb(255, 255, 255)");
+});
+
+// FULL_PARSE (mixed doc, the transformer-block shape): in one class/<style> doc, editable
+// classed prose and an unmodelable SVG figure COEXIST — the SVG subtree stays a frozen rich
+// block (preserved verbatim) while the rest is editable. Proves partial-freeze granularity.
+const MIXED = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Mixed</title>
+<style>
+  :root{--ink:#111;--accent:#6d5cf0}
+  body{color:var(--ink);font:16px/1.6 sans-serif}
+  .note{border:1px solid #ddd;border-radius:10px;padding:16px;margin:12px 0}
+  .note h3{color:var(--accent);margin:0 0 6px}
+  figure{margin:16px 0}
+</style></head>
+<body>
+<main>
+  <div class="note"><h3>Editable card</h3><p>Change <strong>this number</strong>: 42.</p></div>
+  <figure><svg width="40" height="40"><circle cx="20" cy="20" r="16" fill="#6d5cf0"/></svg><figcaption class="cap">a diagram</figcaption></figure>
+  <div class="note"><h3>Second card</h3><p>Also editable text.</p></div>
+</main>
+</body></html>
+`;
+
+test("FULL_PARSE: mixed doc — classed prose editable, SVG figure stays a frozen rich block", async ({ page }) => {
+  await openNote(page, "mixed.html", MIXED);
+  // the SVG figure is preserved atomic; the editable cards are not frozen
+  await expect(page.locator(".ProseMirror [data-rich-block]")).toHaveCount(1);
+  await expect(page.locator(".ProseMirror [data-rich-block] svg circle")).toBeVisible();
+  await expect(page.locator(".ProseMirror .note")).toHaveCount(2);
+  await expect(page.locator("#note-scoped")).toHaveCount(1);
+  // an editable card's text is genuinely editable (not inside the frozen block)
+  const editable = await page.evaluate(() => { const els = Array.from(document.querySelectorAll(".ProseMirror .note strong")); const s = els.find((e) => (e.textContent || "").includes("this number")); return !!s && !s.closest("[contenteditable=false]"); });
+  expect(editable).toBe(true);
+  // the card's accent heading color resolves via the scoped sheet
+  const h3 = await page.evaluate(() => { const h = document.querySelector(".ProseMirror .note h3"); return h ? getComputedStyle(h).color : ""; });
+  expect(h3).toBe("rgb(109, 92, 240)");
+});
+
 // QUALITY: after the AI rebuild (format-contract system prompt + Agent SDK), a "2x2
 // pros/cons table" is a clean 2-column table — no 5-column spacer mess.
 test("cmd+K 2x2 table is a clean 2-column Pros/Cons", async ({ page }) => {
