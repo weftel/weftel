@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data:; script-src 'none'; object-src 'none'; base-uri 'self'; frame-ancestors 'self';">
+<title>Sampling Strategies</title>
+<style>
+/*
+ * md-to-redesigned-html default theme
+ * Linear / Vercel docs lineage. Sharp, modern, technical, calm-precise.
+ *
+ * Three layers, three different contracts with the LLM:
+ *
+ *   1. TOKENS (color, type, spacing, radii) — the shared visual language. Every
+ *      page should reference them. This is what makes a folder of notes feel like
+ *      one site. HARD contract: the render prompt instructs Claude to use these.
+ *
+ *   2. BASE STYLES (h1-h6, p, ul, table, code, details, ...) — every standard
+ *      HTML element is styled regardless of class. Pure semantic HTML still looks
+ *      decent. No special opt-in.
+ *
+ *   3. NAMED PATTERNS (.callout, .eyebrow, .index-card, .page--with-toc, ...) —
+ *      pre-baked moves for common shapes. SUGGESTIONS, not rules. The LLM is free
+ *      to invent: per-page <style> blocks and inline styles referencing tokens are
+ *      both encouraged. Coherence comes from tokens, not from class-name policing.
+ *
+ * Edit pattern names with care (they're referenced by the render prompt). Edit
+ * tokens deliberately (they're the entire visual contract).
+ */
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Tokens
+   ────────────────────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: light dark;
+
+  /* Color — light (zinc ramp + violet accent) */
+  --bg:            #ffffff;
+  --bg-elev:       #fafafa;
+  --bg-code:       #f4f4f5;
+  --fg:            #18181b;
+  --fg-secondary:  #3f3f46;
+  --fg-muted:      #71717a;
+  --rule:          #e4e4e7;
+  --rule-strong:   #d4d4d8;
+  --accent:        #6d28d9;
+  --accent-fg:     #ffffff;
+  --accent-soft:   #faf5ff;
+  --accent-rule:   #c4b5fd;
+  --good:          #15803d;
+  --bad:           #b91c1c;
+  --warn:          #b45309;
+
+  /* Type stacks */
+  --font-sans: "Inter", "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Type scale (anchored at 15px body) */
+  --text-3xs:  0.6875rem; /* 11 — micro-labels */
+  --text-2xs:  0.75rem;   /* 12 */
+  --text-xs:   0.8125rem; /* 13 */
+  --text-sm:   0.875rem;  /* 14 */
+  --text-base: 0.9375rem; /* 15 — body */
+  --text-md:   1rem;      /* 16 */
+  --text-lg:   1.125rem;  /* 18 */
+  --text-xl:   1.375rem;  /* 22 — h2 */
+  --text-2xl:  1.75rem;   /* 28 — h1 alt */
+  --text-3xl:  2rem;      /* 32 — h1 */
+
+  --leading-tight:   1.2;
+  --leading-snug:    1.35;
+  --leading-base:    1.55;
+  --leading-relaxed: 1.65;
+
+  --tracking-tight:  -0.015em;
+  --tracking-base:   0;
+  --tracking-wide:   0.06em;
+
+  /* Spacing (4px scale) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 2.5rem;
+  --space-8: 3rem;
+  --space-10: 4rem;
+  --space-12: 5rem;
+
+  /* Layout */
+  --content-width: 680px;
+  --page-width:    1080px;
+  --sidebar-width: 220px;
+  --aside-width:   240px;
+
+  /* Radii — sharp; ≤4px per design doc */
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 6px; /* reserved for larger cards if needed */
+
+  --border: 1px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:            #09090b;
+    --bg-elev:       #18181b;
+    --bg-code:       #18181b;
+    --fg:            #fafafa;
+    --fg-secondary:  #d4d4d8;
+    --fg-muted:      #a1a1aa;
+    --rule:          #27272a;
+    --rule-strong:   #3f3f46;
+    --accent:        #a78bfa;
+    --accent-fg:     #18181b;
+    --accent-soft:   #1e1631;
+    --accent-rule:   #5b21b6;
+    --good:          #4ade80;
+    --bad:           #fca5a5;
+    --warn:          #fbbf24;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Reset
+   ────────────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+* { margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; tab-size: 4; }
+body { min-height: 100vh; }
+img, picture, video, canvas, svg { display: block; max-width: 100%; }
+input, button, textarea, select { font: inherit; color: inherit; }
+button { background: none; border: none; cursor: pointer; }
+p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Base
+   ────────────────────────────────────────────────────────────────────────── */
+html {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: var(--leading-base);
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv11", "ss01", "ss03"; /* Inter stylistic sets — gracefully ignored elsewhere */
+}
+
+body {
+  font-size: var(--text-base);
+  color: var(--fg-secondary);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Typography
+   ────────────────────────────────────────────────────────────────────────── */
+h1, h2, h3, h4, h5, h6 {
+  color: var(--fg);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-tight);
+  scroll-margin-top: var(--space-6);
+}
+h1 { font-size: var(--text-3xl); margin-bottom: var(--space-4); }
+h2 { font-size: var(--text-xl); margin: var(--space-7) 0 var(--space-3); }
+h3 { font-size: var(--text-lg); margin: var(--space-5) 0 var(--space-2); }
+h4 { font-size: var(--text-md); margin: var(--space-4) 0 var(--space-2); }
+h5 { font-size: var(--text-base); margin: var(--space-4) 0 var(--space-2); }
+h6 {
+  font-size: var(--text-3xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+p { margin-bottom: var(--space-3); max-width: var(--content-width); }
+p:last-child { margin-bottom: 0; }
+
+small { font-size: var(--text-xs); color: var(--fg-muted); }
+strong { color: var(--fg); font-weight: 600; }
+em { font-style: italic; }
+mark {
+  background: var(--accent-soft);
+  color: var(--fg);
+  padding: 0 0.2em;
+  border-radius: var(--radius-sm);
+}
+abbr[title] {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: help;
+}
+
+ul, ol {
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-5);
+  max-width: var(--content-width);
+}
+ul { list-style: disc; }
+ol { list-style: decimal; }
+li { margin-bottom: var(--space-1); }
+li > ul, li > ol { margin-top: var(--space-1); margin-bottom: 0; }
+
+dl { margin: 0 0 var(--space-3); max-width: var(--content-width); }
+dt { color: var(--fg); font-weight: 600; margin-top: var(--space-3); }
+dd { margin-left: var(--space-4); color: var(--fg-secondary); }
+
+blockquote {
+  margin: var(--space-4) 0;
+  padding: var(--space-1) var(--space-4);
+  border-left: 2px solid var(--rule-strong);
+  color: var(--fg-secondary);
+  font-style: normal;
+  max-width: var(--content-width);
+}
+blockquote > p:last-child { margin-bottom: 0; }
+
+hr {
+  border: none;
+  border-top: 1px solid var(--rule);
+  margin: var(--space-6) 0;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Inline code + pre
+   ────────────────────────────────────────────────────────────────────────── */
+code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--bg-code);
+  color: var(--fg);
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--rule);
+}
+
+pre {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  background: var(--bg-code);
+  color: var(--fg);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--rule);
+  overflow-x: auto;
+  margin: var(--space-4) 0;
+  max-width: 100%;
+}
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+kbd {
+  font-family: var(--font-mono);
+  font-size: 0.75em;
+  background: var(--bg-elev);
+  color: var(--fg);
+  padding: 0.15em 0.4em;
+  border: 1px solid var(--rule-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Links
+   ────────────────────────────────────────────────────────────────────────── */
+a {
+  color: var(--accent);
+  text-decoration: none;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+a:hover { text-decoration: underline; }
+a.muted { color: var(--fg-secondary); }
+a.muted:hover { color: var(--fg); }
+a.ext::after { content: " ↗"; color: var(--fg-muted); font-size: 0.85em; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Tables
+   ────────────────────────────────────────────────────────────────────────── */
+table {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: var(--content-width);
+  margin: var(--space-4) 0;
+  font-size: var(--text-sm);
+}
+th, td {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+th {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  font-weight: 600;
+  border-bottom-color: var(--rule-strong);
+}
+tbody tr:last-child td { border-bottom: none; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Component primitives — the LLM composes against these
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Eyebrow: a micro-label above a heading. e.g. "GUIDE" / "REFERENCE" */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  margin-bottom: var(--space-2);
+  display: inline-block;
+}
+
+/* Lede: the first paragraph after h1, slightly larger */
+.lede {
+  font-size: var(--text-md);
+  color: var(--fg-secondary);
+  margin-bottom: var(--space-5);
+  max-width: var(--content-width);
+  line-height: var(--leading-relaxed);
+}
+
+/* Callout: bordered block with a colored left rule. */
+.callout {
+  background: var(--bg-elev);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-4) 0;
+  max-width: var(--content-width);
+  font-size: var(--text-sm);
+}
+.callout > :last-child { margin-bottom: 0; }
+.callout--note    { border-left-color: var(--accent); }
+.callout--good    { border-left-color: var(--good);  background: color-mix(in srgb, var(--good) 5%, var(--bg-elev)); }
+.callout--warn    { border-left-color: var(--warn);  background: color-mix(in srgb, var(--warn) 6%, var(--bg-elev)); }
+.callout--bad     { border-left-color: var(--bad);   background: color-mix(in srgb, var(--bad) 5%, var(--bg-elev)); }
+.callout strong { color: var(--fg); }
+
+/* Card: bordered surface for grouped content (e.g. index entries) */
+.card {
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  transition: border-color 120ms ease;
+}
+a.card:hover, .card:hover { border-color: var(--rule-strong); }
+.card h2, .card h3 { margin-top: 0; }
+
+/* Tag chip: free-form taxonomy from the LLM */
+.tag {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  color: var(--fg-muted);
+  background: var(--bg-elev);
+  border: 1px solid var(--rule);
+  padding: 0.1em 0.45em;
+  border-radius: var(--radius-sm);
+  text-transform: lowercase;
+  letter-spacing: 0;
+}
+.tag + .tag { margin-left: var(--space-1); }
+a.tag:hover { color: var(--fg); border-color: var(--rule-strong); }
+
+/* Badge: status / category indicator (more prominent than .tag) */
+.badge {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  padding: 0.15em 0.5em;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent-rule);
+}
+
+/* Term: glossary term inline */
+.term {
+  border-bottom: 1px dotted var(--accent-rule);
+  color: var(--fg);
+  cursor: help;
+}
+
+/* Native details — collapsibles */
+details {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  margin: var(--space-3) 0;
+  max-width: var(--content-width);
+  background: var(--bg);
+  overflow: hidden;
+}
+details summary {
+  list-style: none;
+  cursor: pointer;
+  padding: var(--space-3) var(--space-4);
+  color: var(--fg);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+details summary::-webkit-details-marker { display: none; }
+details summary::before {
+  content: "›";
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  display: inline-block;
+  transition: transform 120ms ease;
+  font-size: 1.1em;
+  line-height: 1;
+}
+details[open] summary::before { transform: rotate(90deg); }
+details > :not(summary) {
+  padding: 0 var(--space-4) var(--space-3);
+}
+
+/* Figure + caption */
+figure { margin: var(--space-4) 0; max-width: var(--content-width); }
+figcaption {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  margin-top: var(--space-2);
+  text-align: left;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Layout primitives
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* .page: a generous single-column page wrapper with default padding */
+.page {
+  max-width: var(--page-width);
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-5) var(--space-12);
+}
+
+/* .page--with-aside: main content + sticky aside grid */
+.page--with-aside {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--aside-width);
+  gap: var(--space-7);
+}
+.page--with-aside > aside {
+  position: sticky;
+  top: var(--space-6);
+  align-self: start;
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+@media (max-width: 880px) {
+  .page--with-aside { grid-template-columns: 1fr; }
+  .page--with-aside > aside { position: static; }
+}
+
+/* .page--with-toc: sticky TOC on the LEFT */
+.page--with-toc {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  gap: var(--space-7);
+}
+.page--with-toc > nav {
+  position: sticky;
+  top: var(--space-6);
+  align-self: start;
+  font-size: var(--text-xs);
+}
+.page--with-toc > nav a {
+  display: block;
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
+  border-left: 1px solid var(--rule);
+  color: var(--fg-muted);
+}
+.page--with-toc > nav a:hover, .page--with-toc > nav a[aria-current="page"] {
+  color: var(--fg);
+  border-left-color: var(--accent);
+}
+@media (max-width: 880px) {
+  .page--with-toc { grid-template-columns: 1fr; }
+  .page--with-toc > nav { display: none; }
+}
+
+/* article: the content body */
+article { max-width: var(--content-width); }
+article > * + h2 { margin-top: var(--space-7); }
+article > * + h3 { margin-top: var(--space-5); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Index page — the hub
+   ────────────────────────────────────────────────────────────────────────── */
+.index-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-4);
+  margin: var(--space-5) 0;
+  max-width: 100%;
+}
+.index-card {
+  display: block;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  color: var(--fg-secondary);
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+.index-card:hover { border-color: var(--rule-strong); text-decoration: none; }
+.index-card h3 {
+  font-size: var(--text-md);
+  margin: 0 0 var(--space-2);
+  color: var(--fg);
+}
+.index-card p {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  margin-bottom: var(--space-3);
+  line-height: var(--leading-snug);
+}
+.index-card .tags { margin-top: auto; }
+
+/* Filter bar — for tag-driven grouping on index */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: var(--space-4) 0;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--rule);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Utilities
+   ────────────────────────────────────────────────────────────────────────── */
+.muted { color: var(--fg-muted); }
+.mono  { font-family: var(--font-mono); }
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0);
+  white-space: nowrap; border: 0;
+}
+
+</style>
+</head>
+<body>
+<main class="page">
+
+<style>
+  .strategy-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: var(--space-3);
+    margin: var(--space-4) 0;
+    max-width: 100%;
+  }
+  .strategy-card {
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-4);
+    background: var(--bg);
+  }
+  .strategy-card .label {
+    font-family: var(--font-mono);
+    font-size: var(--text-3xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--fg-muted);
+    margin-bottom: var(--space-1);
+  }
+  .strategy-card .name {
+    font-weight: 600;
+    color: var(--fg);
+    margin-bottom: var(--space-2);
+  }
+  .strategy-card .desc {
+    font-size: var(--text-xs);
+    color: var(--fg-secondary);
+    line-height: var(--leading-snug);
+  }
+  .temp-scale {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: var(--space-2) var(--space-4);
+    margin: var(--space-4) 0;
+    max-width: var(--content-width);
+    font-size: var(--text-sm);
+    align-items: baseline;
+  }
+  .temp-scale dt {
+    font-family: var(--font-mono);
+    color: var(--accent);
+    margin-top: 0;
+    white-space: nowrap;
+  }
+  .temp-scale dd {
+    margin-left: 0;
+    border-left: 1px solid var(--rule);
+    padding-left: var(--space-4);
+  }
+  .compare {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-3);
+    margin: var(--space-4) 0;
+    max-width: var(--content-width);
+  }
+  @media (max-width: 640px) {
+    .compare { grid-template-columns: 1fr; }
+  }
+  .compare .card h3 {
+    font-size: var(--text-md);
+    margin-bottom: var(--space-2);
+  }
+  .compare .card .meta {
+    font-family: var(--font-mono);
+    font-size: var(--text-3xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--fg-muted);
+    margin-bottom: var(--space-2);
+  }
+</style>
+<article>
+  <span class="eyebrow">Reference · Sampling</span>
+  <h1>Sampling Strategies</h1>
+  <p class="lede">
+    Once a language model is trained, generating text from it is a sampling
+    problem: at each step, the model outputs a probability distribution over
+    the vocabulary, and you have to pick one token. The choice of sampling
+    strategy affects diversity, coherence, and whether the model gets stuck
+    in loops.
+  </p>
+
+  <h2>Greedy sampling</h2>
+  <p>
+    Pick the argmax. Deterministic, always the most likely token. In
+    Karpathy's code this is the <code>temperature == 0</code> branch:
+  </p>
+  <pre><code># from llama2.c/model.py
+if temperature == 0.0:
+    _, idx_next = torch.topk(logits, k=1, dim=-1)</code></pre>
+  <p>
+    Greedy decoding gives the highest-probability sequence locally but is
+    famously bad for open-ended generation — it gets stuck in loops
+    ("the the the the") and produces bland, repetitive text. It's fine for
+    tasks where there's a single correct answer (closed-domain QA,
+    deterministic translation), but not for "tell me a story."
+  </p>
+
+  <h2>Temperature</h2>
+  <p>
+    The simplest stochastic strategy: divide the logits by a temperature
+    <code>T</code>, apply softmax, sample multinomially.
+  </p>
+  <pre><code>logits = logits / temperature
+probs = F.softmax(logits, dim=-1)
+idx_next = torch.multinomial(probs, num_samples=1)</code></pre>
+
+  <dl class="temp-scale">
+    <dt>T = 1.0</dt>
+    <dd>sample from the raw distribution.</dd>
+    <dt>T → 0</dt>
+    <dd>peaky distribution, approaches greedy.</dd>
+    <dt>T &gt; 1</dt>
+    <dd>flatter distribution, more diverse / weirder samples.</dd>
+    <dt>T &lt; 1</dt>
+    <dd>sharper distribution, fewer wild words.</dd>
+  </dl>
+
+  <div class="callout callout--warn">
+    <strong>Caveat.</strong> Temperature alone has a problem: even at
+    <code>T = 1</code>, the long tail of low-probability tokens collectively
+    has non-trivial mass, and you can sample a junk token. So temperature is
+    usually combined with a truncation strategy.
+  </div>
+
+  <h2>Top-k sampling</h2>
+  <p>
+    Keep only the top <code>k</code> highest-logit tokens; zero out
+    everything else; renormalize and sample. From <code>nanoGPT/model.py</code>:
+  </p>
+  <pre><code>if top_k is not None:
+    v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+    logits[logits &lt; v[:, [-1]]] = -float('Inf')
+probs = F.softmax(logits, dim=-1)
+idx_next = torch.multinomial(probs, num_samples=1)</code></pre>
+  <p>
+    Typical <code>k</code>: 40 or 50. The Huggingface generation pipeline
+    defaults to <code>top_k=50</code>. This guarantees you never sample
+    from the long tail of garbage. The downside: <code>k</code> is fixed
+    regardless of context. Sometimes the model is genuinely uncertain and
+    you want to sample from 200 plausible tokens; sometimes it's extremely
+    confident and even 5 tokens is too many.
+  </p>
+
+  <h2>Top-p (nucleus) sampling</h2>
+  <p>
+    Holtzman et al. 2020. Sort tokens by descending probability; take the
+    smallest set whose cumulative probability exceeds <code>p</code>;
+    sample from that set. <strong>Adaptive</strong>: the set shrinks when
+    the model is confident and grows when it's not.
+  </p>
+  <p>
+    <code>llama2.c/run.c</code> implements top-p in C (the function
+    <code>sample_topp</code>). The recommended Llama defaults are
+    <code>temperature = 1.0, top_p = 0.9</code>.
+  </p>
+
+  <div class="compare">
+    <div class="card">
+      <div class="meta">Fixed window</div>
+      <h3>Top-k</h3>
+      <p>
+        <code>k</code> is fixed regardless of context. Same size cut whether
+        the model is confident or uncertain.
+      </p>
+    </div>
+    <div class="card">
+      <div class="meta">Adaptive window</div>
+      <h3>Top-p</h3>
+      <p>
+        The set shrinks when the model is confident and grows when it's not,
+        because cumulative probability adapts to the distribution's shape.
+      </p>
+    </div>
+  </div>
+
+  <h2>Top-k and top-p together (or just one)</h2>
+  <p>
+    Common practice is to apply temperature, then either top-k or top-p
+    (sometimes both). Karpathy's <code>llama2.c</code> README puts it
+    bluntly:
+  </p>
+  <blockquote>
+    <p>
+      to control the diversity of samples use either the temperature
+      (i.e. vary <code>-t</code> between 0 and 1 and keep top-p off with
+      <code>-p 0</code>) or the top-p value (i.e. vary <code>-p</code>
+      between 0 and 1 and keep <code>-t 1</code>), but not both.
+    </p>
+  </blockquote>
+  <p>
+    This is good practical advice. Tuning both at once is fiddly and the
+    parameters interact in confusing ways.
+  </p>
+
+  <h2>Build-nanogpt's pipeline</h2>
+  <p>
+    In <code>build-nanogpt/train_gpt2.py</code> mid-training samples:
+  </p>
+  <pre><code># do top-k sampling of 50 (huggingface pipeline default)
+topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
+ix = torch.multinomial(topk_probs, 1, generator=sample_rng)
+xcol = torch.gather(topk_indices, -1, ix)</code></pre>
+  <div class="callout callout--note">
+    <strong>Implementation note.</strong> <code>torch.multinomial</code>
+    doesn't need a normalized input. The top-k probs sum to less than 1
+    (because the rest of the distribution was discarded), and multinomial
+    just treats them as weights. This is slightly different from "zero out
+    and renormalize then sample," but produces the same distribution.
+  </div>
+
+  <h2>Other strategies</h2>
+  <p>
+    Strategies the Karpathy corpus doesn't cover but are worth knowing
+    about:
+  </p>
+  <div class="strategy-grid">
+    <div class="strategy-card">
+      <div class="label">Sequence-level</div>
+      <div class="name">Beam search</div>
+      <div class="desc">
+        Maintain <code>k</code> candidate sequences, expand each by one
+        token, keep the top <code>k</code> by joint probability. Standard
+        for translation; not used in open-ended LLM generation because it
+        produces low-diversity, bland text.
+      </div>
+    </div>
+    <div class="strategy-card">
+      <div class="label">Truncation</div>
+      <div class="name">Min-p</div>
+      <div class="desc">
+        Like top-p but parameterized by a minimum <em>relative</em>
+        probability — keep tokens with prob ≥ <code>p * max_prob</code>.
+        Cleaner than top-p in some regimes.
+      </div>
+    </div>
+    <div class="strategy-card">
+      <div class="label">Post-hoc adjustment</div>
+      <div class="name">Repetition penalty</div>
+      <div class="desc">
+        Multiply logits of tokens that appeared recently by a penalty
+        &lt; 1. Hacky but effective against degenerate repetition.
+      </div>
+    </div>
+  </div>
+
+  <h2>Related</h2>
+  <ul>
+    <li><a href="transformer-block.html">transformer-block</a> — produces the logits</li>
+    <li><a href="kv-cache.html">kv-cache</a> — makes sampling fast</li>
+    <li><a href="repos/llama2-c.html">repos/llama2-c</a> — top-p in pure C</li>
+    <li><a href="repos/nanoGPT.html">repos/nanoGPT</a> — top-k in PyTorch</li>
+  </ul>
+</article>
+
+
+</main>
+</body>
+</html>

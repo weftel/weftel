@@ -9,3 +9,8 @@ test-results/
 playwright-report/
 blob-report/
 .last-run.json
+
+# local-only corpus: personal HTML (never commit) + regenerated screenshots
+tests/e2e/corpus/real-career/
+tests/e2e/corpus/_shots/
+tests/e2e/.vault/corpus__*
