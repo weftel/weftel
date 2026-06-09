@@ -44,13 +44,13 @@ export function filterInlineStyle(style: string): string | null {
 // proseModelable lets text through as editable prose iff ALL its styles live in here — so
 // "editable vs atomic" is a category question (text-presentation vs layout), not a list.
 export const MODELED_STYLE_PROPS = new Set(["color", "font-weight", "font-style", "text-decoration", "text-decoration-line", ...GENERIC_INLINE_PROPS]);
-export function proseModelable(html: string): boolean {
+export function proseModelable(html: string, relaxClass = false): boolean {
   const t = document.createElement("template"); t.innerHTML = html || "";
   const els = Array.from(t.content.querySelectorAll("*"));
   if (!els.length) return false; // plain text / empty — nothing to gain, leave as-is
   for (const el of els) {
     if (!PROSE_OK_TAGS.has(el.tagName)) return false;        // unknown tag (svg, div, img…) → keep atomic
-    if (el.getAttribute("class")) return false;              // a class usually = a styled component we can't model losslessly
+    if (!relaxClass && el.getAttribute("class")) return false; // a class usually = a styled component we can't model losslessly
     const style = el.getAttribute("style");
     if (style) {
       const props = style.split(";").map((s) => s.split(":")[0].trim().toLowerCase()).filter(Boolean);
@@ -63,21 +63,94 @@ export function proseModelable(html: string): boolean {
 // Broader classifier for (b): can this HTML become editable NESTED nodes (styled-box
 // containers + editable prose + native blocks) rather than a frozen atomic block? Yes if
 // every element is one we model — prose tags, native blocks (table…), and div/span
-// containers carrying INLINE styles — with no unmodelable element (svg/img/canvas/iframe)
-// and no class (a class's appearance lives in CSS we don't carry → freeze to preserve).
-const EDITABLE_TAGS = new Set([...PROSE_OK_TAGS, "DIV", "TABLE", "THEAD", "TBODY", "TR", "TD", "TH", "COLGROUP", "COL", "CAPTION", "FIGURE", "FIGCAPTION"]);
-export function editableModelable(html: string): boolean {
+// containers — with no unmodelable element (svg/img/canvas/iframe/media).
+//
+// `relaxClass` (the FULL_PARSE experiment): when true, a `class` no longer freezes a block.
+// The class's appearance lives in a <style> sheet we now carry into the live editor (scoped,
+// see scopeCss) and preserve verbatim in the saved file — so classed content can be edited
+// in place as nested nodes that keep their `class` attrs. When false (legacy), any class
+// freezes the block, preserving it as an opaque atomic rich block.
+const EDITABLE_TAGS = new Set([...PROSE_OK_TAGS, "DIV", "PRE", "TABLE", "THEAD", "TBODY", "TR", "TD", "TH", "COLGROUP", "COL", "CAPTION", "FIGURE", "FIGCAPTION",
+  "SECTION", "ARTICLE", "HEADER", "FOOTER", "MAIN", "ASIDE", "NAV", "DL", "DT", "DD", "SMALL", "SUB", "SUP", "KBD", "SAMP", "VAR", "ABBR", "CITE", "Q", "TIME", "DETAILS", "SUMMARY"]);
+export function editableModelable(html: string, relaxClass = false): boolean {
   const t = document.createElement("template"); t.innerHTML = html || "";
   const els = Array.from(t.content.querySelectorAll("*"));
   if (!els.length) return false;
   for (const el of els) {
-    if (!EDITABLE_TAGS.has(el.tagName)) return false;  // svg / img / canvas / iframe / style → freeze (preserve verbatim)
-    if (el.getAttribute("class")) return false;        // class-styled → can't reproduce its look → freeze
+    if (!EDITABLE_TAGS.has(el.tagName)) return false;  // svg / img / canvas / iframe / media → freeze (preserve verbatim)
+    if (!relaxClass && el.getAttribute("class")) return false; // class-styled → can't reproduce its look → freeze
   }
   return true;
 }
 // Whether AI output should insert as editable native content vs an atomic rich block.
+// AI inserts bare fragments with no accompanying <style>, so a classed fragment would render
+// unstyled — keep AI on the strict (no-class) gate even under the FULL_PARSE experiment.
 export function nativeInsertable(html: string): boolean { return editableModelable(html); }
+
+// ── CSS scoping ──────────────────────────────────────────────────────────────
+// Rewrite an imported note's stylesheet so every rule is confined to a scope wrapper (the
+// editor mount), letting the note's class/element CSS render the EDITABLE content while
+// never clobbering the editor chrome (.bar/.sidebar/.cmdk live outside the scope). Global
+// selectors (:root/html/body) map to the scope itself so the note's custom props + base
+// styles apply to the surface and inherit down. Pure brace-depth string transform (no
+// CSSOM) so it's deterministic and works under happy-dom; only ever used for the LIVE
+// editor — the original <style> round-trips verbatim and is what gets saved.
+export function scopeCss(css: string, scope: string): string {
+  return scopeBlock(stripCssComments(css || ""), scope);
+}
+function stripCssComments(s: string): string { return s.replace(/\/\*[\s\S]*?\*\//g, ""); }
+function scopeBlock(src: string, scope: string): string {
+  let out = "", i = 0; const n = src.length;
+  while (i < n) {
+    // skip to the next top-level '{' (a rule) or ';' (an @import/@charset statement)
+    let j = i;
+    while (j < n && src[j] !== "{" && src[j] !== ";") j++;
+    if (j >= n) break;
+    if (src[j] === ";") { const stmt = src.slice(i, j + 1).trim(); if (stmt) out += stmt; i = j + 1; continue; }
+    const prelude = src.slice(i, j).trim();
+    let d = 0, k = j;
+    for (; k < n; k++) { if (src[k] === "{") d++; else if (src[k] === "}") { d--; if (d === 0) { k++; break; } } }
+    out += renderRule(prelude, src.slice(j + 1, k - 1), scope);
+    i = k;
+  }
+  return out;
+}
+function renderRule(prelude: string, body: string, scope: string): string {
+  if (!prelude) return "";
+  if (prelude[0] === "@") {
+    const kw = (prelude.match(/^@([a-z-]+)/i) || ["", ""])[1].toLowerCase();
+    // nested-rule at-rules → recurse into the body; everything else (keyframes/font-face/
+    // page/property) is selector-free and must pass through verbatim.
+    if (kw === "media" || kw === "supports" || kw === "container" || kw === "layer" || kw === "scope")
+      return prelude + "{" + scopeBlock(body, scope) + "}";
+    return prelude + "{" + body + "}";
+  }
+  const sel = splitTopLevel(prelude, ",").map((s) => scopeSelector(s.trim(), scope)).filter(Boolean).join(",");
+  return sel ? sel + "{" + body + "}" : "";
+}
+// Split on a separator only at the top level (ignore commas inside :is(), [attr], strings).
+function splitTopLevel(s: string, sep: string): string[] {
+  const parts: string[] = []; let depth = 0, buf = "", str = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (str) { buf += c; if (c === str && s[i - 1] !== "\\") str = ""; continue; }
+    if (c === '"' || c === "'") { str = c; buf += c; continue; }
+    if (c === "(" || c === "[") depth++;
+    else if (c === ")" || c === "]") depth--;
+    if (c === sep && depth === 0) { parts.push(buf); buf = ""; continue; }
+    buf += c;
+  }
+  if (buf.trim()) parts.push(buf);
+  return parts;
+}
+function scopeSelector(sel: string, scope: string): string {
+  sel = sel.trim();
+  if (!sel) return "";
+  if (/^(:root|html|body)$/i.test(sel)) return scope;                 // whole global selector → the scope itself
+  const m = sel.match(/^(?::root|html|body)(\s*[>+~]\s*|\s+)([\s\S]*)$/i);
+  if (m) { const comb = m[1].trim(); return scope + (comb ? " " + comb + " " : " ") + m[2].trim(); } // "body h1"→"<scope> h1", "body>.x"→"<scope> > .x"
+  return scope + " " + sel;                                           // ".card h3", "*", "strong.t" → descendant of scope
+}
 
 // ProseMirror turns whitespace text-nodes between table cells (pretty-printed HTML) into
 // spurious empty cells — a clean 2-col table parses as 5. Strip whitespace-only text nodes
