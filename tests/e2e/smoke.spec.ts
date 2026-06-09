@@ -118,6 +118,135 @@ test("cmd+K 'a 2x2 table' yields a NATIVE EDITABLE table, not a frozen rich bloc
   expect(cellEditable).toBe(true);
 });
 
+// FULL_PARSE: a class/<style>-driven bespoke doc (the cheat-sheet case) opens as EDITABLE
+// nested nodes — not one frozen rich block — renders with its real design, edits in place,
+// and round-trips (design + <style> intact, edit persisted) through save/reload.
+const CHEATSHEET = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Cheat Sheet</title>
+<style>
+  :root{--bg:#0b0c10;--panel:#13151c;--line:#262b38;--ink:#e8eaf0;--muted:#9aa3b2;--accent:#7c7cf0;--radius:13px}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 sans-serif}
+  .wrap{max-width:860px;margin:0 auto;padding:34px 22px}
+  h1{font-size:30px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:14px;margin-bottom:24px}
+  h2{font-size:12px;text-transform:uppercase;color:var(--accent);font-weight:700;margin:32px 0 14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 18px;margin:10px 0}
+  .card h3{font-size:15px;margin:0 0 8px;color:#fff}
+  .card ul{margin:0;padding-left:18px}
+  .card li{margin:6px 0;color:#d7dbe6}
+  b{color:#fff;font-weight:650}
+  strong.t{color:#bcc3ff;font-weight:700}
+</style></head>
+<body>
+<div class="wrap">
+  <h1>Technical Cheat Sheet</h1>
+  <div class="sub">Glance-only reference for the deep-dive.</div>
+  <h2>Questions to Expect</h2>
+  <div class="card"><h3>Tell me about yourself</h3><ul><li>I <b>co-founded a startup</b> and shipped over <b>nineteen months</b>.</li><li>Before that, <strong class="t">data pipelines</strong> at scale.</li></ul></div>
+  <div class="card"><h3>Why us</h3><ul><li>Mission-driven and <b>local to me</b>.</li></ul></div>
+  <div class="card"><h3>Strengths</h3><ul><li>Ownership and <b>shipping fast</b>.</li></ul></div>
+</div>
+</body></html>
+`;
+
+test("FULL_PARSE: class/<style> cheat-sheet is editable, styled, and round-trips", async ({ page }) => {
+  const path = await openNote(page, "cheatsheet.html", CHEATSHEET);
+  // 1. parsed into editable nodes, NOT one frozen rich block
+  await expect(page.locator(".ProseMirror [data-rich-block]")).toHaveCount(0);
+  await expect(page.locator(".ProseMirror .card")).toHaveCount(3);
+  await expect(page.locator(".ProseMirror .wrap")).toHaveCount(1);
+  // 2. the doc's <style> is live and scoped
+  await expect(page.locator("#note-scoped")).toHaveCount(1);
+  // 3. design intact: .card h3 is white via the scoped class rule; --accent resolves on the scope
+  const h3color = await page.evaluate(() => { const h = document.querySelector(".ProseMirror .card h3"); return h ? getComputedStyle(h).color : ""; });
+  expect(h3color).toBe("rgb(255, 255, 255)");
+  const accent = await page.evaluate(() => getComputedStyle(document.querySelector("#editor.note-scope") as Element).getPropertyValue("--accent").trim());
+  expect(accent).toBe("#7c7cf0");
+  // 4. the styled text is genuinely editable (not inside a contenteditable=false block)
+  const editable = await page.evaluate(() => { const els = Array.from(document.querySelectorAll(".ProseMirror .card b")); const b = els.find((e) => (e.textContent || "").includes("nineteen")); return !!b && !b.closest("[contenteditable=false]"); });
+  expect(editable).toBe(true);
+  // 5. edit a word in place — via real keystrokes (beforeinput arms autosave; synthetic
+  // transactions deliberately don't, so load-time normalization never writes to disk)
+  await page.evaluate(() => {
+    const e = (window as any).__editor; let from = 0, to = 0;
+    e.state.doc.descendants((n: any, pos: number) => { if (n.isText) { const i = n.text.indexOf("nineteen"); if (i >= 0) { from = pos + i; to = pos + i + "nineteen".length; } } });
+    e.chain().focus().setTextSelection({ from, to }).run(); e.view.focus();
+  });
+  await page.keyboard.type("twelve");
+  await expect(page.locator(".ProseMirror .card").first()).toContainText("twelve months");
+  // 6. round-trip: persist, reload, design + edit survive; saved file keeps <style> + classes verbatim, no editor-only hook
+  await page.waitForTimeout(1300); // past the 600ms autosave debounce
+  const saved = readFileSync(path, "utf8");
+  expect(saved).toContain("<style>");
+  expect(saved).toContain(":root{--bg:#0b0c10");
+  expect(saved).toContain('class="wrap"');
+  expect(saved).toContain('class="card"');
+  expect(saved).toContain("twelve months");
+  expect(saved).not.toContain("nineteen months");
+  expect(saved).not.toContain("data-sbox");
+  await page.reload();
+  await page.waitForSelector(".ProseMirror");
+  await expect(page.locator(".ProseMirror .card")).toHaveCount(3);
+  await expect(page.locator(".ProseMirror .card").first()).toContainText("twelve months");
+  const h3color2 = await page.evaluate(() => { const h = document.querySelector(".ProseMirror .card h3"); return h ? getComputedStyle(h).color : ""; });
+  expect(h3color2).toBe("rgb(255, 255, 255)");
+});
+
+// FULL_PARSE (the real transformer-block shape): everything wrapped in <main><div
+// data-rich-block><article> — a STALE rich-block marker pinning the whole article atomic, with
+// one SVG figure nested deep. The engine must (a) ignore the stale marker, (b) recursively
+// isolate ONLY the figure, leaving prose + classed blocks editable. Asserted via page.evaluate
+// (real querySelectorAll — does NOT pierce shadow DOM — so counts are genuinely light-DOM).
+const NESTED = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Nested</title>
+<style>
+  :root{--accent:#6d5cf0}
+  body{color:#111;font:16px/1.6 sans-serif}
+  .callout{border:1px solid #ddd;border-radius:10px;padding:14px;margin:12px 0}
+  .callout h3{color:var(--accent);margin:0 0 6px}
+  figure{margin:16px 0}
+</style></head>
+<body>
+<main class="page"><div data-rich-block=""><article>
+  <h1>Doc Title</h1>
+  <p class="lede">Intro with <strong>this number</strong>: 42.</p>
+  <figure class="diagram"><svg width="40" height="40"><circle cx="20" cy="20" r="16" fill="#6d5cf0"/></svg><figcaption>a diagram</figcaption></figure>
+  <div class="callout"><h3>Note</h3><p>An editable callout.</p></div>
+  <div class="callout"><h3>Second</h3><p>Also editable.</p></div>
+</article></div></main>
+</body></html>
+`;
+
+test("FULL_PARSE: stale data-rich-block marker is ignored; only the nested SVG figure freezes", async ({ page }) => {
+  await openNote(page, "nested.html", NESTED);
+  const r = await page.evaluate(() => {
+    const pm = document.querySelector(".ProseMirror")!;
+    const host = pm.querySelector("[data-rich-block]") as HTMLElement | null;
+    return {
+      richHosts: pm.querySelectorAll("[data-rich-block]").length,           // light DOM (host count)
+      lightProse: pm.querySelectorAll("p, h1, h3").length,                  // editable, light DOM only
+      callouts: pm.querySelectorAll(".callout").length,                    // editable styled boxes
+      scoped: document.querySelectorAll("#note-scoped").length,
+      hostCE: host?.getAttribute("contenteditable") || null,
+      svgFrozenInShadow: !!(host?.shadowRoot?.querySelector("svg")),       // svg lives inside the frozen block's shadow
+      figureKeptWhole: !!(host?.shadowRoot?.querySelector("figure.diagram figcaption")),
+    };
+  });
+  expect(r.richHosts).toBe(1);            // ONLY the figure, not the whole article
+  expect(r.lightProse).toBeGreaterThan(3); // h1 + paragraphs + callout headings are editable
+  expect(r.callouts).toBe(2);             // both classed callouts editable
+  expect(r.scoped).toBe(1);
+  expect(r.hostCE).toBe("false");
+  expect(r.svgFrozenInShadow).toBe(true);
+  expect(r.figureKeptWhole).toBe(true);   // figure + caption + styling frozen together
+  // editable prose resolves the scoped accent color and is genuinely editable
+  const accentH3 = await page.evaluate(() => { const h = document.querySelector(".ProseMirror .callout h3"); return h ? getComputedStyle(h).color : ""; });
+  expect(accentH3).toBe("rgb(109, 92, 240)");
+  const editable = await page.evaluate(() => { const els = Array.from(document.querySelectorAll(".ProseMirror strong")); const s = els.find((e) => (e.textContent || "").includes("this number")); return !!s && !s.closest("[contenteditable=false]"); });
+  expect(editable).toBe(true);
+});
+
 // QUALITY: after the AI rebuild (format-contract system prompt + Agent SDK), a "2x2
 // pros/cons table" is a clean 2-column table — no 5-column spacer mess.
 test("cmd+K 2x2 table is a clean 2-column Pros/Cons", async ({ page }) => {

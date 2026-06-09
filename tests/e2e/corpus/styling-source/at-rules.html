@@ -1,0 +1,10 @@
+<!--corpus stress="@media / @keyframes pass-through in scopeCss" editable=true editTarget="Heading" neighbor="Body"-->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>AtRules</title><style>
+:root{--c:#c026d3}
+@media (max-width:9999px){ .box{padding:14px} }
+@keyframes pulse{0%{opacity:.6}100%{opacity:1}}
+.box{border:1px solid #ddd;border-radius:10px}
+.box h2{color:var(--c);animation:pulse 2s infinite}
+</style></head><body>
+<div class="box"><h2>Heading</h2><p>Body text here.</p></div>
+</body></html>

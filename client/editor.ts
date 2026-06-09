@@ -10,6 +10,8 @@
 //
 import { Editor, Node, Mark, Extension, InputRule } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
+import Bold from "@tiptap/extension-bold";
+import Italic from "@tiptap/extension-italic";
 import { Markdown } from "tiptap-markdown";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
@@ -22,10 +24,15 @@ import Suggestion from "@tiptap/suggestion";
 import { TextStyle } from "@tiptap/extension-text-style";
 import { Color } from "@tiptap/extension-color";
 import { Highlight } from "@tiptap/extension-highlight";
-import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, nativeInsertable, tidyInsertHtml, mdLite, buildTree, countFiles, type TreeNode } from "./lib";
+import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, subtreeEditable, nativeInsertable, scopeCss, tidyInsertHtml, mdLite, buildTree, countFiles, type TreeNode } from "./lib";
 import { DOMSerializer } from "@tiptap/pm/model";
 
 type Note = { file: string; format: string; content: string; root: string };
+// FULL_PARSE (experiment): parse class/<style>-driven bespoke HTML into editable nodes —
+// preserving classes and scoping the doc's <style> into the live editor — instead of
+// freezing it into an atomic shadow-DOM rich block. Set false to revert to the legacy
+// behavior byte-for-byte (the frozen RichBlock path below is never removed).
+const FULL_PARSE = true;
 const W = window as any;
 const note: Note | null = W.__NOTE__ && W.__NOTE__.file ? W.__NOTE__ : null;
 const ROOT: string = (W.__NOTE__ && W.__NOTE__.root) || "";
@@ -65,15 +72,47 @@ const StyledHighlight = Highlight.extend({
 // color/weight/etc. are left to their specific marks (composes — they nest cleanly).
 const InlineStyle = Mark.create({
   name: "inlineStyle",
-  addAttributes() { return { style: { default: null, parseHTML: (el: any) => filterInlineStyle(el.getAttribute("style") || ""), renderHTML: (attrs: any) => (attrs.style ? { style: attrs.style } : {}) } }; },
-  parseHTML() { return [{ tag: "span[style]", getAttrs: (el: any) => (filterInlineStyle(el.getAttribute("style") || "") ? null : false) }]; },
+  addAttributes() { return {
+    style: { default: null, parseHTML: (el: any) => filterInlineStyle(el.getAttribute("style") || ""), renderHTML: (attrs: any) => (attrs.style ? { style: attrs.style } : {}) },
+    // FULL_PARSE: a bare <span class> carries its styling via the scoped doc sheet — keep it
+    // as an editable mark so classed inline text (e.g. a styled badge) stays editable.
+    class: { default: null, parseHTML: (el: any) => (FULL_PARSE ? el.getAttribute("class") : null), renderHTML: (attrs: any) => (attrs.class ? { class: attrs.class } : {}) },
+  }; },
+  parseHTML() { return [{ tag: "span", getAttrs: (el: any) => ((filterInlineStyle(el.getAttribute("style") || "") || (FULL_PARSE && el.getAttribute("class"))) ? null : false) }]; },
   renderHTML({ HTMLAttributes }: any) { return ["span", HTMLAttributes, 0]; },
   addStorage() {
     return { markdown: { serialize: {
-      open(_s: any, mark: any) { return mark.attrs.style ? '<span style="' + mark.attrs.style + '">' : ""; },
-      close(_s: any, mark: any) { return mark.attrs.style ? "</span>" : ""; },
+      open(_s: any, mark: any) { const a = mark.attrs || {}; if (!a.style && !a.class) return ""; return "<span" + (a.class ? ' class="' + a.class + '"' : "") + (a.style ? ' style="' + a.style + '"' : "") + ">"; },
+      close(_s: any, mark: any) { return (mark.attrs.style || mark.attrs.class) ? "</span>" : ""; },
       mixable: true, expelEnclosingWhitespace: true,
     } } };
+  },
+});
+
+// FULL_PARSE: preserve the exact emphasis tag (<b> vs <strong>, <i> vs <em>) so the note's
+// own element-level CSS (e.g. `b{color:#fff}`) keeps matching after a round-trip. TipTap's
+// stock Bold/Italic re-render everything as <strong>/<em>, which silently drops those rules.
+const emphTag = (ok: string[]) => ({ default: null, parseHTML: (el: any) => { const t = (el.tagName || "").toLowerCase(); return ok.indexOf(t) >= 0 ? t : null; }, renderHTML: () => ({}) });
+const BoldTagged = Bold.extend({
+  addAttributes() { return { ...(this.parent?.() || {}), htmlTag: emphTag(["b", "strong"]) }; },
+  renderHTML({ mark, HTMLAttributes }: any) { return [mark.attrs.htmlTag || "strong", HTMLAttributes, 0]; },
+});
+const ItalicTagged = Italic.extend({
+  addAttributes() { return { ...(this.parent?.() || {}), htmlTag: emphTag(["i", "em"]) }; },
+  renderHTML({ mark, HTMLAttributes }: any) { return [mark.attrs.htmlTag || "em", HTMLAttributes, 0]; },
+});
+
+// FULL_PARSE: carry `class` through the round-trip on native nodes + marks ProseMirror would
+// otherwise strip it from, so classed prose (<h3 class>, <li class>, <ul class>, <strong
+// class>) keeps rendering via the scoped doc sheet and saves its classes back verbatim.
+const PreserveAttrs = Extension.create({
+  name: "preserveClassAttr",
+  addGlobalAttributes() {
+    if (!FULL_PARSE) return [];
+    return [{
+      types: ["paragraph", "heading", "bulletList", "orderedList", "listItem", "blockquote", "codeBlock", "horizontalRule", "table", "tableRow", "tableHeader", "tableCell", "bold", "italic", "code", "strike", "link"],
+      attributes: { class: { default: null, parseHTML: (el: any) => el.getAttribute("class"), renderHTML: (attrs: any) => (attrs.class ? { class: attrs.class } : {}) } },
+    }];
   },
 });
 
@@ -82,18 +121,47 @@ const InlineStyle = Mark.create({
 // Lets bespoke HTML designs (stat cards, comparisons…) be editable prose in a preserved
 // layout instead of a frozen rich block. Serializes the whole subtree as one raw-HTML blob
 // so nested boxes round-trip cleanly (esp. in markdown).
+// Tags that count as inline content (so a <div> holding only these is a styled *inline* box,
+// not a block container). Anything else as a child → block container (StyledBox).
+const INLINE_TAGS = new Set(["A", "B", "I", "EM", "STRONG", "SPAN", "CODE", "MARK", "U", "S", "DEL", "INS", "SMALL", "SUB", "SUP", "KBD", "SAMP", "VAR", "ABBR", "CITE", "Q", "TIME", "BR"]);
+const hasBlockChild = (el: any) => Array.from(el.children).some((c: any) => !INLINE_TAGS.has(c.tagName));
+// data-sbox markdown serializer (shared by both styled boxes): emit the whole subtree as one
+// raw-HTML blob via DOMSerializer, stripped of the editor-only data-sbox hook.
+const sboxMd = { markdown: { serialize(state: any, node: any) {
+  const dom = DOMSerializer.fromSchema(node.type.schema).serializeNode(node) as HTMLElement;
+  dom.querySelectorAll("[data-sbox]").forEach((e) => e.removeAttribute("data-sbox")); dom.removeAttribute("data-sbox");
+  state.write(dom.outerHTML); state.closeBlock(node);
+} } };
+const sboxAttrs = () => ({
+  style: { default: null, parseHTML: (el: any) => el.getAttribute("style"), renderHTML: (a: any) => (a.style ? { style: a.style } : {}) },
+  class: { default: null, parseHTML: (el: any) => el.getAttribute("class"), renderHTML: (a: any) => (a.class ? { class: a.class } : {}) },
+});
 const StyledBox = Node.create({
   name: "styledBox", group: "block", content: "block+", defining: true,
-  addAttributes() { return { style: { default: null, parseHTML: (el: any) => el.getAttribute("style"), renderHTML: (a: any) => (a.style ? { style: a.style } : {}) } }; },
-  parseHTML() { return [{ tag: "div", getAttrs: (el: any) => (!el.getAttribute("class") && el.getAttribute("style") ? {} : false) }]; },
+  addAttributes() { return sboxAttrs(); },
+  // Legacy (FULL_PARSE off): only an inline-styled, class-free div. FULL_PARSE: any div with a
+  // class or style AND block children — its look comes from the scoped doc sheet / inline style.
+  parseHTML() { return [{ tag: "div", getAttrs: (el: any) => {
+    const cls = el.getAttribute("class"); const sty = el.getAttribute("style");
+    if (!FULL_PARSE) return (!cls && sty) ? {} : false;
+    return ((cls || sty) && hasBlockChild(el)) ? {} : false;
+  } }]; },
   renderHTML({ HTMLAttributes }: any) { return ["div", { ...HTMLAttributes, "data-sbox": "" }, 0]; },
-  addStorage() {
-    return { markdown: { serialize(state: any, node: any) {
-      const dom = DOMSerializer.fromSchema(node.type.schema).serializeNode(node) as HTMLElement;
-      dom.querySelectorAll("[data-sbox]").forEach((e) => e.removeAttribute("data-sbox")); dom.removeAttribute("data-sbox");
-      state.write(dom.outerHTML); state.closeBlock(node);
-    } } };
-  },
+  addStorage() { return sboxMd; },
+});
+// FULL_PARSE: a <div class/style> holding only inline content (e.g. `<div class="sub">text</div>`).
+// Separate from StyledBox so its text isn't wrapped in a <p> (which would drift the design).
+// Higher parse priority so it claims inline-only divs before StyledBox sees them.
+const StyledInlineBox = Node.create({
+  name: "styledInlineBox", group: "block", content: "inline*", defining: true,
+  addAttributes() { return sboxAttrs(); },
+  parseHTML() { return [{ tag: "div", priority: 60, getAttrs: (el: any) => {
+    if (!FULL_PARSE) return false;
+    const cls = el.getAttribute("class"); const sty = el.getAttribute("style");
+    return ((cls || sty) && !hasBlockChild(el)) ? {} : false;
+  } }]; },
+  renderHTML({ HTMLAttributes }: any) { return ["div", { ...HTMLAttributes, "data-sbox": "" }, 0]; },
+  addStorage() { return sboxMd; },
 });
 
 const richMd = { markdown: { serialize(state: any, node: any) { state.write("<div data-rich-block>" + (node.attrs.html || "") + "</div>"); state.closeBlock(node); } } };
@@ -104,7 +172,7 @@ const RichBlock = Node.create({
   addStorage() { return richMd; },
   // If the block's content is fully prose-modelable, REJECT the atomic rule (getAttrs:false)
   // so TipTap parses the inner HTML as editable prose+marks instead. Shrinks the atomic set.
-  parseHTML() { return [{ tag: "div[data-rich-block]", getAttrs: (el: any) => (editableModelable(el.innerHTML) ? false : null) }]; },
+  parseHTML() { return [{ tag: "div[data-rich-block]", getAttrs: (el: any) => (editableModelable(el.innerHTML, FULL_PARSE) ? false : null) }]; },
   renderHTML({ node }: any) { const d = document.createElement("div"); d.setAttribute("data-rich-block", ""); d.innerHTML = node.attrs.html; return d; },
   addNodeView() {
     return ({ node }: any) => {
@@ -302,19 +370,58 @@ const PROSE_TAGS = new Set(["H1","H2","H3","H4","H5","H6","P","UL","OL","BLOCKQU
 let htmlTemplate: string | null = null; // full original doc with %%NOTE_BODY%% where editable content goes
 let BODY_TOKEN = "%%NOTE_BODY%%"; // reassigned per-load to a collision-free value (see prepareHtml)
 let RICH_STYLES = ""; // an imported doc's <style> blocks — injected into each rich block's SHADOW root (scoped, no global leak)
+let SCOPED_NOTE_CSS = ""; // FULL_PARSE: the doc's <style> rewritten to the .note-scope wrapper, injected live so classed editable content renders right (never saved)
+
+// Pure grouping wrappers — when unstyled, descend THROUGH them to isolate only the minimal
+// unmodelable subtree, instead of freezing a whole wrapper just because one svg sits deep inside.
+const STRUCTURAL_TAGS = new Set(["DIV", "ARTICLE", "MAIN", "SECTION", "BODY", "HEADER", "FOOTER", "ASIDE", "NAV"]);
+// FULL_PARSE: walk the tree and wrap in data-rich-block ONLY the smallest subtrees we can't model
+// (an svg/img/… or a styled unit containing one). Fully-editable subtrees are left in place; plain
+// unstyled wrappers are descended through (so one nested svg doesn't freeze the whole document).
+function isolateRich(el: HTMLElement, doc: Document) {
+  Array.from(el.children).forEach((c) => {
+    const child = c as HTMLElement;
+    if (child.hasAttribute("data-calendar") || child.hasAttribute("data-clock")) return;    // dynamic block — leave for its node
+    if (subtreeEditable(child)) return;                                                     // no unmodelable element anywhere — keep editable
+    if (!child.getAttribute("class") && !child.getAttribute("style") && STRUCTURAL_TAGS.has(child.tagName)) { isolateRich(child, doc); return; } // plain wrapper — descend
+    const wrap = doc.createElement("div"); wrap.setAttribute("data-rich-block", "");        // styled unit / unmodelable leaf — freeze whole
+    child.replaceWith(wrap); wrap.appendChild(child);
+  });
+}
 
 function prepareHtml(raw: string): string {
   const doc = new DOMParser().parseFromString(raw, "text/html");
-  // Preserve every <style>/<script> by relocating into <head> BEFORE tokenizing the
-  // body — otherwise styles living inside <body>/<article> get wiped on save.
+  // Preserve every <style>/<script> by relocating into <head> BEFORE tokenizing the body —
+  // otherwise document-level styles/scripts get wiped on save. PRESERVING a user's script is
+  // lossless (their files, often Claude-Code-authored — deleting it is the worse failure); it
+  // is SAFE in-app because the head is never injected into the live page (htmlTemplate is only
+  // a save-splice string) and rich blocks render via innerHTML, which never executes <script>.
+  // Body active content is still neutralized by stripActive for live render. Hardening against
+  // genuinely untrusted imported HTML is deferred — see the corpus 'security' subset.
   doc.querySelectorAll("style, script").forEach((el) => doc.head.appendChild(el));
   // Capture the doc's styles to inject into each rich block's SHADOW root — scoped, so
   // they render the content but NEVER leak into the editor chrome (the white-bg bug).
   // Rewrite :root → :host so a doc's custom props (e.g. --font-mono) resolve in the shadow.
   RICH_STYLES = Array.from(doc.querySelectorAll("style")).map((s) => "<style>" + (s.textContent || "").replace(/:root\b/g, ":host") + "</style>").join("\n");
+  // FULL_PARSE: rewrite the same styles to the editor-mount scope so class/element rules render
+  // the EDITABLE content without clobbering the chrome (live-only; the original <style> still
+  // round-trips verbatim through htmlTemplate's head).
+  SCOPED_NOTE_CSS = FULL_PARSE ? scopeCss(Array.from(doc.querySelectorAll("style")).map((s) => s.textContent || "").join("\n"), ".note-scope") : "";
   const container = (doc.querySelector("article, main") as HTMLElement) || doc.body;
   const hasMarkers = !!container.querySelector("[data-rich-block],[data-calendar],[data-clock]");
-  if (hasMarkers) {
+  if (FULL_PARSE) {
+    // Re-derive rich blocks from CONTENT, not stale markers: drop every data-rich-block wrapper
+    // (from a prior save / md-to-redesigned output — these often pin a whole <article> atomic),
+    // keep dynamic markers (data-calendar/clock), then recursively isolate ONLY the minimal
+    // unmodelable subtrees (svg/img/…). A single nested svg no longer freezes the whole document;
+    // everything else parses into editable nodes rendered by the scoped doc sheet.
+    container.querySelectorAll("[data-rich-block]").forEach((rb) => {
+      const p = rb.parentNode; if (!p) return;
+      while (rb.firstChild) p.insertBefore(rb.firstChild, rb);
+      p.removeChild(rb);
+    });
+    isolateRich(container, doc);
+  } else if (hasMarkers) {
     // App-authored note: keep prose fluid; wrap any stray non-prose top-level
     // element so it's preserved atomic rather than flattened.
     Array.from(container.children).forEach((child) => {
@@ -325,8 +432,8 @@ function prepareHtml(raw: string): string {
       el.replaceWith(wrap); wrap.appendChild(el);
     });
   } else {
-    // Arbitrary imported HTML (no markers): preserve the ENTIRE body as one atomic
-    // rich block — guaranteed lossless, rendered verbatim, view-only until adopted.
+    // Legacy: preserve the ENTIRE body as one atomic rich block — guaranteed lossless,
+    // rendered verbatim, view-only until adopted.
     const inner = container.innerHTML;
     const wrap = doc.createElement("div"); wrap.setAttribute("data-rich-block", "");
     wrap.innerHTML = inner; container.innerHTML = ""; container.appendChild(wrap);
@@ -349,12 +456,14 @@ let editor: Editor | null = null;
 
 if (note && mount) {
   const extensions: any[] = [
-    StarterKit,
+    // FULL_PARSE swaps stock Bold/Italic for tag-preserving variants (see BoldTagged).
+    FULL_PARSE ? StarterKit.configure({ bold: false, italic: false }) : StarterKit,
+    ...(FULL_PARSE ? [BoldTagged, ItalicTagged, PreserveAttrs] : []),
     StyledTextStyle, Color, StyledHighlight.configure({ multicolor: true }), InlineStyle,
     TaskList, TaskItem.configure({ nested: true }), TaskInputRule,
     Table.configure({ resizable: true }), TableRow, TableHeader, TableCell,
     Callout,
-    StyledBox, RichBlock, CalendarBlock, ClockBlock,
+    StyledInlineBox, StyledBox, RichBlock, CalendarBlock, ClockBlock,
     SlashMenu,
     Placeholder.configure({ placeholder: ({ node }: any) => (node.type.name === "heading" ? "Heading" : "Write, or press “/” for commands…"), showOnlyCurrent: true }),
   ];
@@ -365,14 +474,31 @@ if (note && mount) {
   editor = new Editor({ element: mount, extensions, content, autofocus: "end" });
   W.__editor = editor;
 
+  // FULL_PARSE: scope the doc's <style> to the editor mount so classed/styled editable content
+  // renders with its real design, while editor chrome (outside #editor) is untouched.
+  if (note.format === "html" && FULL_PARSE && SCOPED_NOTE_CSS) {
+    mount.classList.add("note-scope");
+    const st = document.createElement("style"); st.id = "note-scoped"; st.textContent = SCOPED_NOTE_CSS;
+    document.head.appendChild(st);
+  }
+
+  // Strip the editor-only data-sbox hook from saved HTML (it's a styling/margin hook, not content).
+  const stripSbox = (html: string): string => {
+    if (html.indexOf("data-sbox") < 0) return html;
+    const t = document.createElement("template"); t.innerHTML = html;
+    t.content.querySelectorAll("[data-sbox]").forEach((e) => e.removeAttribute("data-sbox"));
+    return t.innerHTML;
+  };
+
   // -------- serialize --------
   const serialize = (): string => {
     if (!editor) return "";
     if (note.format === "md") { const s: any = editor.storage; return s.markdown && s.markdown.getMarkdown ? s.markdown.getMarkdown() : editor.getText(); }
-    const bodyHtml = editor.getHTML();
+    const bodyHtml = stripSbox(editor.getHTML());
     if (htmlTemplate) return spliceBody(htmlTemplate, BODY_TOKEN, bodyHtml);
     return `<!DOCTYPE html>\n<html><head><meta charset="utf-8"></head><body><article>\n${bodyHtml}\n</article></body></html>\n`;
   };
+  W.__serialize = serialize; // test seam: read the exact bytes a save would write (corpus harness)
 
   // -------- toast + save status --------
   const toast = document.createElement("div"); toast.className = "toast"; document.body.appendChild(toast);
