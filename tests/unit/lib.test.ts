@@ -4,7 +4,7 @@ import { test, expect } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 if (typeof (globalThis as any).document === "undefined") GlobalRegistrator.register();
 
-import { stripActive, spliceBody, proseModelable, editableModelable, scopeCss, filterInlineStyle, escapeAttr, mdLite, buildTree, countFiles } from "../../client/lib";
+import { stripActive, spliceBody, proseModelable, editableModelable, subtreeEditable, scopeCss, filterInlineStyle, escapeAttr, mdLite, buildTree, countFiles } from "../../client/lib";
 
 // ───────────────────────── spliceBody — the $-corruption bug ─────────────────────────
 const TOKEN = "%%NOTE_BODY%%";
@@ -92,6 +92,19 @@ test("editableModelable: unmodelable elements still freeze even with relaxClass"
 test("proseModelable: relaxClass lets classed prose through", () => {
   expect(proseModelable(`<p class="lead">hi</p>`)).toBe(false);        // strict default
   expect(proseModelable(`<p class="lead">hi</p>`, true)).toBe(true);   // relaxed
+});
+
+// ───────────────────────── subtreeEditable — the isolation predicate ─────────────────────────
+function el(html: string): Element { const t = document.createElement("template"); t.innerHTML = html; return t.content.firstElementChild as Element; }
+test("subtreeEditable: text-only leaves are editable (unlike editableModelable)", () => {
+  expect(subtreeEditable(el("<h1>Just a title</h1>"))).toBe(true);   // editableModelable would be false (no descendants)
+  expect(subtreeEditable(el('<p class="lede">intro <strong>x</strong></p>'))).toBe(true);
+  expect(subtreeEditable(el('<div class="card"><h3>t</h3><ul><li>a</li></ul></div>'))).toBe(true);
+});
+test("subtreeEditable: any unmodelable descendant makes the whole subtree non-editable", () => {
+  expect(subtreeEditable(el("<figure><svg><circle/></svg><figcaption>c</figcaption></figure>"))).toBe(false);
+  expect(subtreeEditable(el('<div class="x"><p>ok</p><img src="y"></div>'))).toBe(false);
+  expect(subtreeEditable(el("<svg><circle/></svg>"))).toBe(false);
 });
 
 // ───────────────────────── scopeCss — confine an imported sheet to the editor ─────────────────────────

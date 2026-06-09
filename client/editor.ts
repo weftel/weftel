@@ -24,7 +24,7 @@ import Suggestion from "@tiptap/suggestion";
 import { TextStyle } from "@tiptap/extension-text-style";
 import { Color } from "@tiptap/extension-color";
 import { Highlight } from "@tiptap/extension-highlight";
-import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, nativeInsertable, scopeCss, tidyInsertHtml, mdLite, buildTree, countFiles, type TreeNode } from "./lib";
+import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, subtreeEditable, nativeInsertable, scopeCss, tidyInsertHtml, mdLite, buildTree, countFiles, type TreeNode } from "./lib";
 import { DOMSerializer } from "@tiptap/pm/model";
 
 type Note = { file: string; format: string; content: string; root: string };
@@ -372,6 +372,23 @@ let BODY_TOKEN = "%%NOTE_BODY%%"; // reassigned per-load to a collision-free val
 let RICH_STYLES = ""; // an imported doc's <style> blocks — injected into each rich block's SHADOW root (scoped, no global leak)
 let SCOPED_NOTE_CSS = ""; // FULL_PARSE: the doc's <style> rewritten to the .note-scope wrapper, injected live so classed editable content renders right (never saved)
 
+// Pure grouping wrappers — when unstyled, descend THROUGH them to isolate only the minimal
+// unmodelable subtree, instead of freezing a whole wrapper just because one svg sits deep inside.
+const STRUCTURAL_TAGS = new Set(["DIV", "ARTICLE", "MAIN", "SECTION", "BODY", "HEADER", "FOOTER", "ASIDE", "NAV"]);
+// FULL_PARSE: walk the tree and wrap in data-rich-block ONLY the smallest subtrees we can't model
+// (an svg/img/… or a styled unit containing one). Fully-editable subtrees are left in place; plain
+// unstyled wrappers are descended through (so one nested svg doesn't freeze the whole document).
+function isolateRich(el: HTMLElement, doc: Document) {
+  Array.from(el.children).forEach((c) => {
+    const child = c as HTMLElement;
+    if (child.hasAttribute("data-calendar") || child.hasAttribute("data-clock")) return;    // dynamic block — leave for its node
+    if (subtreeEditable(child)) return;                                                     // no unmodelable element anywhere — keep editable
+    if (!child.getAttribute("class") && !child.getAttribute("style") && STRUCTURAL_TAGS.has(child.tagName)) { isolateRich(child, doc); return; } // plain wrapper — descend
+    const wrap = doc.createElement("div"); wrap.setAttribute("data-rich-block", "");        // styled unit / unmodelable leaf — freeze whole
+    child.replaceWith(wrap); wrap.appendChild(child);
+  });
+}
+
 function prepareHtml(raw: string): string {
   const doc = new DOMParser().parseFromString(raw, "text/html");
   // Preserve every <style>/<script> by relocating into <head> BEFORE tokenizing the
@@ -387,23 +404,25 @@ function prepareHtml(raw: string): string {
   SCOPED_NOTE_CSS = FULL_PARSE ? scopeCss(Array.from(doc.querySelectorAll("style")).map((s) => s.textContent || "").join("\n"), ".note-scope") : "";
   const container = (doc.querySelector("article, main") as HTMLElement) || doc.body;
   const hasMarkers = !!container.querySelector("[data-rich-block],[data-calendar],[data-clock]");
-  if (hasMarkers) {
+  if (FULL_PARSE) {
+    // Re-derive rich blocks from CONTENT, not stale markers: drop every data-rich-block wrapper
+    // (from a prior save / md-to-redesigned output — these often pin a whole <article> atomic),
+    // keep dynamic markers (data-calendar/clock), then recursively isolate ONLY the minimal
+    // unmodelable subtrees (svg/img/…). A single nested svg no longer freezes the whole document;
+    // everything else parses into editable nodes rendered by the scoped doc sheet.
+    container.querySelectorAll("[data-rich-block]").forEach((rb) => {
+      const p = rb.parentNode; if (!p) return;
+      while (rb.firstChild) p.insertBefore(rb.firstChild, rb);
+      p.removeChild(rb);
+    });
+    isolateRich(container, doc);
+  } else if (hasMarkers) {
     // App-authored note: keep prose fluid; wrap any stray non-prose top-level
     // element so it's preserved atomic rather than flattened.
     Array.from(container.children).forEach((child) => {
       const el = child as HTMLElement;
       if (el.hasAttribute("data-rich-block") || el.hasAttribute("data-calendar") || el.hasAttribute("data-clock")) return;
       if (PROSE_TAGS.has(el.tagName)) return;
-      const wrap = doc.createElement("div"); wrap.setAttribute("data-rich-block", "");
-      el.replaceWith(wrap); wrap.appendChild(el);
-    });
-  } else if (FULL_PARSE) {
-    // Arbitrary imported HTML (no markers), FULL_PARSE: wrap atomic ONLY the subtrees we can't
-    // model (svg/img/canvas/iframe…); leave editable subtrees in place so they parse into
-    // editable nodes (styled boxes + classed prose) rendered by the scoped doc sheet.
-    Array.from(container.children).forEach((child) => {
-      const el = child as HTMLElement;
-      if (editableModelable(el.outerHTML, true)) return;
       const wrap = doc.createElement("div"); wrap.setAttribute("data-rich-block", "");
       el.replaceWith(wrap); wrap.appendChild(el);
     });

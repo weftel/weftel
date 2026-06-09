@@ -128,6 +128,9 @@ async function bundleClient(): Promise<string> {
   return await b.outputs[0].text();
 }
 let EDITOR_JS = await bundleClient();
+// Cache-bust the bundle per build so a restart always serves fresh code — the desktop app
+// window (its own Chrome profile) and browsers otherwise reuse a stale /editor.js.
+let BUILD_ID = Bun.hash(EDITOR_JS).toString(36);
 
 function fmtOf(p: string): string {
   const e = extname(p).toLowerCase();
@@ -313,8 +316,12 @@ function shell(note: { file: string; format: string; content: string } | null): 
 <style>${styles()}</style></head>
 <body>
   ${body}
-  <script>window.__NOTE__=${json};</script>
-  <script type="module" src="/editor.js"></script>
+  <script>window.__NOTE__=${json};
+  // This app uses no service worker. If a stale one (e.g. from a prior project on this port)
+  // is registered on this origin it will intercept /editor.js and serve old code, immune to
+  // refresh. Unregister any SW + drop its caches so the next load is always the fresh bundle.
+  if(navigator.serviceWorker)navigator.serviceWorker.getRegistrations().then(rs=>{if(rs.length){Promise.all(rs.map(r=>r.unregister())).then(()=>{if(window.caches)caches.keys().then(ks=>Promise.all(ks.map(k=>caches.delete(k)))).then(()=>location.reload());else location.reload();});}});</script>
+  <script type="module" src="/editor.js?v=${BUILD_ID}"></script>
 </body></html>`;
 }
 
@@ -324,7 +331,7 @@ Bun.serve({
   port: PORT,
   async fetch(req) {
     const url = new URL(req.url);
-    if (url.pathname === "/editor.js") return new Response(EDITOR_JS, { headers: { "content-type": "text/javascript; charset=utf-8" } });
+    if (url.pathname === "/editor.js") return new Response(EDITOR_JS, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" } });
 
     if (req.method === "POST") {
       if (!sameOrigin(req)) return json({ ok: false, error: "bad origin" }, 403);

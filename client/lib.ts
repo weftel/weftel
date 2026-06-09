@@ -82,6 +82,16 @@ export function editableModelable(html: string, relaxClass = false): boolean {
   }
   return true;
 }
+// For load-time isolation (isolateRich): does this element's WHOLE subtree contain only
+// modelable tags (no svg/img/canvas/iframe/media)? Unlike editableModelable, a text-only leaf
+// (<h1>hi</h1>, <span style>x</span>) counts as editable — here we ask "is anything here
+// unpreservable?", not "is there nested structure to unwrap". relaxClass mirrors FULL_PARSE.
+export function subtreeEditable(el: Element, relaxClass = true): boolean {
+  if (!EDITABLE_TAGS.has(el.tagName)) return false;
+  if (!relaxClass && el.getAttribute("class")) return false;
+  for (const c of Array.from(el.children)) if (!subtreeEditable(c, relaxClass)) return false;
+  return true;
+}
 // Whether AI output should insert as editable native content vs an atomic rich block.
 // AI inserts bare fragments with no accompanying <style>, so a classed fragment would render
 // unstyled — keep AI on the strict (no-class) gate even under the FULL_PARSE experiment.

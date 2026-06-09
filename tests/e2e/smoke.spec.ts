@@ -193,40 +193,58 @@ test("FULL_PARSE: class/<style> cheat-sheet is editable, styled, and round-trips
   expect(h3color2).toBe("rgb(255, 255, 255)");
 });
 
-// FULL_PARSE (mixed doc, the transformer-block shape): in one class/<style> doc, editable
-// classed prose and an unmodelable SVG figure COEXIST — the SVG subtree stays a frozen rich
-// block (preserved verbatim) while the rest is editable. Proves partial-freeze granularity.
-const MIXED = `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Mixed</title>
+// FULL_PARSE (the real transformer-block shape): everything wrapped in <main><div
+// data-rich-block><article> — a STALE rich-block marker pinning the whole article atomic, with
+// one SVG figure nested deep. The engine must (a) ignore the stale marker, (b) recursively
+// isolate ONLY the figure, leaving prose + classed blocks editable. Asserted via page.evaluate
+// (real querySelectorAll — does NOT pierce shadow DOM — so counts are genuinely light-DOM).
+const NESTED = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Nested</title>
 <style>
-  :root{--ink:#111;--accent:#6d5cf0}
-  body{color:var(--ink);font:16px/1.6 sans-serif}
-  .note{border:1px solid #ddd;border-radius:10px;padding:16px;margin:12px 0}
-  .note h3{color:var(--accent);margin:0 0 6px}
+  :root{--accent:#6d5cf0}
+  body{color:#111;font:16px/1.6 sans-serif}
+  .callout{border:1px solid #ddd;border-radius:10px;padding:14px;margin:12px 0}
+  .callout h3{color:var(--accent);margin:0 0 6px}
   figure{margin:16px 0}
 </style></head>
 <body>
-<main>
-  <div class="note"><h3>Editable card</h3><p>Change <strong>this number</strong>: 42.</p></div>
-  <figure><svg width="40" height="40"><circle cx="20" cy="20" r="16" fill="#6d5cf0"/></svg><figcaption class="cap">a diagram</figcaption></figure>
-  <div class="note"><h3>Second card</h3><p>Also editable text.</p></div>
-</main>
+<main class="page"><div data-rich-block=""><article>
+  <h1>Doc Title</h1>
+  <p class="lede">Intro with <strong>this number</strong>: 42.</p>
+  <figure class="diagram"><svg width="40" height="40"><circle cx="20" cy="20" r="16" fill="#6d5cf0"/></svg><figcaption>a diagram</figcaption></figure>
+  <div class="callout"><h3>Note</h3><p>An editable callout.</p></div>
+  <div class="callout"><h3>Second</h3><p>Also editable.</p></div>
+</article></div></main>
 </body></html>
 `;
 
-test("FULL_PARSE: mixed doc — classed prose editable, SVG figure stays a frozen rich block", async ({ page }) => {
-  await openNote(page, "mixed.html", MIXED);
-  // the SVG figure is preserved atomic; the editable cards are not frozen
-  await expect(page.locator(".ProseMirror [data-rich-block]")).toHaveCount(1);
-  await expect(page.locator(".ProseMirror [data-rich-block] svg circle")).toBeVisible();
-  await expect(page.locator(".ProseMirror .note")).toHaveCount(2);
-  await expect(page.locator("#note-scoped")).toHaveCount(1);
-  // an editable card's text is genuinely editable (not inside the frozen block)
-  const editable = await page.evaluate(() => { const els = Array.from(document.querySelectorAll(".ProseMirror .note strong")); const s = els.find((e) => (e.textContent || "").includes("this number")); return !!s && !s.closest("[contenteditable=false]"); });
+test("FULL_PARSE: stale data-rich-block marker is ignored; only the nested SVG figure freezes", async ({ page }) => {
+  await openNote(page, "nested.html", NESTED);
+  const r = await page.evaluate(() => {
+    const pm = document.querySelector(".ProseMirror")!;
+    const host = pm.querySelector("[data-rich-block]") as HTMLElement | null;
+    return {
+      richHosts: pm.querySelectorAll("[data-rich-block]").length,           // light DOM (host count)
+      lightProse: pm.querySelectorAll("p, h1, h3").length,                  // editable, light DOM only
+      callouts: pm.querySelectorAll(".callout").length,                    // editable styled boxes
+      scoped: document.querySelectorAll("#note-scoped").length,
+      hostCE: host?.getAttribute("contenteditable") || null,
+      svgFrozenInShadow: !!(host?.shadowRoot?.querySelector("svg")),       // svg lives inside the frozen block's shadow
+      figureKeptWhole: !!(host?.shadowRoot?.querySelector("figure.diagram figcaption")),
+    };
+  });
+  expect(r.richHosts).toBe(1);            // ONLY the figure, not the whole article
+  expect(r.lightProse).toBeGreaterThan(3); // h1 + paragraphs + callout headings are editable
+  expect(r.callouts).toBe(2);             // both classed callouts editable
+  expect(r.scoped).toBe(1);
+  expect(r.hostCE).toBe("false");
+  expect(r.svgFrozenInShadow).toBe(true);
+  expect(r.figureKeptWhole).toBe(true);   // figure + caption + styling frozen together
+  // editable prose resolves the scoped accent color and is genuinely editable
+  const accentH3 = await page.evaluate(() => { const h = document.querySelector(".ProseMirror .callout h3"); return h ? getComputedStyle(h).color : ""; });
+  expect(accentH3).toBe("rgb(109, 92, 240)");
+  const editable = await page.evaluate(() => { const els = Array.from(document.querySelectorAll(".ProseMirror strong")); const s = els.find((e) => (e.textContent || "").includes("this number")); return !!s && !s.closest("[contenteditable=false]"); });
   expect(editable).toBe(true);
-  // the card's accent heading color resolves via the scoped sheet
-  const h3 = await page.evaluate(() => { const h = document.querySelector(".ProseMirror .note h3"); return h ? getComputedStyle(h).color : ""; });
-  expect(h3).toBe("rgb(109, 92, 240)");
 });
 
 // QUALITY: after the AI rebuild (format-contract system prompt + Agent SDK), a "2x2
