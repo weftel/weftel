@@ -395,6 +395,13 @@ test("page frame: self-framed doc keeps its own width and centering", async ({ p
   await page.mouse.click(pm.x + pm.width / 2, pm.y + pm.height + 40);
   await page.keyboard.type(" dead-space too");
   await expect(page.locator('.ProseMirror [class~="page"]')).toContainText("dead-space too");
+  // double-Enter at the end must NOT exit the page (liftEmptyBlock lifted the paragraph
+  // out of the wrapper — second Enter put the caret hard-left outside the frame)
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("after triple enter");
+  await expect(page.locator('.ProseMirror [class~="page"]')).toContainText("after triple enter");
 });
 
 // A tab from before a server restart silently keeps editing with old code (it produced

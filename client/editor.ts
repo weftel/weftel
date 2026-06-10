@@ -176,6 +176,23 @@ const StyledInlineBox = Node.create({
 let OWN_FRAME = false; // set once the scoped CSS confirms the doc frames itself
 const EscapeTrap = Extension.create({
   name: "escapeTrap",
+  addKeyboardShortcuts() {
+    return {
+      // Enter in an EMPTY paragraph at the end of the page wrapper: ProseMirror's
+      // liftEmptyBlock would "exit the container" (double-Enter-to-leave, sensible for
+      // blockquotes) — but leaving the page means landing hard-left outside the frame.
+      // Keep adding lines INSIDE the page instead.
+      Enter: ({ editor: e }: any) => {
+        if (!OWN_FRAME) return false;
+        const { $from, empty } = e.state.selection;
+        if (!empty || $from.depth !== 2 || $from.parent.type.name !== "paragraph" || $from.parent.content.size) return false;
+        const box = $from.node(1);
+        if (box.type.name !== "styledBox" || e.state.doc.firstChild !== box) return false;
+        if ($from.index(1) !== box.childCount - 1) return false; // only at the very end
+        return e.commands.splitBlock();
+      },
+    };
+  },
   addProseMirrorPlugins() {
     return [new Plugin({
       appendTransaction(trs: any[], _old: any, state: any) {
