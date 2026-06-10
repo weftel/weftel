@@ -363,6 +363,11 @@ test("page frame: self-framed doc keeps its own width and centering", async ({ p
   await page.mouse.click(pm.x + pm.width / 2, pm.y + pm.height - 5);
   await page.keyboard.type(" and below-click too");
   await expect(page.locator('.ProseMirror [class~="page"]')).toContainText("and below-click too");
+  // and a click in the DEAD SPACE below the editable area (the pane padding) must
+  // continue the note too — it used to blur the editor and typing went nowhere
+  await page.mouse.click(pm.x + pm.width / 2, pm.y + pm.height + 40);
+  await page.keyboard.type(" dead-space too");
+  await expect(page.locator('.ProseMirror [class~="page"]')).toContainText("dead-space too");
 });
 
 // A tab from before a server restart silently keeps editing with old code (it produced

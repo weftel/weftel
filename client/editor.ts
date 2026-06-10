@@ -845,6 +845,16 @@ if (note && mount) {
   };
   W.__serialize = serialize; // test seam: read the exact bytes a save would write (corpus harness)
 
+  // Clicking the empty space below/around the doc must CONTINUE the note, not blur the
+  // editor (a click there focused <body> and typing went nowhere). Caret goes to the end;
+  // in a self-framed doc the escape-trap then folds typed content into the page.
+  document.querySelector(".layout .main")?.addEventListener("mousedown", (e) => {
+    const t = e.target as HTMLElement | null;
+    if (!editor || !t || t.closest(".ProseMirror") || t.closest("a,button,input,select,textarea")) return;
+    e.preventDefault();
+    editor.chain().focus("end").run();
+  });
+
   // -------- stale-tab guard --------
   // A tab from before a server restart keeps editing (and saving) with OLD code — twice
   // today that produced phantom bug reports. Compare bundle versions on focus + slow poll;
