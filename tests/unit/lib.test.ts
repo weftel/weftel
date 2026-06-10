@@ -85,8 +85,10 @@ test("editableModelable: relaxClass=true makes class/<style>-driven content edit
 
 test("editableModelable: unmodelable elements still freeze even with relaxClass", () => {
   expect(editableModelable(`<svg><circle r="4"/></svg>`, true)).toBe(false);
-  expect(editableModelable(`<div class="x"><img src="y"></div>`, true)).toBe(false);
+  expect(editableModelable(`<div class="x"><iframe src="y"></iframe></div>`, true)).toBe(false);
   expect(editableModelable(`<div class="x"><canvas></canvas></div>`, true)).toBe(false);
+  expect(editableModelable(`<div class="x"><img src="y"></div>`, true)).toBe(true); // img native now
+  expect(editableModelable(`<figure><img src="y"><figcaption>c</figcaption></figure>`, true)).toBe(false); // figure not modeled → freeze whole (no silent tag-flatten)
 });
 
 test("proseModelable: relaxClass lets classed prose through", () => {
@@ -111,8 +113,11 @@ test("CLOSURE: the app's own task-list serialization is recognized as editable (
 
 test("subtreeEditable: any unmodelable descendant makes the whole subtree non-editable", () => {
   expect(subtreeEditable(el("<figure><svg><circle/></svg><figcaption>c</figcaption></figure>"))).toBe(false);
-  expect(subtreeEditable(el('<div class="x"><p>ok</p><img src="y"></div>'))).toBe(false);
+  expect(subtreeEditable(el('<div class="x"><p>ok</p><canvas></canvas></div>'))).toBe(false);
   expect(subtreeEditable(el("<svg><circle/></svg>"))).toBe(false);
+  // img is NATIVE now (image node — paste support): no longer a freeze trigger
+  expect(subtreeEditable(el('<div class="x"><p>ok</p><img src="y"></div>'))).toBe(true);
+  expect(subtreeEditable(el('<img src="assets/x.png">'))).toBe(true);
 });
 
 // ───────────────────────── scopeCss — confine an imported sheet to the editor ─────────────────────────

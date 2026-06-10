@@ -3,7 +3,7 @@
 // ProseMirror ignores DOM injection, so we type via keyboard and set selections via the
 // editor's own API (window.__editor) — the reliable pattern for contenteditable editors.
 import { test, expect, type Page } from "@playwright/test";
-import { writeFileSync, readFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const VAULT = resolve("tests/e2e/.vault");
@@ -267,6 +267,40 @@ test("closure: app-authored checklist survives reload as an editable task list (
   await expect(page.locator('.ProseMirror ul[data-type="taskList"] input[type="checkbox"]')).toHaveCount(1);
   const editable = await page.evaluate(() => { const li = document.querySelector('.ProseMirror ul[data-type="taskList"] li div'); return !!li && !li.closest("[contenteditable=false]"); });
   expect(editable).toBe(true);
+});
+
+// IMAGE PASTE + CLOSURE: pasting an image writes a sidecar file (<note-dir>/assets/) and
+// inserts a NATIVE image node with the portable relative src; on reload it must still be
+// the editable node (the closure rule — a freshly pasted image that froze would be the
+// taskList bug all over again).
+test("closure: pasted image → sidecar asset + native node, survives reload", async ({ page }) => {
+  const path = await openNote(page, "imgpaste.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>i</title></head><body><article><h1>Img</h1><p>seed text</p></article></body></html>\n');
+  await page.evaluate(() => { const e = (window as any).__editor; e.chain().focus("end").run(); e.view.focus(); });
+  // dispatch a real paste event carrying a tiny PNG file (Chromium supports constructing this)
+  await page.evaluate(() => {
+    const b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGPIjfkAAALzAbqUxO1lAAAAAElFTkSuQmCC";
+    const bin = atob(b64); const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    const file = new File([arr], "shot.png", { type: "image/png" });
+    const dt = new DataTransfer(); dt.items.add(file);
+    const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+    document.querySelector(".ProseMirror")!.dispatchEvent(ev);
+  });
+  // node appears, displayed through /raw, saved src is the portable relative path
+  await expect(page.locator(".ProseMirror img.note-img")).toHaveCount(1, { timeout: 5000 });
+  const disp = await page.evaluate(() => (document.querySelector(".ProseMirror img.note-img") as HTMLImageElement).getAttribute("src") || "");
+  expect(disp).toContain("/raw?file=");
+  await page.waitForTimeout(1300); // autosave
+  const saved = readFileSync(path, "utf8");
+  const m = saved.match(/<img[^>]*src="(assets\/img-[^"]+\.png)"/);
+  expect(m, "saved file should reference the relative sidecar src").toBeTruthy();
+  // the sidecar file actually exists in the vault
+  expect(existsSync(join(VAULT, m![1]))).toBe(true);
+  // closure: reload → still a native editable image node, not frozen
+  await page.reload();
+  await page.waitForSelector(".ProseMirror");
+  await expect(page.locator(".ProseMirror [data-rich-block]")).toHaveCount(0);
+  await expect(page.locator(".ProseMirror img.note-img")).toHaveCount(1);
 });
 
 // QUALITY: after the AI rebuild (format-contract system prompt + Agent SDK), a "2x2

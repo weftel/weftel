@@ -164,6 +164,39 @@ const StyledInlineBox = Node.create({
   addStorage() { return sboxMd; },
 });
 
+// Native image node — a pasted/imported <img> is a first-class editable node (selectable,
+// deletable, draggable), NOT a frozen rich block (closure rule: the app must re-read what
+// it writes). The SAVED src stays the note-relative path (portable file); the NodeView
+// displays it through /raw?file= so it renders while editing. Serialization uses
+// renderHTML (original src), independent of the NodeView.
+const noteDirOf = (file: string) => file.slice(0, Math.max(0, file.lastIndexOf("/")));
+function imgDisplayUrl(src: string): string {
+  if (!src || /^(https?:|data:|blob:)/i.test(src)) return src;          // web/data URLs — as-is
+  const abs = src.startsWith("/") ? src : (note ? noteDirOf(note.file) : "") + "/" + src;
+  return "/raw?file=" + encodeURIComponent(abs);
+}
+const ImageNode = Node.create({
+  // INLINE: real-world images live inside paragraphs (<p><img></p>) — a block node there
+  // gets dropped by the parser. Standalone imgs get wrapped in a paragraph, which is fine.
+  name: "image", inline: true, group: "inline", atom: true, selectable: true, draggable: true,
+  addAttributes() { return {
+    src: { default: "" },
+    alt: { default: null, renderHTML: (a: any) => (a.alt ? { alt: a.alt } : {}) },
+    width: { default: null, renderHTML: (a: any) => (a.width ? { width: a.width } : {}) },
+  }; },
+  parseHTML() { return [{ tag: "img[src]", getAttrs: (el: any) => ({ src: el.getAttribute("src") || "", alt: el.getAttribute("alt"), width: el.getAttribute("width") }) }]; },
+  renderHTML({ HTMLAttributes }: any) { return ["img", HTMLAttributes]; },
+  addStorage() { return { markdown: { serialize(state: any, node: any) { state.write("![" + (node.attrs.alt || "") + "](" + (node.attrs.src || "") + ")"); } } }; },
+  addNodeView() {
+    return ({ node }: any) => {
+      const img = document.createElement("img");
+      img.src = imgDisplayUrl(node.attrs.src); if (node.attrs.alt) img.alt = node.attrs.alt; if (node.attrs.width) img.width = node.attrs.width;
+      img.className = "note-img"; img.draggable = false;
+      return { dom: img };
+    };
+  },
+});
+
 const richMd = { markdown: { serialize(state: any, node: any) { state.write("<div data-rich-block>" + (node.attrs.html || "") + "</div>"); state.closeBlock(node); } } };
 
 const RichBlock = Node.create({
@@ -466,7 +499,7 @@ if (note && mount) {
     TaskList, TaskItem.configure({ nested: true }), TaskInputRule,
     Table.configure({ resizable: true }), TableRow, TableHeader, TableCell,
     Callout,
-    StyledInlineBox, StyledBox, RichBlock, CalendarBlock, ClockBlock,
+    StyledInlineBox, StyledBox, ImageNode, RichBlock, CalendarBlock, ClockBlock,
     SlashMenu,
     Placeholder.configure({ placeholder: ({ node }: any) => (node.type.name === "heading" ? "Heading" : "Write, or press “/” for commands…"), showOnlyCurrent: true }),
   ];
@@ -474,7 +507,37 @@ if (note && mount) {
   if (note.format === "md") extensions.push(Markdown.configure({ html: true, linkify: true }));
   else if (note.format === "html") { try { content = prepareHtml(note.content); } catch { htmlTemplate = null; content = note.content; } }
 
-  editor = new Editor({ element: mount, extensions, content, autofocus: "end" });
+  // Paste an image → save as a sidecar file (<note-dir>/assets/) via /asset, insert a native
+  // image node with the note-relative src. Sync-consume the event, finish async.
+  async function pasteImage(file: File) {
+    const ext = (file.type.split("/")[1] || "png").replace("jpeg", "jpg").replace(/[^a-z0-9]/gi, "");
+    const buf = new Uint8Array(await file.arrayBuffer());
+    let b64 = ""; const CH = 0x8000;
+    for (let i = 0; i < buf.length; i += CH) b64 += String.fromCharCode.apply(null, buf.subarray(i, i + CH) as any);
+    b64 = btoa(b64);
+    try {
+      const r = await fetch("/asset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ note: note!.file, ext, data: b64 }) }).then((x) => x.json());
+      if (!r.ok || !r.src) { flash("image save failed: " + (r.error || "?"), false); return; }
+      editor!.chain().focus().insertContent({ type: "image", attrs: { src: r.src, alt: file.name || "" } }).run();
+      markEdited();
+    } catch { flash("image save failed", false); }
+  }
+  editor = new Editor({
+    element: mount, extensions, content, autofocus: "end",
+    editorProps: {
+      handlePaste(_view: any, event: ClipboardEvent) {
+        const items = event.clipboardData?.items; if (!items) return false;
+        for (const it of Array.from(items)) {
+          if (it.kind === "file" && it.type.startsWith("image/")) {
+            const f = it.getAsFile(); if (!f) continue;
+            event.preventDefault(); pasteImage(f);
+            return true; // consumed — don't let PM paste the raw blob/html
+          }
+        }
+        return false;
+      },
+    },
+  });
   W.__editor = editor;
 
   // FULL_PARSE: scope the doc's <style> to the editor mount so classed/styled editable content

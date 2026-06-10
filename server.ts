@@ -73,6 +73,10 @@ function realParent(p: string): string {
 }
 function inVault(p: string): boolean { const real = realParent(p); return real === ROOT || real.startsWith(ROOT + sep); }
 function okNotePath(p: string): boolean { return inVault(p) && NOTE_RE.test(resolve(p)); }
+// Image assets (pasted images live as sidecar files next to the note — local-first).
+const IMG_RE = /\.(png|jpe?g|gif|webp|avif|svg)$/i;
+const IMG_MIME: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", avif: "image/avif", svg: "image/svg+xml" };
+function okAssetPath(p: string): boolean { return inVault(p) && IMG_RE.test(resolve(p)); }
 function sameOrigin(req: Request): boolean {
   const origin = req.headers.get("origin");
   if (!origin) return true; // same-origin fetches may omit Origin entirely
@@ -248,6 +252,9 @@ function styles(): string {
   /* editable styled boxes ((b)): keep ProseMirror's paragraph margins from blowing out tight designs */
   .ProseMirror [data-sbox] p{margin:0}
   .ProseMirror [data-sbox]{position:relative}
+  /* native image node (paste support) */
+  .ProseMirror img.note-img{display:block;max-width:100%;height:auto;border-radius:8px;margin:14px 0}
+  .ProseMirror img.note-img.ProseMirror-selectednode,.ProseMirror .ProseMirror-selectednode img.note-img{outline:2px solid var(--accent);outline-offset:3px}
   .ProseMirror .rich-block{margin:16px 0;border-radius:8px;position:relative}
   .ProseMirror .rich-block.ProseMirror-selectednode{outline:2px solid var(--accent);outline-offset:4px}
   .ProseMirror .rich-block::after{content:"rich block · ⌘K to edit";position:absolute;top:-9px;right:8px;font-family:ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);background:var(--bg);padding:1px 6px;border-radius:3px;opacity:0;transition:opacity .12s}
@@ -333,6 +340,15 @@ Bun.serve({
     const url = new URL(req.url);
     if (url.pathname === "/editor.js") return new Response(EDITOR_JS, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" } });
 
+    // Serve a vault image (the editor displays a note's relative <img src> through here —
+    // saved files keep their portable relative paths). Images only, vault-confined.
+    if (url.pathname === "/raw") {
+      const p = resolve(url.searchParams.get("file") || "");
+      if (!okAssetPath(p) || !existsSync(p) || !statSync(p).isFile()) return new Response("not found", { status: 404 });
+      const mime = IMG_MIME[extname(p).slice(1).toLowerCase()] || "application/octet-stream";
+      return new Response(Bun.file(p), { headers: { "content-type": mime } });
+    }
+
     if (req.method === "POST") {
       if (!sameOrigin(req)) return json({ ok: false, error: "bad origin" }, 403);
       const body: any = await req.json().catch(() => ({}));
@@ -360,6 +376,25 @@ Bun.serve({
         if (!okNotePath(p)) return json({ ok: false, error: "path not allowed" }, 403);
         if (!existsSync(p)) return json({ ok: false, error: "missing" });
         try { toTrash(p); return json({ ok: true }); } catch (e) { return json({ ok: false, error: String(e) }, 500); }
+      }
+      if (url.pathname === "/asset") {
+        // Save a pasted image as a sidecar file: <note-dir>/assets/img-<stamp>.<ext>.
+        // Server generates the filename (no user input in the path) and returns the
+        // note-relative src so the saved note stays portable.
+        const note = resolve(String(body.note || ""));
+        if (!okNotePath(note) || !existsSync(note)) return json({ ok: false, error: "bad note" }, 403);
+        const ext = String(body.ext || "png").toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (!IMG_MIME[ext]) return json({ ok: false, error: "unsupported image type" }, 400);
+        const b64 = String(body.data || "");
+        if (b64.length > 28_000_000) return json({ ok: false, error: "image too large (>20MB)" }, 413); // ~20MB binary
+        let buf: Buffer; try { buf = Buffer.from(b64, "base64"); } catch { return json({ ok: false, error: "bad data" }, 400); }
+        if (!buf.length) return json({ ok: false, error: "empty image" }, 400);
+        const dir = join(dirname(note), "assets");
+        const name = "img-" + new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14) + "-" + Math.random().toString(36).slice(2, 7) + "." + ext;
+        const abs = join(dir, name);
+        if (!okAssetPath(abs)) return json({ ok: false, error: "path not allowed" }, 403);
+        try { mkdirSync(dir, { recursive: true }); writeFileSync(abs + ".tmp", buf); renameSync(abs + ".tmp", abs); } catch (e) { return json({ ok: false, error: String(e) }, 500); }
+        return json({ ok: true, src: "assets/" + name, abs });
       }
       if (url.pathname === "/pick-folder") {
         // native macOS folder picker (used by the desktop app / browser). Cancel → cancelled.

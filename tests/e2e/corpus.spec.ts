@@ -134,12 +134,15 @@ for (const subset of subsets) {
           const prose = Array.from(pm.querySelectorAll("p,h1,h2,h3,h4,h5,li,blockquote,td,th,[data-sbox]"))
             .filter((e) => !(e as HTMLElement).closest("[contenteditable=false]"))
             .filter((e) => (e.textContent || "").trim().length > 0).length;
-          return { richHosts: hosts.length, svg: inShadow("svg"), img: inShadow("img"), canvas: inShadow("canvas"), editableProse: prose };
+          // img is a NATIVE editable node now (paste support) — a light-DOM image outside any
+          // frozen host counts as preserved too (querySelectorAll doesn't pierce shadow roots).
+          const lightImg = Array.from(pm.querySelectorAll("img")).filter((e) => !(e as HTMLElement).closest("[contenteditable=false]")).length;
+          return { richHosts: hosts.length, svg: inShadow("svg"), img: inShadow("img") + lightImg, canvas: inShadow("canvas"), editableProse: prose };
         });
         const srcCount = (re: RegExp) => (src.match(re) || []).length;
-        // preservable unmodelables must all be frozen-and-present (none lost, none left live)
+        // preservable unmodelables must all survive (frozen-in-shadow; img may be native)
         if (srcCount(/<svg\b/gi)) expect(counts.svg, "svg not preserved in a frozen block").toBeGreaterThanOrEqual(1);
-        if (srcCount(/<img\b/gi)) expect(counts.img, "img not preserved in a frozen block").toBeGreaterThanOrEqual(1);
+        if (srcCount(/<img\b/gi)) expect(counts.img, "img lost (neither native node nor frozen)").toBeGreaterThanOrEqual(1);
         if (srcCount(/<canvas\b/gi)) expect(counts.canvas, "canvas not preserved in a frozen block").toBeGreaterThanOrEqual(1);
         // security-stripped elements must be gone entirely
         expect(preSave.toLowerCase()).not.toContain("<iframe");

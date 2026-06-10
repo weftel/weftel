@@ -1,4 +1,4 @@
-<!--corpus stress="onerror + javascript: must NOT fire in editor; clean img preserved" editable=true frozenMin=1 editTarget="link" neighbor="here"-->
+<!--corpus stress="onerror + javascript: must NOT fire/persist; figure freezes whole (not modeled); onerror neutralized inside" editable=true frozenMin=1 editTarget="link" neighbor="here"-->
 <!DOCTYPE html><html><head><meta charset="utf-8"><title>XSS</title></head><body>
 <article><p>A <a href="javascript:window.__corpusPwned=true">link</a> here.</p><figure><img src="data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAA=" onerror="window.__corpusPwned=true" alt="x" width="10" height="10"><figcaption>cap</figcaption></figure></article>
 </body></html>

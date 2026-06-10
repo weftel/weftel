@@ -70,8 +70,13 @@ export function proseModelable(html: string, relaxClass = false): boolean {
 // see scopeCss) and preserve verbatim in the saved file — so classed content can be edited
 // in place as nested nodes that keep their `class` attrs. When false (legacy), any class
 // freezes the block, preserving it as an opaque atomic rich block.
-const EDITABLE_TAGS = new Set([...PROSE_OK_TAGS, "DIV", "PRE", "TABLE", "THEAD", "TBODY", "TR", "TD", "TH", "COLGROUP", "COL", "CAPTION", "FIGURE", "FIGCAPTION",
+const EDITABLE_TAGS = new Set([...PROSE_OK_TAGS, "DIV", "PRE", "IMG", "TABLE", "THEAD", "TBODY", "TR", "TD", "TH", "COLGROUP", "COL", "CAPTION",
   "SECTION", "ARTICLE", "HEADER", "FOOTER", "MAIN", "ASIDE", "NAV", "DL", "DT", "DD", "SMALL", "SUB", "SUP", "KBD", "SAMP", "VAR", "ABBR", "CITE", "Q", "TIME", "DETAILS", "SUMMARY"]);
+// IMG is editable: modeled as a native image node (paste support), src preserved verbatim.
+// FIGURE/FIGCAPTION are NOT: the schema has no figure node, so ProseMirror would silently
+// FLATTEN the tags (children kept, <figure> lost) — a lossless violation. Figures freeze
+// whole (captioned-media units, preserved verbatim) until we model a real figure node.
+// svg/canvas/iframe remain unmodelable.
 export function editableModelable(html: string, relaxClass = false): boolean {
   const t = document.createElement("template"); t.innerHTML = html || "";
   if (!t.content.querySelectorAll("*").length) return false;
