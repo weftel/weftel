@@ -306,6 +306,38 @@ const Callout = Node.create({
 
 // Markdown-style shortcuts for to-dos: "[] ", "[ ] ", or "[x] " at the start of a line
 // turns the line into a checklist item.
+// markdown-it merges an adjacent bullet list + task list into ONE <ul>, and the task plugin
+// tags the whole thing contains-task-list — a MIXED list ProseMirror's taskList schema can't
+// hold (content "taskItem+"), so PM fabricates an empty taskItem and hoists the rest out: a
+// phantom "- [ ]" that degrades into escaped junk on every save (found by the idempotence
+// sweep). Split mixed lists into homogeneous runs BEFORE PM parses (tiptap-markdown collects
+// this parse.updateDOM hook from any extension).
+const MarkdownListFix = Extension.create({
+  name: "markdownListFix",
+  addStorage() {
+    return { markdown: { parse: { updateDOM(element: HTMLElement) {
+      element.querySelectorAll("ul.contains-task-list").forEach((list) => {
+        const kids = Array.from(list.children);
+        const isTask = (li: Element) => li.classList.contains("task-list-item");
+        if (!kids.length || kids.every(isTask)) return; // homogeneous — fine as-is
+        const frag = document.createDocumentFragment();
+        let run: Element[] = []; let runTask = isTask(kids[0]);
+        const flush = () => {
+          if (!run.length) return;
+          const ul = document.createElement("ul");
+          if (runTask) { ul.className = "contains-task-list"; ul.setAttribute("data-type", "taskList"); }
+          else ul.setAttribute("data-tight", "true"); // markdown-it rendered the merged list loose (<p> in li); hand-written bullets are tight
+          run.forEach((li) => ul.appendChild(li));
+          frag.appendChild(ul); run = [];
+        };
+        kids.forEach((li) => { const t = isTask(li); if (t !== runTask) { flush(); runTask = t; } run.push(li); });
+        flush();
+        list.replaceWith(frag);
+      });
+    } } } };
+  },
+});
+
 const TaskInputRule = Extension.create({
   name: "taskInputRule",
   addInputRules() {
@@ -506,7 +538,7 @@ if (note && mount) {
     FULL_PARSE ? StarterKit.configure({ bold: false, italic: false, link: linkOpts }) : StarterKit.configure({ link: linkOpts }),
     ...(FULL_PARSE ? [BoldTagged, ItalicTagged, PreserveAttrs] : []),
     StyledTextStyle, Color, StyledHighlight.configure({ multicolor: true }), InlineStyle,
-    TaskList, TaskItem.configure({ nested: true }), TaskInputRule,
+    TaskList, TaskItem.configure({ nested: true }), TaskInputRule, MarkdownListFix,
     Table.configure({ resizable: true }), TableRow, TableHeader, TableCell,
     Callout,
     StyledInlineBox, StyledBox, ImageNode, RichBlock, CalendarBlock, ClockBlock,

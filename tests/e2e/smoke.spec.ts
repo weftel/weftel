@@ -344,6 +344,27 @@ test("note background extends across the note pane", async ({ page }) => {
   expect(r.pane).toBe(r.mount);             // pane matches — no strip
 });
 
+// MD INTEGRITY: a bullet list adjacent to a task list must NOT spawn a phantom "- [ ]"
+// (markdown-it merges them into one mixed <ul>; PM then fabricates an empty taskItem that
+// degrades into escaped junk on every save). Also: the md round-trip must settle.
+test("md: bullet list + task list round-trips with no phantom item, idempotent", async ({ page }) => {
+  const src = "- one\n- two\n\n- [ ] todo\n- [x] done\n";
+  const path = await openNote(page, "mdmix.md", src);
+  const s1: string = await page.evaluate(() => (window as any).__serialize());
+  expect(s1).not.toMatch(/- \[ \]\s*\n\s*\n- one/);   // no phantom empty task before the bullets
+  expect(s1).toContain("- one");
+  expect(s1).toContain("- [ ] todo");
+  expect(s1).toContain("- [x] done");
+  expect(s1).not.toMatch(/\\\[/);                       // no escaped-bracket junk
+  // settles: reload our own save → identical
+  writeFileSync(path, s1);
+  await page.reload();
+  await page.waitForSelector(".ProseMirror");
+  await page.waitForFunction(() => (window as any).__serialize);
+  const s2: string = await page.evaluate(() => (window as any).__serialize());
+  expect(s2).toBe(s1);
+});
+
 // QUALITY: after the AI rebuild (format-contract system prompt + Agent SDK), a "2x2
 // pros/cons table" is a clean 2-column table — no 5-column spacer mess.
 test("cmd+K 2x2 table is a clean 2-column Pros/Cons", async ({ page }) => {
