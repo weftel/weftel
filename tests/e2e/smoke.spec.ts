@@ -360,6 +360,20 @@ test("page frame: self-framed doc keeps its own width and centering", async ({ p
   await expect(page.locator('.ProseMirror [class~="page"]')).toContainText("XYZ continues");
 });
 
+// Strays already saved AFTER the wrapper (typed before the caret fix existed) render
+// hard-left outside the frame, in the editor and the browser alike. On load they're
+// absorbed into the page: non-empty paragraphs move inside the wrapper, empties drop.
+test("page frame: stranded paragraphs after the wrapper are absorbed into the page", async ({ page }) => {
+  await openNote(page, "strays.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>s</title><style>body{margin:0}.page{max-width:860px;margin:0 auto;padding:48px 28px}</style></head><body><div class="page"><h1>Doc</h1><p>inside</p></div><p class="lead">stranded words</p><p class="lead"></p><p></p></body></html>\n');
+  await expect(page.locator('.ProseMirror [class~="page"]')).toContainText("stranded words"); // absorbed
+  const out: string = await page.evaluate(() => (window as any).__serialize());
+  const afterPage = out.slice(out.indexOf("</div>"));
+  expect(afterPage).not.toContain("stranded words");          // nothing left outside the wrapper
+  // the classed empty strays are gone; at most the bare trailing escape <p></p> remains
+  expect((out.match(/<p class="lead">\s*<\/p>/g) || []).length).toBe(0);
+  expect((out.match(/<p[^>]*>\s*<\/p>/g) || []).length).toBeLessThanOrEqual(1);
+});
+
 // own-frame must NOT fire for docs that merely cap element widths (p{max-width}) without
 // self-centering — those rely on an outer layout the editor doesn't carry, and dropping
 // the editor column pinned them hard-left (regression found on attention.html).

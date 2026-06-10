@@ -773,6 +773,22 @@ if (note && mount) {
         // typing there lands outside the page frame, hard-left and unstyled ("my words
         // start at the very left"). Continue-the-document means: caret ends INSIDE the
         // wrapper. (The escape paragraph stays reachable by clicking below the page.)
+        // Heal strays: paragraphs that ended up AFTER the wrapper (typed pre-F17, or via
+        // clicks below the page) render hard-left outside the frame — in the browser too.
+        // They belong to the page: absorb non-empty ones into the wrapper's end, drop empty
+        // ones. Pure-load never writes (armed stays false); the heal persists with the
+        // user's next real edit.
+        editor!.commands.command(({ tr, state }: any) => {
+          const doc = state.doc, fcN = doc.firstChild;
+          if (!fcN || fcN.type.name !== "styledBox" || doc.childCount <= 1) return false;
+          const tail: any[] = [];
+          for (let i = 1; i < doc.childCount; i++) tail.push(doc.child(i));
+          if (!tail.every((n) => n.type.name === "paragraph")) return false; // only plain strays
+          const keep = tail.filter((n) => n.content.size > 0);
+          tr.delete(fcN.nodeSize, doc.content.size);
+          if (keep.length) tr.insert(fcN.nodeSize - 1, keep);
+          return true;
+        });
         const fc = editor!.state.doc.firstChild;
         // nodeSize-2: the wrapper's last text position (-1 sits between close tokens and
         // Selection.near resolves it FORWARD — back into the escape paragraph). setTimeout:
