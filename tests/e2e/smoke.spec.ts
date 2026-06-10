@@ -358,6 +358,21 @@ test("page frame: self-framed doc keeps its own width and centering", async ({ p
   // after it ("my words start at the very left with no spacing")
   await page.keyboard.type("XYZ continues");
   await expect(page.locator('.ProseMirror [class~="page"]')).toContainText("XYZ continues");
+  // even a CLICK below the page (the escape slot) redirects inside — the slot is a trap
+  const pm = (await page.locator(".ProseMirror").boundingBox())!;
+  await page.mouse.click(pm.x + pm.width / 2, pm.y + pm.height - 5);
+  await page.keyboard.type(" and below-click too");
+  await expect(page.locator('.ProseMirror [class~="page"]')).toContainText("and below-click too");
+});
+
+// A tab from before a server restart silently keeps editing with old code (it produced
+// two phantom bug reports in one day). On focus/poll the client compares bundle versions
+// and shows a reload banner on mismatch.
+test("stale tab: version mismatch shows the reload banner", async ({ page }) => {
+  await openNote(page, "stale.md", "hello\n");
+  await page.route("**/version", (r) => r.fulfill({ json: { v: "different-build" } }));
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.locator(".stale-bar")).toContainText("running old code");
 });
 
 // Strays already saved AFTER the wrapper (typed before the caret fix existed) render

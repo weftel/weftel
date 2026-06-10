@@ -221,6 +221,8 @@ function styles(): string {
   .main{flex:1;min-width:0}
   .doc{max-width:760px;margin:0 auto;padding:40px 32px 22vh}
   .doc.own-frame{max-width:none;padding:0 0 22vh} /* self-framing doc: its own CSS rules the page frame */
+  .stale-bar{position:fixed;top:0;left:0;right:0;z-index:9999;background:#d97706;color:#fff;font-size:13.5px;font-weight:600;text-align:center;padding:8px 12px}
+  .stale-bar button{font:inherit;margin-left:10px;border:none;border-radius:6px;background:#fff;color:#92400e;padding:3px 12px;cursor:pointer}
   .ProseMirror{outline:none;min-height:60vh}
   .ProseMirror .is-empty::before{content:attr(data-placeholder);color:var(--subtle);float:left;height:0;pointer-events:none}
   /* to-dos */
@@ -454,6 +456,10 @@ Bun.serve({
       }
       return json({ ok: false, error: "unknown" }, 404);
     }
+
+    // Stale-tab guard: a tab opened before a server restart keeps RUNNING (and saving
+    // with) old code, silently. The client compares this on focus and asks for a reload.
+    if (url.pathname === "/version") return json({ v: BUILD_ID });
 
     // Preflight for in-doc note links: lets the client explain a dead link in place
     // instead of navigating to a welcome screen.

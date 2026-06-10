@@ -26,6 +26,7 @@ import { Color } from "@tiptap/extension-color";
 import { Highlight } from "@tiptap/extension-highlight";
 import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, subtreeEditable, nativeInsertable, scopeCss, tidyInsertHtml, mdLite, buildTree, countFiles, type TreeNode } from "./lib";
 import { DOMSerializer } from "@tiptap/pm/model";
+import { Plugin, TextSelection } from "@tiptap/pm/state";
 
 type Note = { file: string; format: string; content: string; root: string };
 // FULL_PARSE (experiment): parse class/<style>-driven bespoke HTML into editable nodes —
@@ -162,6 +163,33 @@ const StyledInlineBox = Node.create({
   } }]; },
   renderHTML({ HTMLAttributes }: any) { return ["div", { ...HTMLAttributes, "data-sbox": "" }, 0]; },
   addStorage() { return sboxMd; },
+});
+
+// In a SELF-FRAMED doc (own-frame) the trailing escape paragraph is a trap: a caret that
+// lands there (autofocus end, click below the page) puts typing OUTSIDE the page frame,
+// hard-left. Selection remapping is racy (the DOM caret can lag the state and the first
+// keystroke follows the DOM), so converge on CONTENT instead: the moment the escape slot
+// holds anything, fold it into the page wrapper and put the caret after it. Wherever the
+// keystroke physically lands, it ends up in the page.
+let OWN_FRAME = false; // set once the scoped CSS confirms the doc frames itself
+const EscapeTrap = Extension.create({
+  name: "escapeTrap",
+  addProseMirrorPlugins() {
+    return [new Plugin({
+      appendTransaction(trs: any[], _old: any, state: any) {
+        if (!OWN_FRAME || !trs.some((t) => t.docChanged)) return null;
+        const d = state.doc, fc = d.firstChild, last = d.lastChild;
+        if (d.childCount !== 2 || !fc || fc.type.name !== "styledBox") return null;
+        if (!last || last.type.name !== "paragraph" || !last.content.size) return null;
+        const insertPos = fc.nodeSize - 1;
+        const tr = state.tr;
+        tr.delete(fc.nodeSize, d.content.size);
+        tr.insert(insertPos, last);
+        tr.setSelection(TextSelection.near(tr.doc.resolve(insertPos + last.nodeSize - 1), -1));
+        return tr;
+      },
+    })];
+  },
 });
 
 // Tab must never throw focus out of the editor ("takes me to weird places"). Lists
@@ -662,7 +690,7 @@ if (note && mount) {
     Table.configure({ resizable: true }), TableRow, TableHeader, TableCell,
     Callout,
     StyledInlineBox, StyledBox, StyledSpan, DecoSpan, ImageNode, RichBlock, CalendarBlock, ClockBlock,
-    SlashMenu, TabKeys,
+    SlashMenu, TabKeys, EscapeTrap,
     Placeholder.configure({ placeholder: ({ node }: any) => (node.type.name === "heading" ? "Heading" : "Write, or press “/” for commands…"), showOnlyCurrent: true }),
   ];
   let content = note.content;
@@ -789,11 +817,12 @@ if (note && mount) {
           if (keep.length) tr.insert(fcN.nodeSize - 1, keep);
           return true;
         });
+        // Arm the escape-slot trap (see EscapeTrap), then re-apply the current selection
+        // through it so autofocus("end") — which may already sit in the escape slot — gets
+        // remapped inside the page immediately.
+        OWN_FRAME = true;
         const fc = editor!.state.doc.firstChild;
-        // nodeSize-2: the wrapper's last text position (-1 sits between close tokens and
-        // Selection.near resolves it FORWARD — back into the escape paragraph). setTimeout:
-        // TipTap applies autofocus("end") deferred, after this rAF — run after it.
-        if (fc && (fc.type.name === "styledBox" || fc.type.name === "callout")) setTimeout(() => editor!.chain().focus(fc.nodeSize - 2).run(), 0);
+        if (fc && fc.type.name === "styledBox") setTimeout(() => editor!.chain().focus(fc.nodeSize - 2).run(), 0);
       }
     });
   }
@@ -815,6 +844,30 @@ if (note && mount) {
     return `<!DOCTYPE html>\n<html><head><meta charset="utf-8"></head><body><article>\n${bodyHtml}\n</article></body></html>\n`;
   };
   W.__serialize = serialize; // test seam: read the exact bytes a save would write (corpus harness)
+
+  // -------- stale-tab guard --------
+  // A tab from before a server restart keeps editing (and saving) with OLD code — twice
+  // today that produced phantom bug reports. Compare bundle versions on focus + slow poll;
+  // on mismatch show a banner (no auto-reload: the user may have unsaved thoughts mid-edit).
+  {
+    const mine = ((document.querySelector('script[src^="/editor.js"]') as HTMLScriptElement | null)?.src.split("v=")[1] || "").split("&")[0];
+    let shown = false;
+    const check = async () => {
+      if (shown || !mine) return;
+      try {
+        const { v } = await fetch("/version").then((r) => r.json());
+        if (v && v !== mine) {
+          shown = true;
+          const bar = document.createElement("div"); bar.className = "stale-bar";
+          bar.innerHTML = "⟳ The editor was updated — this tab is running old code. <button>Reload</button>";
+          (bar.querySelector("button") as HTMLButtonElement).onclick = () => location.reload();
+          document.body.appendChild(bar);
+        }
+      } catch {}
+    };
+    window.addEventListener("focus", check);
+    setInterval(check, 30_000);
+  }
 
   // -------- toast + save status --------
   const toast = document.createElement("div"); toast.className = "toast"; document.body.appendChild(toast);
