@@ -303,6 +303,35 @@ test("closure: pasted image → sidecar asset + native node, survives reload", a
   await expect(page.locator(".ProseMirror img.note-img")).toHaveCount(1);
 });
 
+// LINKS (F3): the editor must not rewrite a file's link attrs on save (the stock Link mark
+// injected target=_blank rel=noopener… into every link), and links must WORK: relative
+// note links navigate the app to the sibling note; web links open outside.
+test("links: file's link attrs round-trip verbatim — no target/rel injection", async ({ page }) => {
+  await openNote(page, "links.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>l</title></head><body><article><p>See <a href="other.html">other</a> and <a href="https://x.example/y" target="_self" rel="me">ext</a>.</p></article></body></html>\n');
+  const out: string = await page.evaluate(() => (window as any).__serialize());
+  expect(out).toContain('<a href="other.html">other</a>');                      // untouched — nothing injected
+  expect(out).toContain('target="_self"');                                       // the file's OWN attrs survive
+  expect(out).toContain('rel="me"');
+  expect(out).not.toContain("noopener noreferrer nofollow");                     // the old injection
+});
+
+test("links: clicking a relative note link navigates the app to that note", async ({ page }) => {
+  writeFileSync(join(VAULT, "linktarget.html"), '<!DOCTYPE html><html><head><meta charset="utf-8"><title>t</title></head><body><article><h1>Target note</h1><p>arrived</p></article></body></html>\n');
+  await openNote(page, "linksrc.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>s</title></head><body><article><p>Go to <a href="linktarget.html">the target</a> now.</p></article></body></html>\n');
+  await page.locator('.ProseMirror a[href="linktarget.html"]').click();
+  await page.waitForURL(/linktarget\.html/);
+  await page.waitForSelector(".ProseMirror");
+  await expect(page.locator(".ProseMirror h1")).toContainText("Target note");
+});
+
+test("links: web links open externally, app stays put", async ({ page }) => {
+  await openNote(page, "linkweb.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>w</title></head><body><article><p>Visit <a href="https://example.com/page">example</a>.</p></article></body></html>\n');
+  await page.evaluate(() => { (window as any).__opened = null; window.open = ((u: string) => { (window as any).__opened = u; return null; }) as any; });
+  await page.locator('.ProseMirror a[href="https://example.com/page"]').click();
+  expect(await page.evaluate(() => (window as any).__opened)).toBe("https://example.com/page");
+  await expect(page.locator(".ProseMirror")).toContainText("Visit"); // didn't navigate away
+});
+
 // QUALITY: after the AI rebuild (format-contract system prompt + Agent SDK), a "2x2
 // pros/cons table" is a clean 2-column table — no 5-column spacer mess.
 test("cmd+K 2x2 table is a clean 2-column Pros/Cons", async ({ page }) => {

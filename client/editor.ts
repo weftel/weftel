@@ -491,9 +491,14 @@ const mount = document.getElementById("editor");
 let editor: Editor | null = null;
 
 if (note && mount) {
+  // Links: NEVER rewrite a file's link attrs (the default injects target=_blank +
+  // rel="noopener…" into every saved link — mutates notes on save). Defaults null ⇒ the
+  // file's own target/rel round-trip verbatim. openOnClick off — handleClick below routes
+  // clicks properly (relative note links navigate IN-APP; web links open a tab).
+  const linkOpts = { openOnClick: false, HTMLAttributes: { target: null, rel: null } } as any;
   const extensions: any[] = [
     // FULL_PARSE swaps stock Bold/Italic for tag-preserving variants (see BoldTagged).
-    FULL_PARSE ? StarterKit.configure({ bold: false, italic: false }) : StarterKit,
+    FULL_PARSE ? StarterKit.configure({ bold: false, italic: false, link: linkOpts }) : StarterKit.configure({ link: linkOpts }),
     ...(FULL_PARSE ? [BoldTagged, ItalicTagged, PreserveAttrs] : []),
     StyledTextStyle, Color, StyledHighlight.configure({ multicolor: true }), InlineStyle,
     TaskList, TaskItem.configure({ nested: true }), TaskInputRule,
@@ -525,6 +530,24 @@ if (note && mount) {
   editor = new Editor({
     element: mount, extensions, content, autofocus: "end",
     editorProps: {
+      // Make links WORK in the editor (clicks in contenteditable don't navigate natively):
+      // relative .md/.html links navigate the app to the sibling note (wiki-style cross-links);
+      // web/mailto links open outside; anything else is left alone.
+      handleClick(_view: any, _pos: number, event: MouseEvent) {
+        const a = (event.target as HTMLElement | null)?.closest?.("a");
+        if (!a) return false;
+        const href = a.getAttribute("href") || "";
+        if (!href || href.startsWith("#")) return false;
+        if (/^(https?:|mailto:)/i.test(href)) { window.open(href, "_blank", "noopener"); event.preventDefault(); return true; }
+        if (/^[a-z][a-z0-9+.-]*:/i.test(href)) return true; // other protocols (incl. javascript:) — swallow
+        if (/\.(md|markdown|html?|htm)(#.*)?$/i.test(href)) {
+          const clean = href.split("#")[0];
+          const abs = clean.startsWith("/") ? clean : noteDirOf(note!.file) + "/" + clean;
+          event.preventDefault(); go("/?file=" + encodeURIComponent(abs));
+          return true;
+        }
+        return true; // unknown relative target — swallow rather than 404 the app
+      },
       handlePaste(_view: any, event: ClipboardEvent) {
         const items = event.clipboardData?.items; if (!items) return false;
         for (const it of Array.from(items)) {
