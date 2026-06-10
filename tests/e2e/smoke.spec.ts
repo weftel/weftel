@@ -499,6 +499,23 @@ test("md: bullet list + task list round-trips with no phantom item, idempotent",
 
 // QUALITY: after the AI rebuild (format-contract system prompt + Agent SDK), a "2x2
 // pros/cons table" is a clean 2-column table — no 5-column spacer mess.
+// An EMPTY "- [ ]" to-do used to round-trip into an escaped bullet ("- \[ \]") because
+// markdown-it's task plugin requires trailing text — the checkbox was lost and junk
+// accumulated in the file (found in Ben's bug-findings.md).
+test("md: empty to-do round-trips as a to-do, not escaped junk", async ({ page }) => {
+  const path = await openNote(page, "emptytask.md", "- [ ] one\n- [ ]\n");
+  await expect(page.locator('.ProseMirror ul[data-type="taskList"] li')).toHaveCount(2); // both are to-dos
+  const out: string = await page.evaluate(() => (window as any).__serialize());
+  expect(out).not.toContain("\\[");                       // no escaped junk
+  // closure: re-load our own save → still two to-dos
+  writeFileSync(path, out);
+  await page.reload();
+  await page.waitForSelector(".ProseMirror");
+  await expect(page.locator('.ProseMirror ul[data-type="taskList"] li')).toHaveCount(2);
+  const out2: string = await page.evaluate(() => (window as any).__serialize());
+  expect(out2).toBe(out);                                  // settled
+});
+
 test("cmd+K 2x2 table is a clean 2-column Pros/Cons", async ({ page }) => {
   await openNote(page, "aitableq.md", "# t\n\n");
   await clearAndFocus(page);

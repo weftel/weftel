@@ -418,6 +418,24 @@ const MarkdownListFix = Extension.create({
   name: "markdownListFix",
   addStorage() {
     return { markdown: { parse: { updateDOM(element: HTMLElement) {
+      // markdown-it's task plugin needs TEXT after "- [ ]" — an EMPTY to-do parses as a
+      // plain bullet with literal "[ ]" text, which then saves as escaped junk (- \[ \])
+      // and the checkbox is lost. Recognize bare "[ ]"/"[x]" bullets and rebuild the
+      // checkbox li the way the plugin would have. (This also heals already-corrupted
+      // "- \[ \]" lines back into the to-do the author typed.)
+      element.querySelectorAll("li").forEach((li) => {
+        if (li.classList.contains("task-list-item")) return;
+        const m = (li.textContent || "").trim().match(/^\[( |x|X)?\]$/);
+        if (!m) return;
+        // emit the NORMALIZED shape (tiptap-markdown's task normalization has already run
+        // by the time this hook fires, so a raw checkbox <input> here would be ignored)
+        li.classList.add("task-list-item");
+        li.setAttribute("data-type", "taskItem");
+        li.setAttribute("data-checked", (m[1] || "").toLowerCase() === "x" ? "true" : "false");
+        li.textContent = " ";
+        const ul = li.parentElement;
+        if (ul) { ul.classList.add("contains-task-list"); }
+      });
       element.querySelectorAll("ul.contains-task-list").forEach((list) => {
         const kids = Array.from(list.children);
         const isTask = (li: Element) => li.classList.contains("task-list-item");
