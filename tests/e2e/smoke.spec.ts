@@ -332,6 +332,18 @@ test("links: web links open externally, app stays put", async ({ page }) => {
   await expect(page.locator(".ProseMirror")).toContainText("Visit"); // didn't navigate away
 });
 
+// F6: a doc's body background must paint the whole note pane, not just the 760px column
+// (the "skinny black strip on dark gray" feel from dogfooding adamw).
+test("note background extends across the note pane", async ({ page }) => {
+  await openNote(page, "darkbg.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>d</title><style>:root{--bg:#0b0c10}body{background:var(--bg);color:#e8eaf0}.card{padding:8px}</style></head><body><article><div class="card"><p>dark note</p></div></article></body></html>\n');
+  const r = await page.evaluate(() => ({
+    mount: getComputedStyle(document.getElementById("editor")!).backgroundColor,
+    pane: getComputedStyle(document.querySelector(".layout .main")!).backgroundColor,
+  }));
+  expect(r.mount).toBe("rgb(11, 12, 16)");  // the doc's --bg resolved
+  expect(r.pane).toBe(r.mount);             // pane matches — no strip
+});
+
 // QUALITY: after the AI rebuild (format-contract system prompt + Agent SDK), a "2x2
 // pros/cons table" is a clean 2-column table — no 5-column spacer mess.
 test("cmd+K 2x2 table is a clean 2-column Pros/Cons", async ({ page }) => {

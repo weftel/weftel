@@ -569,6 +569,15 @@ if (note && mount) {
     mount.classList.add("note-scope");
     const st = document.createElement("style"); st.id = "note-scoped"; st.textContent = SCOPED_NOTE_CSS;
     document.head.appendChild(st);
+    // F6: the doc's body background lands on the 760px mount only — a skinny dark strip on
+    // the app-gray pane ("looks and feels weird"). Extend the note's canvas COLOR across the
+    // whole note pane; sidebar/bar chrome stays app-themed. (Color only — gradients/images
+    // stay on the mount.)
+    requestAnimationFrame(() => {
+      const main = document.querySelector(".layout .main") as HTMLElement | null;
+      const bg = getComputedStyle(mount).backgroundColor;
+      if (main && bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") main.style.background = bg;
+    });
   }
 
   // Strip the editor-only data-sbox hook from saved HTML (it's a styling/margin hook, not content).
