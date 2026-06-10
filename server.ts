@@ -260,6 +260,9 @@ function styles(): string {
   /* native image node (paste support) */
   .ProseMirror img.note-img{display:block;max-width:100%;height:auto;border-radius:8px;margin:14px 0}
   .ProseMirror img.note-img.ProseMirror-selectednode,.ProseMirror .ProseMirror-selectednode img.note-img{outline:2px solid var(--accent);outline-offset:3px}
+  .ProseMirror .note-img-wrap{position:relative;display:inline-block;max-width:100%}
+  .ProseMirror .note-img-handle{position:absolute;right:-7px;bottom:7px;width:15px;height:15px;border-radius:4px;background:var(--accent);border:2px solid var(--surface);cursor:nwse-resize;opacity:0;transition:opacity .12s}
+  .ProseMirror .note-img-wrap:hover .note-img-handle,.ProseMirror .note-img-wrap.ProseMirror-selectednode .note-img-handle,.ProseMirror .note-img-wrap.resizing .note-img-handle{opacity:1}
   .ProseMirror .rich-block{margin:16px 0;border-radius:8px;position:relative}
   .ProseMirror .rich-block.ProseMirror-selectednode{outline:2px solid var(--accent);outline-offset:4px}
   .ProseMirror .rich-block::after{content:"rich block · ⌘K to edit";position:absolute;top:-9px;right:8px;font-family:ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);background:var(--bg);padding:1px 6px;border-radius:3px;opacity:0;transition:opacity .12s}

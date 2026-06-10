@@ -170,6 +170,9 @@ const StyledInlineBox = Node.create({
 // displays it through /raw?file= so it renders while editing. Serialization uses
 // renderHTML (original src), independent of the NodeView.
 const noteDirOf = (file: string) => file.slice(0, Math.max(0, file.lastIndexOf("/")));
+// Programmatic edits from nodeviews (e.g. image resize) must arm the autosave like any
+// user input; rebound to markEdited once the editor is up.
+let armEdit: () => void = () => {};
 function imgDisplayUrl(src: string): string {
   if (!src || /^(https?:|data:|blob:)/i.test(src)) return src;          // web/data URLs — as-is
   const abs = src.startsWith("/") ? src : (note ? noteDirOf(note.file) : "") + "/" + src;
@@ -186,13 +189,50 @@ const ImageNode = Node.create({
   }; },
   parseHTML() { return [{ tag: "img[src]", getAttrs: (el: any) => ({ src: el.getAttribute("src") || "", alt: el.getAttribute("alt"), width: el.getAttribute("width") }) }]; },
   renderHTML({ HTMLAttributes }: any) { return ["img", HTMLAttributes]; },
-  addStorage() { return { markdown: { serialize(state: any, node: any) { state.write("![" + (node.attrs.alt || "") + "](" + (node.attrs.src || "") + ")"); } } }; },
+  addStorage() { return { markdown: { serialize(state: any, node: any) {
+    // a resized image needs the width attr — md image syntax can't carry it, raw <img> can
+    // (html:true round-trips it back into this node)
+    if (node.attrs.width) {
+      const esc = (s: any) => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+      state.write('<img src="' + esc(node.attrs.src || "") + '"' + (node.attrs.alt ? ' alt="' + esc(node.attrs.alt) + '"' : "") + ' width="' + esc(node.attrs.width) + '">');
+    } else state.write("![" + (node.attrs.alt || "") + "](" + (node.attrs.src || "") + ")");
+  } } }; },
   addNodeView() {
-    return ({ node }: any) => {
-      const img = document.createElement("img");
-      img.src = imgDisplayUrl(node.attrs.src); if (node.attrs.alt) img.alt = node.attrs.alt; if (node.attrs.width) img.width = node.attrs.width;
-      img.className = "note-img"; img.draggable = false;
-      return { dom: img };
+    return ({ node, editor, getPos }: any) => {
+      let cur = node;
+      const wrap = document.createElement("span"); wrap.className = "note-img-wrap";
+      const img = document.createElement("img"); img.className = "note-img"; img.draggable = false;
+      const sync = (n: any) => {
+        img.src = imgDisplayUrl(n.attrs.src);
+        if (n.attrs.alt) img.alt = n.attrs.alt; else img.removeAttribute("alt");
+        if (n.attrs.width) img.setAttribute("width", n.attrs.width); else img.removeAttribute("width");
+      };
+      sync(node);
+      // corner drag-handle (F11): live-preview via style.width, commit the rounded px to the
+      // node's width attr on release so it persists in the saved file.
+      const handle = document.createElement("span"); handle.className = "note-img-handle"; handle.title = "Drag to resize";
+      handle.addEventListener("mousedown", (e: MouseEvent) => {
+        e.preventDefault(); e.stopPropagation();
+        const startX = e.clientX, startW = img.getBoundingClientRect().width;
+        wrap.classList.add("resizing");
+        const wAt = (ev: MouseEvent) => Math.max(40, Math.round(startW + (ev.clientX - startX)));
+        const onMove = (ev: MouseEvent) => { img.style.width = wAt(ev) + "px"; };
+        const onUp = (ev: MouseEvent) => {
+          document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp);
+          wrap.classList.remove("resizing"); img.style.width = "";
+          armEdit();
+          editor.commands.command(({ tr }: any) => { tr.setNodeMarkup(getPos(), undefined, { ...cur.attrs, width: String(wAt(ev)) }); return true; });
+        };
+        document.addEventListener("mousemove", onMove); document.addEventListener("mouseup", onUp);
+      });
+      wrap.append(img, handle);
+      return {
+        dom: wrap,
+        update(n: any) { if (n.type.name !== "image") return false; cur = n; sync(n); return true; },
+        selectNode() { wrap.classList.add("sel"); },
+        deselectNode() { wrap.classList.remove("sel"); },
+        ignoreMutation: () => true,
+      };
     };
   },
 });
@@ -678,6 +718,7 @@ if (note && mount) {
   // insert) call markEdited() themselves. Load-time normalization fires neither, so just
   // viewing a note never writes it back to disk.
   function markEdited() { armed = true; scheduleSave(); }
+  armEdit = markEdited;
   const armNow = () => { armed = true; };
   editor.view.dom.addEventListener("beforeinput", armNow);
   editor.view.dom.addEventListener("paste", armNow);

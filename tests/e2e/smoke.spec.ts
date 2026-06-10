@@ -303,6 +303,42 @@ test("closure: pasted image → sidecar asset + native node, survives reload", a
   await expect(page.locator(".ProseMirror img.note-img")).toHaveCount(1);
 });
 
+// F11: images are resizable by dragging the corner handle; the committed width persists
+// in the saved file and survives reload as the same editable node (closure rule).
+test("image resize: drag handle commits width, persists, survives reload", async ({ page }) => {
+  const path = await openNote(page, "imgresize.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>r</title></head><body><article><h1>R</h1><p>seed</p></article></body></html>\n');
+  await page.evaluate(() => { const e = (window as any).__editor; e.chain().focus("end").run(); e.view.focus(); });
+  await page.evaluate(() => {
+    const b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGPIjfkAAALzAbqUxO1lAAAAAElFTkSuQmCC";
+    const bin = atob(b64); const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    const file = new File([arr], "shot.png", { type: "image/png" });
+    const dt = new DataTransfer(); dt.items.add(file);
+    document.querySelector(".ProseMirror")!.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+  });
+  await expect(page.locator(".ProseMirror img.note-img")).toHaveCount(1, { timeout: 5000 });
+  const handle = page.locator(".note-img-handle");
+  const box = (await handle.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 120, box.y + box.height / 2, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.locator(".ProseMirror img.note-img")).toHaveAttribute("width", /^\d+$/);
+  await page.waitForTimeout(1300); // autosave (resize alone must arm it)
+  expect(readFileSync(path, "utf8")).toMatch(/<img[^>]*width="\d+"/);
+  await page.reload();
+  await page.waitForSelector(".ProseMirror");
+  await expect(page.locator(".ProseMirror [data-rich-block]")).toHaveCount(0); // still native, not frozen
+  await expect(page.locator(".ProseMirror img.note-img")).toHaveAttribute("width", /^\d+$/);
+});
+
+test("image resize: width round-trips through markdown as raw <img>", async ({ page }) => {
+  await openNote(page, "imgwidth.md", 'before\n\n<img src="assets/pic.png" alt="pic" width="120">\n\nafter\n');
+  await expect(page.locator('.ProseMirror img.note-img[width="120"]')).toHaveCount(1); // native node, width applied
+  const out: string = await page.evaluate(() => (window as any).__serialize());
+  expect(out).toMatch(/<img src="assets\/pic\.png" alt="pic" width="120">/); // not downgraded to ![pic](…)
+});
+
 // LINKS (F3): the editor must not rewrite a file's link attrs on save (the stock Link mark
 // injected target=_blank rel=noopener… into every link), and links must WORK: relative
 // note links navigate the app to the sibling note; web links open outside.
