@@ -128,9 +128,12 @@ for (const subset of subsets) {
           // are all <div>, no <p>); shadow-DOM content of frozen blocks is invisible to this query.
           // Require real content: a trailing empty <p> (PM's cursor affordance after an atom) is
           // not "content the user would edit" — counting it would mask a fully-frozen doc.
+          // Require real editable TEXT in light DOM. (An empty styled-box wrapper whose only
+          // content is a frozen block — e.g. a Marp slide's text lives inside a frozen SVG — is
+          // NOT editable prose; counting it would falsely report a fully-frozen doc as editable.)
           const prose = Array.from(pm.querySelectorAll("p,h1,h2,h3,h4,h5,li,blockquote,td,th,[data-sbox]"))
             .filter((e) => !(e as HTMLElement).closest("[contenteditable=false]"))
-            .filter((e) => ((e.textContent || "").trim().length > 0) || (e as HTMLElement).hasAttribute("data-sbox")).length;
+            .filter((e) => (e.textContent || "").trim().length > 0).length;
           return { richHosts: hosts.length, svg: inShadow("svg"), img: inShadow("img"), canvas: inShadow("canvas"), editableProse: prose };
         });
         const srcCount = (re: RegExp) => (src.match(re) || []).length;

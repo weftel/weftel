@@ -375,16 +375,19 @@ let SCOPED_NOTE_CSS = ""; // FULL_PARSE: the doc's <style> rewritten to the .not
 // Pure grouping wrappers — when unstyled, descend THROUGH them to isolate only the minimal
 // unmodelable subtree, instead of freezing a whole wrapper just because one svg sits deep inside.
 const STRUCTURAL_TAGS = new Set(["DIV", "ARTICLE", "MAIN", "SECTION", "BODY", "HEADER", "FOOTER", "ASIDE", "NAV"]);
-// FULL_PARSE: walk the tree and wrap in data-rich-block ONLY the smallest subtrees we can't model
-// (an svg/img/… or a styled unit containing one). Fully-editable subtrees are left in place; plain
-// unstyled wrappers are descended through (so one nested svg doesn't freeze the whole document).
+// FULL_PARSE: walk the tree and wrap in data-rich-block ONLY the smallest subtrees we can't model.
+// Block-grouping wrappers (div/article/section/…) are descended through — CLASSED OR NOT — so we
+// isolate just the unmodelable leaves (svg/img/button/…) and keep the wrapper's prose editable (the
+// wrapper survives as a styled-box with its class intact). Only a child that is ITSELF unmodelable,
+// or a text-level element (p/h/li/figure) holding inline unmodelable content we can't split, freezes
+// whole. Earlier this froze any *classed* wrapper whole — so one <button>/<svg> sank a whole page.
 function isolateRich(el: HTMLElement, doc: Document) {
   Array.from(el.children).forEach((c) => {
     const child = c as HTMLElement;
     if (child.hasAttribute("data-calendar") || child.hasAttribute("data-clock")) return;    // dynamic block — leave for its node
     if (subtreeEditable(child)) return;                                                     // no unmodelable element anywhere — keep editable
-    if (!child.getAttribute("class") && !child.getAttribute("style") && STRUCTURAL_TAGS.has(child.tagName)) { isolateRich(child, doc); return; } // plain wrapper — descend
-    const wrap = doc.createElement("div"); wrap.setAttribute("data-rich-block", "");        // styled unit / unmodelable leaf — freeze whole
+    if (STRUCTURAL_TAGS.has(child.tagName)) { isolateRich(child, doc); return; }            // block wrapper (classed or not) — descend, isolate only the leaves
+    const wrap = doc.createElement("div"); wrap.setAttribute("data-rich-block", "");        // unmodelable leaf / unsplittable text element — freeze whole
     child.replaceWith(wrap); wrap.appendChild(child);
   });
 }
