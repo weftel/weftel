@@ -220,6 +220,7 @@ function styles(): string {
   .note-empty{font-size:12px;color:var(--subtle);padding:8px 10px;font-style:italic}
   .main{flex:1;min-width:0}
   .doc{max-width:760px;margin:0 auto;padding:40px 32px 22vh}
+  .doc.own-frame{max-width:none;padding:0 0 22vh} /* self-framing doc: its own CSS rules the page frame */
   .ProseMirror{outline:none;min-height:60vh}
   .ProseMirror .is-empty::before{content:attr(data-placeholder);color:var(--subtle);float:left;height:0;pointer-events:none}
   /* to-dos */
@@ -252,6 +253,11 @@ function styles(): string {
   .ProseMirror a{color:var(--accent-ink);text-underline-offset:2px}
   .ProseMirror code{font-family:ui-monospace,Menlo,monospace;font-size:.88em;background:var(--code-bg);color:var(--code-ink);padding:1px 5px;border-radius:4px}
   .ProseMirror pre{background:var(--code-bg);border:1px solid var(--border);border-radius:8px;padding:14px;overflow:auto}.ProseMirror pre code{background:none;color:inherit;padding:0}
+  /* Fidelity: a styled html note's own design wins — the app's code/pre theme (purple ink etc.)
+     is for md/unstyled notes and must not paint over a doc that styles these itself. The
+     note-scoped sheet is appended after this one, so the doc's own rules re-cover these. */
+  .note-scope code{font-family:monospace;font-size:inherit;background:none;color:inherit;padding:0;border-radius:0}
+  .note-scope pre{background:none;border:none;border-radius:0;padding:0}
   .ProseMirror blockquote{border-left:3px solid var(--border-strong);margin:0 0 14px;padding-left:14px;color:var(--muted)}
   .ProseMirror>*:first-child{margin-top:0}
   /* editable styled boxes ((b)): keep ProseMirror's paragraph margins from blowing out tight designs */

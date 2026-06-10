@@ -164,6 +164,68 @@ const StyledInlineBox = Node.create({
   addStorage() { return sboxMd; },
 });
 
+// Tab must never throw focus out of the editor ("takes me to weird places"). Lists
+// indent/outdent, code blocks get a literal tab, tables keep their own cell-hopping
+// (pass through), and anywhere else the key is consumed.
+const TabKeys = Extension.create({
+  name: "tabKeys",
+  addKeyboardShortcuts() {
+    return {
+      Tab: ({ editor: e }: any) => {
+        if (e.isActive("table")) return false; // Table's own Tab → next cell
+        if (e.isActive("codeBlock")) return e.commands.insertContent("\t");
+        if (e.can().sinkListItem("taskItem")) return e.commands.sinkListItem("taskItem");
+        if (e.can().sinkListItem("listItem")) return e.commands.sinkListItem("listItem");
+        return true; // consume — never tab focus away mid-document
+      },
+      "Shift-Tab": ({ editor: e }: any) => {
+        if (e.isActive("table")) return false;
+        if (e.can().liftListItem("taskItem")) return e.commands.liftListItem("taskItem");
+        if (e.can().liftListItem("listItem")) return e.commands.liftListItem("listItem");
+        return true;
+      },
+    };
+  },
+});
+
+// A CLASSED span is a component with element identity (<span class="pill">, badges, tags) —
+// it can NOT be a mark: ProseMirror merges adjacent same-marked text (two pills collapse
+// into one) and splits a marked range at every inner bold/code boundary (one span becomes
+// three, shattering flex layouts). An inline NODE keeps the element's identity while the
+// text inside stays editable. Style-only spans remain the InlineStyle mark.
+const StyledSpan = Node.create({
+  name: "styledSpan", inline: true, group: "inline", content: "inline*", defining: true,
+  addAttributes() { return sboxAttrs(); },
+  parseHTML() { return [{ tag: "span", priority: 65, getAttrs: (el: any) => {
+    if (!FULL_PARSE || !el.getAttribute("class")) return false;          // style-only → mark
+    if (!el.children.length && !(el.textContent || "").trim()) return false; // empty → DecoSpan
+    return {};
+  } }]; },
+  renderHTML({ HTMLAttributes }: any) { return ["span", HTMLAttributes, 0]; },
+  addStorage() { return { markdown: { serialize(state: any, node: any) {
+    const dom = DOMSerializer.fromSchema(node.type.schema).serializeNode(node) as HTMLElement;
+    state.write(dom.outerHTML);
+  } } }; },
+});
+
+// Decorative EMPTY span (e.g. <span class="dot"></span>, colored/sized purely by CSS) —
+// ProseMirror drops empty inline elements, which silently deleted them from saved files
+// (found when a real note's status dots vanished). Modeled as an inline atom that
+// round-trips class/style verbatim; the scoped doc sheet renders its look.
+const DecoSpan = Node.create({
+  name: "decoSpan", inline: true, group: "inline", atom: true, selectable: true,
+  addAttributes() { return sboxAttrs(); },
+  parseHTML() { return [{ tag: "span", priority: 70, getAttrs: (el: any) => {
+    if (el.children.length || (el.textContent || "").trim()) return false;
+    return (el.getAttribute("class") || el.getAttribute("style")) ? {} : false;
+  } }]; },
+  renderHTML({ HTMLAttributes }: any) { return ["span", HTMLAttributes]; },
+  addStorage() { return { markdown: { serialize(state: any, node: any) {
+    const a = node.attrs || {};
+    state.write("<span" + (a.class ? ' class="' + escapeAttr(a.class) + '"' : "") + (a.style ? ' style="' + escapeAttr(a.style) + '"' : "") + "></span>");
+  } } }; },
+});
+
 // Native image node — a pasted/imported <img> is a first-class editable node (selectable,
 // deletable, draggable), NOT a frozen rich block (closure rule: the app must re-read what
 // it writes). The SAVED src stays the note-relative path (portable file); the NodeView
@@ -581,8 +643,8 @@ if (note && mount) {
     TaskList, TaskItem.configure({ nested: true }), TaskInputRule, MarkdownListFix,
     Table.configure({ resizable: true }), TableRow, TableHeader, TableCell,
     Callout,
-    StyledInlineBox, StyledBox, ImageNode, RichBlock, CalendarBlock, ClockBlock,
-    SlashMenu,
+    StyledInlineBox, StyledBox, StyledSpan, DecoSpan, ImageNode, RichBlock, CalendarBlock, ClockBlock,
+    SlashMenu, TabKeys,
     Placeholder.configure({ placeholder: ({ node }: any) => (node.type.name === "heading" ? "Heading" : "Write, or press “/” for commands…"), showOnlyCurrent: true }),
   ];
   let content = note.content;
@@ -662,6 +724,11 @@ if (note && mount) {
       const main = document.querySelector(".layout .main") as HTMLElement | null;
       const bg = getComputedStyle(mount).backgroundColor;
       if (main && bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") main.style.background = bg;
+      // K4: a doc whose top-level wrapper sizes ITSELF (its CSS sets a max-width) is
+      // self-framing — drop the editor's 760px column so the page centers/sizes exactly
+      // like the browser ("left aligned in our app but centered in the browser").
+      const first = mount.querySelector(".ProseMirror > *") as HTMLElement | null;
+      if (first && getComputedStyle(first).maxWidth !== "none") mount.classList.add("own-frame");
     });
   }
 

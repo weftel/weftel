@@ -51,6 +51,7 @@ export function proseModelable(html: string, relaxClass = false): boolean {
   for (const el of els) {
     if (!PROSE_OK_TAGS.has(el.tagName)) return false;        // unknown tag (svg, div, img…) → keep atomic
     if (!relaxClass && el.getAttribute("class")) return false; // a class usually = a styled component we can't model losslessly
+    if (el.tagName === "SPAN" && el.querySelector("span")) return false; // span-in-span — outer dropped on save (see nestedSpan)
     const style = el.getAttribute("style");
     if (style) {
       const props = style.split(";").map((s) => s.split(":")[0].trim().toLowerCase()).filter(Boolean);
@@ -85,6 +86,7 @@ export function editableModelable(html: string, relaxClass = false): boolean {
   for (const el of els) {
     if (!EDITABLE_TAGS.has(el.tagName)) return false;  // svg / img / canvas / iframe / media → freeze (preserve verbatim)
     if (!relaxClass && el.getAttribute("class")) return false; // class-styled → can't reproduce its look → freeze
+    if (nestedSpan(el)) return false;                  // span-in-span — outer wrapper would be dropped on save
   }
   return true;
 }
@@ -101,10 +103,17 @@ const OWN_DIALECT = 'ul[data-type="taskList"]';
 export function isOwnDialect(el: Element): boolean { return !!(el.matches && el.matches(OWN_DIALECT)); }
 export function stripOwnDialect(root: ParentNode): void { root.querySelectorAll(OWN_DIALECT).forEach((e) => e.remove()); }
 
+// A span CONTAINING a span can't round-trip: both map to the same inlineStyle mark and
+// ProseMirror allows one instance of a mark type per text node, so the outer wrapper is
+// silently DROPPED on save (found when .meter wrappers vanished from a real note). Such
+// subtrees are unmodelable — freeze the minimal leaf instead of corrupting.
+export function nestedSpan(el: Element): boolean { return el.tagName === "SPAN" && !!el.querySelector("span"); }
+
 export function subtreeEditable(el: Element, relaxClass = true): boolean {
   if (isOwnDialect(el)) return true;                 // app-authored construct — TipTap parses it natively
   if (!EDITABLE_TAGS.has(el.tagName)) return false;
   if (!relaxClass && el.getAttribute("class")) return false;
+  if (nestedSpan(el)) return false;
   for (const c of Array.from(el.children)) if (!subtreeEditable(c, relaxClass)) return false;
   return true;
 }

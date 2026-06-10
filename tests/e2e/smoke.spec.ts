@@ -303,6 +303,67 @@ test("closure: pasted image → sidecar asset + native node, survives reload", a
   await expect(page.locator(".ProseMirror img.note-img")).toHaveCount(1);
 });
 
+// F12: empty decorative spans (CSS dots) and nested span wrappers used to be SILENTLY
+// DROPPED from the saved file (PM drops empty inlines; same-type marks can't nest, so the
+// outer wrapper vanished). Empty spans are now an inline atom; nested-span subtrees freeze
+// as a minimal leaf. Either way: bytes preserved.
+test("spans: empty decorative spans and nested span wrappers survive save", async ({ page }) => {
+  await openNote(page, "spans.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>s</title><style>.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#15803d}.meter .on{color:#15803d}</style></head><body><article><div class="box"><div class="t"><span class="dot"></span>server.ts</div><p>level <span class="meter"><span class="on">●●</span><span class="off">○</span></span> done</p></div></article></body></html>\n');
+  const out: string = await page.evaluate(() => (window as any).__serialize());
+  expect(out).toContain('class="dot"');    // empty span survives (was silently dropped)
+  expect(out).toContain('class="meter"');  // nested-span wrapper survives (frozen leaf)
+  expect(out).toContain('class="on"');
+  // and the dot is visible in the editor, styled by the scoped sheet
+  const dotBg = await page.evaluate(() => { const d = document.querySelector(".ProseMirror .dot"); return d ? getComputedStyle(d).backgroundColor : null; });
+  expect(dotBg).toBe("rgb(21, 128, 61)");
+});
+
+// Classed spans are inline NODES, not marks: as marks, adjacent same-class spans MERGED
+// (two pills → one) and a span containing bold/code SPLIT into fragments (breaking flex
+// layouts). Element identity must survive the round-trip exactly.
+test("spans: adjacent classed spans don't merge, marked-up classed spans don't split", async ({ page }) => {
+  await openNote(page, "pills.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>p</title><style>.pill{border:1px solid #ccc;border-radius:5px;padding:1px 7px}.what{color:#555}</style></head><body><article><div style="margin-top:8px"><span class="pill">GET /</span><span class="pill">GET /list</span><span class="pill">POST /save</span></div><p><span class="what"><b>Native node.</b> Pasted <code>src</code> stays portable.</span></p></article></body></html>\n');
+  const out: string = await page.evaluate(() => (window as any).__serialize());
+  expect((out.match(/class="pill"/g) || []).length).toBe(3);  // three pills stay three
+  expect((out.match(/class="what"/g) || []).length).toBe(1);  // one wrapper stays one
+  expect(out).toContain("<b>Native node.</b>");               // inner marks intact inside it
+});
+
+// F13: Tab indents/outdents lists and never throws focus out of the editor.
+test("tab: indents list items, focus stays in the editor", async ({ page }) => {
+  await openNote(page, "tab.md", "seed\n");
+  await clearAndFocus(page);
+  await page.keyboard.type("- one");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("two");
+  await page.keyboard.press("Tab");
+  await expect(page.locator(".ProseMirror ul ul li")).toContainText("two"); // nested, not focus-jumped
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.locator(".ProseMirror ul ul")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => (window as any).__editor.chain().focus("end").run());
+  await page.keyboard.press("Tab"); // in plain prose: consumed
+  const focusInEditor = await page.evaluate(() => !!document.activeElement?.closest(".ProseMirror"));
+  expect(focusInEditor).toBe(true);
+});
+
+// K4/F15: a doc whose top-level wrapper sets its own max-width keeps its OWN page frame —
+// the editor's 760px column steps aside ("left aligned in app, centered in browser").
+test("page frame: self-framed doc keeps its own width and centering", async ({ page }) => {
+  await openNote(page, "frame.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>f</title><style>body{margin:0;background:#fbfbfa}.page{max-width:860px;margin:0 auto;padding:48px 28px}</style></head><body><div class="page"><h1>Framed</h1><p>content</p></div></body></html>\n');
+  await expect(page.locator(".doc.own-frame")).toHaveCount(1);
+  const w = await page.evaluate(() => { const el = document.querySelector('.ProseMirror [class~="page"]'); return el ? Math.round(el.getBoundingClientRect().width) : 0; });
+  expect(w).toBeGreaterThan(770); // not capped by the editor's 760px column
+});
+
+// F14: the app's md-note code theme (purple ink) must not paint over a styled html note.
+test("fidelity: styled note's code is not repainted by the app theme", async ({ page }) => {
+  await openNote(page, "codefid.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>c</title><style>code{background:#f0f0ed}</style></head><body><article><p>use <code>foo()</code> here</p></article></body></html>\n');
+  const c = await page.evaluate(() => { const el = document.querySelector(".ProseMirror code"); const cs = getComputedStyle(el!); return { color: cs.color, bg: cs.backgroundColor }; });
+  expect(c.bg).toBe("rgb(240, 240, 237)");      // the note's own rule applies
+  expect(c.color).not.toBe("rgb(90, 73, 214)"); // the app's purple ink does not
+});
+
 // F11: images are resizable by dragging the corner handle; the committed width persists
 // in the saved file and survives reload as the same editable node (closure rule).
 test("image resize: drag handle commits width, persists, survives reload", async ({ page }) => {
