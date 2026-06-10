@@ -746,7 +746,18 @@ if (note && mount) {
       // self-framing — drop the editor's 760px column so the page centers/sizes exactly
       // like the browser ("left aligned in our app but centered in the browser").
       const first = mount.querySelector(".ProseMirror > *") as HTMLElement | null;
-      if (first && getComputedStyle(first).maxWidth !== "none") mount.classList.add("own-frame");
+      if (first && getComputedStyle(first).maxWidth !== "none") {
+        mount.classList.add("own-frame");
+        // autofocus("end") parks the caret in the escape paragraph AFTER the wrapper —
+        // typing there lands outside the page frame, hard-left and unstyled ("my words
+        // start at the very left"). Continue-the-document means: caret ends INSIDE the
+        // wrapper. (The escape paragraph stays reachable by clicking below the page.)
+        const fc = editor!.state.doc.firstChild;
+        // nodeSize-2: the wrapper's last text position (-1 sits between close tokens and
+        // Selection.near resolves it FORWARD — back into the escape paragraph). setTimeout:
+        // TipTap applies autofocus("end") deferred, after this rAF — run after it.
+        if (fc && (fc.type.name === "styledBox" || fc.type.name === "callout")) setTimeout(() => editor!.chain().focus(fc.nodeSize - 2).run(), 0);
+      }
     });
   }
 

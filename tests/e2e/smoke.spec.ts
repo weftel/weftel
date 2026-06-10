@@ -354,6 +354,10 @@ test("page frame: self-framed doc keeps its own width and centering", async ({ p
   await expect(page.locator(".doc.own-frame")).toHaveCount(1);
   const w = await page.evaluate(() => { const el = document.querySelector('.ProseMirror [class~="page"]'); return el ? Math.round(el.getBoundingClientRect().width) : 0; });
   expect(w).toBeGreaterThan(770); // not capped by the editor's 760px column
+  // typing at doc end continues INSIDE the page frame, not in the escape paragraph
+  // after it ("my words start at the very left with no spacing")
+  await page.keyboard.type("XYZ continues");
+  await expect(page.locator('.ProseMirror [class~="page"]')).toContainText("XYZ continues");
 });
 
 // F14: the app's md-note code theme (purple ink) must not paint over a styled html note.
