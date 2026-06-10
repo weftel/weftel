@@ -205,7 +205,12 @@ const RichBlock = Node.create({
   addStorage() { return richMd; },
   // If the block's content is fully prose-modelable, REJECT the atomic rule (getAttrs:false)
   // so TipTap parses the inner HTML as editable prose+marks instead. Shrinks the atomic set.
-  parseHTML() { return [{ tag: "div[data-rich-block]", getAttrs: (el: any) => (editableModelable(el.innerHTML, FULL_PARSE) ? false : null) }]; },
+  // A block that is EMPTY after sanitization (e.g. it held only a stripped <iframe>) is also
+  // rejected — otherwise an empty frozen husk lingers in the editor and the saved file.
+  parseHTML() { return [{ tag: "div[data-rich-block]", getAttrs: (el: any) => {
+    if (!stripActive(el.innerHTML).trim()) return false;
+    return editableModelable(el.innerHTML, FULL_PARSE) ? false : null;
+  } }]; },
   renderHTML({ node }: any) { const d = document.createElement("div"); d.setAttribute("data-rich-block", ""); d.innerHTML = node.attrs.html; return d; },
   addNodeView() {
     return ({ node }: any) => {

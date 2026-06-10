@@ -119,6 +119,29 @@ for (const subset of subsets) {
         // lossless preservation of intentional content (e.g. a user's <script> survives the save)
         if (d.mustContain) expect(preSave, `lossless: "${d.mustContain}" not preserved in saved bytes`).toContain(d.mustContain);
 
+        // 3.5) SERIALIZATION SETTLES: re-loading our own save must reproduce itself (S2 == S1),
+        // or at worst settle by the second pass (S3 == S2). A format that never settles churns
+        // the file on every open — silent rot. (One settle pass is tolerated: a few real-world
+        // docs normalize once — nested-span collapse, code-leading-space — then stabilize.)
+        const vp2 = join(VAULT, "corpus_idem__" + subset + "__" + file);
+        writeFileSync(vp2, preSave);
+        await page.goto("/?file=" + encodeURIComponent(vp2));
+        await page.waitForSelector(".ProseMirror");
+        await page.waitForFunction(() => (window as any).__editor && (window as any).__serialize);
+        const s2: string = await page.evaluate(() => (window as any).__serialize());
+        if (s2 !== preSave) {
+          writeFileSync(vp2, s2);
+          await page.goto("/?file=" + encodeURIComponent(vp2));
+          await page.waitForSelector(".ProseMirror");
+          await page.waitForFunction(() => (window as any).__editor && (window as any).__serialize);
+          const s3: string = await page.evaluate(() => (window as any).__serialize());
+          expect(s3, "serialization never settles (file churns on every open)").toBe(s2);
+        }
+        // back to the original doc for the remaining checks
+        await page.goto("/?file=" + encodeURIComponent(vpath));
+        await page.waitForSelector(".ProseMirror");
+        await page.waitForFunction(() => (window as any).__editor && (window as any).__serialize);
+
         // 4) unmodelable preservation vs security stripping
         const counts = await page.evaluate(() => {
           const pm = document.querySelector(".ProseMirror") as HTMLElement;
