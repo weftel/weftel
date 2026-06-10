@@ -311,11 +311,38 @@ test("spans: empty decorative spans and nested span wrappers survive save", asyn
   await openNote(page, "spans.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>s</title><style>.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#15803d}.meter .on{color:#15803d}</style></head><body><article><div class="box"><div class="t"><span class="dot"></span>server.ts</div><p>level <span class="meter"><span class="on">●●</span><span class="off">○</span></span> done</p></div></article></body></html>\n');
   const out: string = await page.evaluate(() => (window as any).__serialize());
   expect(out).toContain('class="dot"');    // empty span survives (was silently dropped)
-  expect(out).toContain('class="meter"');  // nested-span wrapper survives (frozen leaf)
-  expect(out).toContain('class="on"');
+  // nested spans round-trip EXACTLY as nested editable nodes — no freeze, no merge/split
+  expect(out).toContain('<span class="meter"><span class="on">●●</span><span class="off">○</span></span>');
+  await expect(page.locator(".ProseMirror [data-rich-block]")).toHaveCount(0);
   // and the dot is visible in the editor, styled by the scoped sheet
   const dotBg = await page.evaluate(() => { const d = document.querySelector(".ProseMirror .dot"); return d ? getComputedStyle(d).backgroundColor : null; });
   expect(dotBg).toBe("rgb(21, 128, 61)");
+});
+
+// The table extension leaked editor defaults into saved files (colspan="1" everywhere, a
+// min-width <colgroup> scaffold, every cell's text wrapped in <p> — which renders with
+// default margins outside the editor). Found by the authoring agent diffing its own file.
+test("table: save carries no editor scaffolding, cells stay unwrapped", async ({ page }) => {
+  await openNote(page, "tbl.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>t</title></head><body><article><table class="kv"><tbody><tr><td>alpha</td><td>has <code>code</code></td></tr></tbody></table></article></body></html>\n');
+  const out: string = await page.evaluate(() => (window as any).__serialize());
+  expect(out).not.toContain('colspan="1"');
+  expect(out).not.toContain("min-width");
+  expect(out).not.toContain("<colgroup");
+  expect(out).toContain("<td>alpha</td>");                  // no <p> wrapper in simple cells
+  expect(out).toContain('class="kv"');
+});
+
+// Enter at the end of a classed paragraph starts a CLEAN paragraph — fresh typing used
+// to inherit the previous line's class (p.lead) and look mysteriously styled.
+test("enter after a classed paragraph yields an unclassed paragraph", async ({ page }) => {
+  await openNote(page, "cls.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>c</title><style>.lead{color:#888}</style></head><body><article><p class="lead">lede line</p></article></body></html>\n');
+  await page.evaluate(() => { const e = (window as any).__editor; e.chain().focus("end").run(); e.view.focus(); });
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("fresh line");
+  const out: string = await page.evaluate(() => (window as any).__serialize());
+  expect(out).toContain('<p class="lead">lede line</p>');
+  expect(out).toMatch(/<p>fresh line<\/p>/);                // no inherited class
 });
 
 // Classed spans are inline NODES, not marks: as marks, adjacent same-class spans MERGED

@@ -4,7 +4,7 @@ import { test, expect } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 if (typeof (globalThis as any).document === "undefined") GlobalRegistrator.register();
 
-import { stripActive, spliceBody, proseModelable, editableModelable, subtreeEditable, scopeCss, filterInlineStyle, escapeAttr, mdLite, buildTree, countFiles } from "../../client/lib";
+import { stripActive, spliceBody, proseModelable, editableModelable, subtreeEditable, scopeCss, filterInlineStyle, escapeAttr, mdLite, buildTree, countFiles, tidySaveHtml } from "../../client/lib";
 
 // ───────────────────────── spliceBody — the $-corruption bug ─────────────────────────
 const TOKEN = "%%NOTE_BODY%%";
@@ -232,4 +232,24 @@ test("buildTree on a flat vault yields no folders", () => {
   const t = buildTree([{ rel: "a.md" }, { rel: "b.html" }]);
   expect(t.dirs.size).toBe(0);
   expect(t.files.length).toBe(2);
+});
+
+// ---- tidySaveHtml: strip PM table scaffolding from saves, keep user-set widths ----
+test("tidySaveHtml strips colspan/rowspan=1, min-width colgroup, table min-width, cell <p>", () => {
+  const dirty = '<table class="kv" style="min-width: 50px;"><colgroup><col style="min-width: 25px;"><col style="min-width: 25px;"></colgroup><tbody><tr><td colspan="1" rowspan="1"><p>a</p></td><td colspan="1" rowspan="1"><p>has <code>c</code></p></td></tr></tbody></table>';
+  const out = tidySaveHtml(dirty);
+  expect(out).toBe('<table class="kv"><tbody><tr><td>a</td><td>has <code>c</code></td></tr></tbody></table>');
+});
+
+test("tidySaveHtml keeps real colspans, real column widths, and multi-block cells", () => {
+  const html = '<table><colgroup><col style="width: 120px;"><col style="min-width: 25px;"></colgroup><tbody><tr><td colspan="2"><p>one</p><p>two</p></td></tr></tbody></table>';
+  const out = tidySaveHtml(html);
+  expect(out).toContain('colspan="2"');
+  expect(out).toContain('width: 120px');          // a genuine resize survives
+  expect(out).toContain("<p>one</p><p>two</p>");  // multi-paragraph cell keeps its <p>s
+});
+
+test("tidySaveHtml leaves classed/styled cell paragraphs alone", () => {
+  const html = '<table><tbody><tr><td><p class="x">styled</p></td></tr></tbody></table>';
+  expect(tidySaveHtml(html)).toContain('<p class="x">styled</p>');
 });

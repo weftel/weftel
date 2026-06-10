@@ -51,7 +51,7 @@ export function proseModelable(html: string, relaxClass = false): boolean {
   for (const el of els) {
     if (!PROSE_OK_TAGS.has(el.tagName)) return false;        // unknown tag (svg, div, img…) → keep atomic
     if (!relaxClass && el.getAttribute("class")) return false; // a class usually = a styled component we can't model losslessly
-    if (el.tagName === "SPAN" && el.querySelector("span")) return false; // span-in-span — outer dropped on save (see nestedSpan)
+    if (!relaxClass && el.tagName === "SPAN" && !!el.querySelector("span")) return false; // strict path: span-in-span (see nestedSpan)
     const style = el.getAttribute("style");
     if (style) {
       const props = style.split(";").map((s) => s.split(":")[0].trim().toLowerCase()).filter(Boolean);
@@ -86,7 +86,7 @@ export function editableModelable(html: string, relaxClass = false): boolean {
   for (const el of els) {
     if (!EDITABLE_TAGS.has(el.tagName)) return false;  // svg / img / canvas / iframe / media → freeze (preserve verbatim)
     if (!relaxClass && el.getAttribute("class")) return false; // class-styled → can't reproduce its look → freeze
-    if (nestedSpan(el)) return false;                  // span-in-span — outer wrapper would be dropped on save
+    if (!relaxClass && nestedSpan(el)) return false;   // strict path: span-in-span would drop the outer wrapper
   }
   return true;
 }
@@ -103,17 +103,17 @@ const OWN_DIALECT = 'ul[data-type="taskList"]';
 export function isOwnDialect(el: Element): boolean { return !!(el.matches && el.matches(OWN_DIALECT)); }
 export function stripOwnDialect(root: ParentNode): void { root.querySelectorAll(OWN_DIALECT).forEach((e) => e.remove()); }
 
-// A span CONTAINING a span can't round-trip: both map to the same inlineStyle mark and
-// ProseMirror allows one instance of a mark type per text node, so the outer wrapper is
-// silently DROPPED on save (found when .meter wrappers vanished from a real note). Such
-// subtrees are unmodelable — freeze the minimal leaf instead of corrupting.
+// A span CONTAINING a span can't round-trip as MARKS (one mark type per text node — the
+// outer wrapper silently dropped). Under FULL_PARSE classed spans are inline NODES
+// (StyledSpan), and nodes nest fine — so nesting is only unmodelable on the strict path,
+// where spans still map to the inlineStyle mark.
 export function nestedSpan(el: Element): boolean { return el.tagName === "SPAN" && !!el.querySelector("span"); }
 
 export function subtreeEditable(el: Element, relaxClass = true): boolean {
   if (isOwnDialect(el)) return true;                 // app-authored construct — TipTap parses it natively
   if (!EDITABLE_TAGS.has(el.tagName)) return false;
   if (!relaxClass && el.getAttribute("class")) return false;
-  if (nestedSpan(el)) return false;
+  if (!relaxClass && nestedSpan(el)) return false;
   for (const c of Array.from(el.children)) if (!subtreeEditable(c, relaxClass)) return false;
   return true;
 }
@@ -207,6 +207,34 @@ export function tidyInsertHtml(html: string): string {
   // give empty cells an empty paragraph.
   t.content.querySelectorAll("td, th").forEach((cell) => {
     if (!cell.querySelector("*") && !(cell.textContent || "").trim()) cell.innerHTML = "<p></p>";
+  });
+  return t.innerHTML;
+}
+
+// Save-time table tidy: ProseMirror's table extension leaks editor defaults into the
+// serialized HTML — colspan/rowspan="1" on every cell, a min-width <colgroup> scaffold,
+// a <p> wrapper in every cell — so the saved file renders differently OUTSIDE the editor
+// than the file that was opened. Strip what's default-valued; keep what the user actually
+// set (genuine column widths from a resize, multi-block cells).
+export function tidySaveHtml(html: string): string {
+  if (!/<table[\s>]/i.test(html)) return html;
+  const t = document.createElement("template"); t.innerHTML = html;
+  t.content.querySelectorAll('td[colspan="1"],th[colspan="1"]').forEach((c) => c.removeAttribute("colspan"));
+  t.content.querySelectorAll('td[rowspan="1"],th[rowspan="1"]').forEach((c) => c.removeAttribute("rowspan"));
+  const realWidth = (s: string | null) => !!(s || "").replace(/min-width\s*:[^;]*/gi, "").match(/(^|[\s;])width\s*:/i);
+  t.content.querySelectorAll("colgroup").forEach((cg) => {
+    if (Array.from(cg.querySelectorAll("col")).every((c) => !c.getAttribute("width") && !realWidth(c.getAttribute("style")))) cg.remove();
+  });
+  t.content.querySelectorAll("table").forEach((tb) => {
+    const st = (tb.getAttribute("style") || "").split(";").map((s) => s.trim()).filter(Boolean).filter((d) => !/^min-width\s*:/i.test(d));
+    if (st.length) tb.setAttribute("style", st.join("; ")); else tb.removeAttribute("style");
+  });
+  // a cell holding exactly one attribute-less <p> renders with default p margins outside
+  // the editor — unwrap it (the parser re-wraps on load, so the round-trip stays closed)
+  t.content.querySelectorAll("td, th").forEach((cell) => {
+    const kids = Array.from(cell.childNodes).filter((n) => n.nodeType !== 3 || (n.textContent || "").trim());
+    const only = kids.length === 1 ? (kids[0] as HTMLElement) : null;
+    if (only && only.nodeType === 1 && only.tagName === "P" && !only.attributes.length) cell.replaceChildren(...Array.from(only.childNodes));
   });
   return t.innerHTML;
 }
