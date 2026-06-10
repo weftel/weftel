@@ -247,6 +247,28 @@ test("FULL_PARSE: stale data-rich-block marker is ignored; only the nested SVG f
   expect(editable).toBe(true);
 });
 
+// CLOSURE INVARIANT: anything the editor itself authors must round-trip to the same
+// editable thing. The bug this guards: a checklist authored in an .html note serialized as
+// <ul data-type=taskList> with <label><input>, which the classifier then FROZE on reload —
+// the app failed to re-read its own writing. Author → save → reload → still native.
+test("closure: app-authored checklist survives reload as an editable task list (html note)", async ({ page }) => {
+  const path = await openNote(page, "closure.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>c</title></head><body><article><h1>Closure</h1><p>seed</p></article></body></html>\n');
+  await page.evaluate(() => { const e = (window as any).__editor; e.chain().focus("end").run(); e.view.focus(); });
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("[] first todo");
+  await expect(page.locator('.ProseMirror ul[data-type="taskList"] li')).toHaveCount(1);
+  await page.waitForTimeout(1300); // autosave
+  expect(readFileSync(path, "utf8")).toContain('data-type="taskList"'); // persisted as the app's construct
+  await page.reload();
+  await page.waitForSelector(".ProseMirror");
+  // still a NATIVE editable task list — not a frozen rich block, checkbox still functional
+  await expect(page.locator('.ProseMirror [data-rich-block]')).toHaveCount(0);
+  await expect(page.locator('.ProseMirror ul[data-type="taskList"] li')).toHaveCount(1);
+  await expect(page.locator('.ProseMirror ul[data-type="taskList"] input[type="checkbox"]')).toHaveCount(1);
+  const editable = await page.evaluate(() => { const li = document.querySelector('.ProseMirror ul[data-type="taskList"] li div'); return !!li && !li.closest("[contenteditable=false]"); });
+  expect(editable).toBe(true);
+});
+
 // QUALITY: after the AI rebuild (format-contract system prompt + Agent SDK), a "2x2
 // pros/cons table" is a clean 2-column table — no 5-column spacer mess.
 test("cmd+K 2x2 table is a clean 2-column Pros/Cons", async ({ page }) => {

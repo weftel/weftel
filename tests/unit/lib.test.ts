@@ -101,6 +101,14 @@ test("subtreeEditable: text-only leaves are editable (unlike editableModelable)"
   expect(subtreeEditable(el('<p class="lede">intro <strong>x</strong></p>'))).toBe(true);
   expect(subtreeEditable(el('<div class="card"><h3>t</h3><ul><li>a</li></ul></div>'))).toBe(true);
 });
+test("CLOSURE: the app's own task-list serialization is recognized as editable (label/input exempt)", () => {
+  const taskUl = '<ul data-type="taskList"><li data-checked="false" data-type="taskItem"><label><input type="checkbox"><span></span></label><div><p>todo</p></div></li></ul>';
+  expect(subtreeEditable(el(taskUl))).toBe(true);                       // own dialect — trusted whole
+  expect(editableModelable(taskUl, true)).toBe(true);                   // string gate too
+  expect(editableModelable('<div class="x">' + taskUl + "<p>hi</p></div>", true)).toBe(true); // nested inside content
+  expect(editableModelable('<label><input type="checkbox"></label>', true)).toBe(false);      // bare input OUTSIDE own dialect still freezes
+});
+
 test("subtreeEditable: any unmodelable descendant makes the whole subtree non-editable", () => {
   expect(subtreeEditable(el("<figure><svg><circle/></svg><figcaption>c</figcaption></figure>"))).toBe(false);
   expect(subtreeEditable(el('<div class="x"><p>ok</p><img src="y"></div>'))).toBe(false);
@@ -147,6 +155,11 @@ test("scopeCss: @media recurses, @keyframes/@font-face pass through verbatim", (
   const kf = scopeCss("@keyframes spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}", ".s");
   expect(kf).toBe("@keyframes spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}"); // 0%/100% NOT prefixed
   expect(scopeCss("@import url(x.css);.card{x:1}", ".s")).toContain("@import url(x.css);");
+});
+
+test("scopeCss: :focus rules are dropped (page interaction styles ring the whole editor)", () => {
+  expect(scopeCss(":focus-visible{outline:2px solid var(--accent)}.card{x:1}", ".s")).toBe(".s .card{x:1}");
+  expect(scopeCss("a:focus,h1{margin:0}", ".s")).toBe(".s h1{margin:0}"); // only the :focus selector in the list drops
 });
 
 test("scopeCss: leading body combinator keeps the combinator", () => {

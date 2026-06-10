@@ -74,8 +74,9 @@ const EDITABLE_TAGS = new Set([...PROSE_OK_TAGS, "DIV", "PRE", "TABLE", "THEAD",
   "SECTION", "ARTICLE", "HEADER", "FOOTER", "MAIN", "ASIDE", "NAV", "DL", "DT", "DD", "SMALL", "SUB", "SUP", "KBD", "SAMP", "VAR", "ABBR", "CITE", "Q", "TIME", "DETAILS", "SUMMARY"]);
 export function editableModelable(html: string, relaxClass = false): boolean {
   const t = document.createElement("template"); t.innerHTML = html || "";
+  if (!t.content.querySelectorAll("*").length) return false;
+  stripOwnDialect(t.content); // app-authored constructs (task lists…) are native-parseable — exempt their internals (label/input) from the scan
   const els = Array.from(t.content.querySelectorAll("*"));
-  if (!els.length) return false;
   for (const el of els) {
     if (!EDITABLE_TAGS.has(el.tagName)) return false;  // svg / img / canvas / iframe / media → freeze (preserve verbatim)
     if (!relaxClass && el.getAttribute("class")) return false; // class-styled → can't reproduce its look → freeze
@@ -86,7 +87,17 @@ export function editableModelable(html: string, relaxClass = false): boolean {
 // modelable tags (no svg/img/canvas/iframe/media)? Unlike editableModelable, a text-only leaf
 // (<h1>hi</h1>, <span style>x</span>) counts as editable — here we ask "is anything here
 // unpreservable?", not "is there nested structure to unwrap". relaxClass mirrors FULL_PARSE.
+// CLOSURE INVARIANT: anything the editor itself can author must be recognized as editable
+// on reload — the app must always be able to re-read its own writing. These are the app's
+// own serialized constructs; they carry tags the generic classifier would freeze (a task
+// list's <label><input type=checkbox>), but TipTap parses them natively, so trust them.
+// Add a selector here whenever a new authorable construct serializes non-prose tags.
+const OWN_DIALECT = 'ul[data-type="taskList"]';
+export function isOwnDialect(el: Element): boolean { return !!(el.matches && el.matches(OWN_DIALECT)); }
+export function stripOwnDialect(root: ParentNode): void { root.querySelectorAll(OWN_DIALECT).forEach((e) => e.remove()); }
+
 export function subtreeEditable(el: Element, relaxClass = true): boolean {
+  if (isOwnDialect(el)) return true;                 // app-authored construct — TipTap parses it natively
   if (!EDITABLE_TAGS.has(el.tagName)) return false;
   if (!relaxClass && el.getAttribute("class")) return false;
   for (const c of Array.from(el.children)) if (!subtreeEditable(c, relaxClass)) return false;
@@ -156,6 +167,11 @@ function splitTopLevel(s: string, sep: string): string[] {
 function scopeSelector(sel: string, scope: string): string {
   sel = sel.trim();
   if (!sel) return "";
+  // Drop the doc's :focus/:hover-on-anything interaction rules for FOCUS: they're meant for
+  // the original page, but inside the editor the focused element is the contenteditable
+  // itself — a doc's `:focus-visible{outline:accent}` ends up drawing a ring around the
+  // entire editing surface (looks like a mysterious container; found dogfooding adamw).
+  if (/:focus/i.test(sel)) return "";
   if (/^(:root|html|body)$/i.test(sel)) return scope;                 // whole global selector → the scope itself
   const m = sel.match(/^(?::root|html|body)(\s*[>+~]\s*|\s+)([\s\S]*)$/i);
   if (m) { const comb = m[1].trim(); return scope + (comb ? " " + comb + " " : " ") + m[2].trim(); } // "body h1"→"<scope> h1", "body>.x"→"<scope> > .x"
