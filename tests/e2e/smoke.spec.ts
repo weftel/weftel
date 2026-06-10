@@ -360,6 +360,17 @@ test("page frame: self-framed doc keeps its own width and centering", async ({ p
   await expect(page.locator('.ProseMirror [class~="page"]')).toContainText("XYZ continues");
 });
 
+// own-frame must NOT fire for docs that merely cap element widths (p{max-width}) without
+// self-centering — those rely on an outer layout the editor doesn't carry, and dropping
+// the editor column pinned them hard-left (regression found on attention.html).
+test("page frame: width-capped-but-not-self-centered doc keeps the editor column", async ({ page }) => {
+  await openNote(page, "capped.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>c</title><style>body{min-height:100vh}p{max-width:680px}h1{letter-spacing:-.02em}</style></head><body><article><p class="lede">A capped lede paragraph.</p><h1>Title</h1><p>content</p></article></body></html>\n');
+  await expect(page.locator(".ProseMirror")).toBeVisible();
+  const r = await page.evaluate(() => { const d = document.querySelector(".doc")!; return { own: d.classList.contains("own-frame"), w: Math.round(d.getBoundingClientRect().width) }; });
+  expect(r.own).toBe(false);
+  expect(r.w).toBeLessThanOrEqual(760); // the centered editor column stays
+});
+
 // F14: the app's md-note code theme (purple ink) must not paint over a styled html note.
 test("fidelity: styled note's code is not repainted by the app theme", async ({ page }) => {
   await openNote(page, "codefid.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>c</title><style>code{background:#f0f0ed}</style></head><body><article><p>use <code>foo()</code> here</p></article></body></html>\n');

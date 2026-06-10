@@ -742,11 +742,32 @@ if (note && mount) {
       const main = document.querySelector(".layout .main") as HTMLElement | null;
       const bg = getComputedStyle(mount).backgroundColor;
       if (main && bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") main.style.background = bg;
-      // K4: a doc whose top-level wrapper sizes ITSELF (its CSS sets a max-width) is
-      // self-framing — drop the editor's 760px column so the page centers/sizes exactly
-      // like the browser ("left aligned in our app but centered in the browser").
+      // K4: a doc whose top-level wrapper FRAMES ITSELF — its CSS sets a max-width AND
+      // centers it (margin auto) — gets the editor's 760px column out of the way so the
+      // page centers/sizes exactly like the browser. max-width alone is NOT enough: docs
+      // like attention.html cap every element (p{max-width:680px}) and center via an outer
+      // grid the editor doesn't carry — dropping the column for those pins them hard-left.
+      // Declared values must come from the CSSOM (computed style resolves `auto` to px).
+      const selfFraming = (el: HTMLElement): boolean => {
+        if (/auto/.test(el.style.margin + " " + el.style.marginLeft) && el.style.maxWidth) return true;
+        const sheet = (document.getElementById("note-scoped") as HTMLStyleElement | null)?.sheet;
+        if (!sheet) return false;
+        let hasMax = !!el.style.maxWidth, hasAuto = /auto/.test(el.style.margin + " " + el.style.marginLeft);
+        const walk = (rules: CSSRuleList) => {
+          for (const r of Array.from(rules) as any[]) {
+            // NB: a plain CSSStyleRule ALSO has .cssRules (CSS nesting) — selectorText first
+            if (r.selectorText && r.style) {
+              try { if (!el.matches(r.selectorText)) continue; } catch { continue; }
+              if (r.style.maxWidth) hasMax = true;
+              if (/auto/.test(r.style.marginLeft) || /auto/.test(r.style.margin)) hasAuto = true;
+            } else if (r.cssRules && r.cssRules.length) walk(r.cssRules); // @media etc.
+          }
+        };
+        walk(sheet.cssRules);
+        return hasMax && hasAuto;
+      };
       const first = mount.querySelector(".ProseMirror > *") as HTMLElement | null;
-      if (first && getComputedStyle(first).maxWidth !== "none") {
+      if (first && selfFraming(first)) {
         mount.classList.add("own-frame");
         // autofocus("end") parks the caret in the escape paragraph AFTER the wrapper —
         // typing there lands outside the page frame, hard-left and unstyled ("my words
