@@ -59,6 +59,10 @@ let LAUNCH_FILE: string | null;
 if (existsSync(ARG) && statSync(ARG).isDirectory()) { ROOT = ARG; LAUNCH_FILE = null; }
 else { ROOT = dirname(ARG); LAUNCH_FILE = ARG; }
 try { ROOT = realpathSync(ROOT); } catch {}
+// Every vault opened this session stays live (ROOT is just the latest, for bare "/").
+// One global root broke multi-tab use: tab B's "Open folder" repointed the vault and
+// tab A's saves started failing 403. Confinement is the union of opened roots.
+const ROOTS: string[] = [ROOT];
 
 const NOTE_RE = /\.(md|markdown|html?|htm)$/i;
 function escHtml(s: string): string { return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string)); }
@@ -71,7 +75,8 @@ function realParent(p: string): string {
   while (cur !== dirname(cur)) { try { return realpathSync(cur); } catch { cur = dirname(cur); } }
   return cur;
 }
-function inVault(p: string): boolean { const real = realParent(p); return real === ROOT || real.startsWith(ROOT + sep); }
+function vaultOf(p: string): string | null { const real = realParent(p); return ROOTS.find((r) => real === r || real.startsWith(r + sep)) ?? null; }
+function inVault(p: string): boolean { return vaultOf(p) !== null; }
 function okNotePath(p: string): boolean { return inVault(p) && NOTE_RE.test(resolve(p)); }
 // Image assets (pasted images live as sidecar files next to the note — local-first).
 const IMG_RE = /\.(png|jpe?g|gif|webp|avif|svg)$/i;
@@ -88,7 +93,7 @@ function atomicWrite(p: string, content: string) {
   renameSync(tmp, p); // atomic on same fs — never leaves a half-written note
 }
 function toTrash(p: string) {
-  const trash = join(ROOT, ".trash");
+  const trash = join(vaultOf(p) ?? ROOT, ".trash"); // trash lives in the note's own vault
   if (!existsSync(trash)) mkdirSync(trash, { recursive: true });
   let dest = join(trash, `${basename(p)}.${Date.now()}`);
   let i = 0; while (existsSync(dest)) dest = join(trash, `${basename(p)}.${Date.now()}.${++i}`);
@@ -307,18 +312,20 @@ function styles(): string {
   .onboard{max-width:520px;margin:14vh auto;text-align:center;padding:0 24px}
   .onboard h1{font-size:26px;letter-spacing:-.02em;margin-bottom:10px}
   .onboard p{color:var(--muted);margin-bottom:20px}
+  .onboard .notice{text-align:left;font-size:13.5px;background:color-mix(in srgb,#dc2626 9%,var(--surface));border:1px solid color-mix(in srgb,#dc2626 35%,transparent);border-radius:8px;padding:10px 14px;margin-bottom:26px;word-break:break-all}
   .onboard .actions{display:flex;gap:10px;justify-content:center}
   .onboard button{font:inherit;font-size:14px;border-radius:8px;padding:9px 16px;cursor:pointer;border:1px solid var(--border-strong);background:var(--surface);color:var(--text)}
   .onboard button.primary{background:var(--accent);border-color:var(--accent);color:#fff}`;
 }
 
-function shell(note: { file: string; format: string; content: string } | null): string {
+function shell(note: { file: string; format: string; content: string } | null, openError: string | null = null): string {
   const title = escHtml(note ? basename(note.file).replace(NOTE_RE, "") : "note-editor");
-  const json = note ? JSON.stringify({ ...note, root: ROOT }).replace(/</g, "\\u003c") : `{"root":${JSON.stringify(ROOT).replace(/</g, "\\u003c")}}`;
+  // a tab's vault is the one CONTAINING its note, not the latest-opened global
+  const json = note ? JSON.stringify({ ...note, root: vaultOf(note.file) ?? ROOT }).replace(/</g, "\\u003c") : `{"root":${JSON.stringify(ROOT).replace(/</g, "\\u003c")}}`;
   const body = note
     ? `<div class="bar"><span class="title" id="title">${title}</span><span class="badge">${note.format}</span><span class="spacer"></span><span class="status dirty" id="savestatus"><span class="dot"></span><span class="lbl">—</span></span><button class="chip" id="askchip"><kbd>⌘K</kbd> AI edit</button><button class="chip" id="insertchip">+ Insert</button></div>
   <div class="layout"><aside class="sidebar" id="sidebar"></aside><main class="main"><div id="editor" class="doc"></div></main></div>`
-    : `<div class="onboard"><h1>Your notes, in HTML, with AI.</h1><p>Open a folder of markdown or HTML notes, or create your first one. Everything stays local, in your own files.</p><div class="actions"><button class="primary" id="ob-open">Open folder…</button><button id="ob-new">New note</button></div></div>`;
+    : `<div class="onboard">${openError ? `<div class="notice">⚠️ ${escHtml(openError)}</div>` : ""}<h1>Your notes, in HTML, with AI.</h1><p>Open a folder of markdown or HTML notes, or create your first one. Everything stays local, in your own files.</p><div class="actions"><button class="primary" id="ob-open">Open folder…</button><button id="ob-new">New note</button></div></div>`;
   return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>
 <style>${styles()}</style></head>
 <body>
@@ -412,6 +419,7 @@ Bun.serve({
         // bound vault switches to inside the user's home so a stray POST can't repoint to / or system dirs
         const home = (() => { try { return realpathSync(process.env.HOME || "/"); } catch { return "/"; } })();
         if (d !== home && !d.startsWith(home + sep)) return json({ ok: false, error: "folder must be inside your home directory" });
+        if (!ROOTS.includes(d)) ROOTS.push(d); // previously-opened vaults stay live for their tabs
         ROOT = d; LAUNCH_FILE = null;
         return json({ ok: true, first: firstNote() });
       }
@@ -438,6 +446,13 @@ Bun.serve({
       return json({ ok: false, error: "unknown" }, 404);
     }
 
+    // Preflight for in-doc note links: lets the client explain a dead link in place
+    // instead of navigating to a welcome screen.
+    if (url.pathname === "/exists") {
+      const p = resolve(url.searchParams.get("file") || "");
+      const exists = existsSync(p) && statSync(p).isFile();
+      return json({ exists, inVault: inVault(p), isNote: NOTE_RE.test(p) });
+    }
     if (url.pathname === "/list") {
       const dir = url.searchParams.get("dir");
       const d = dir ? resolve(dir) : ROOT;
@@ -448,9 +463,14 @@ Bun.serve({
 
     const fileParam = url.searchParams.get("file");
     let path: string | null = fileParam ? resolve(fileParam) : (LAUNCH_FILE || firstNote());
-    if (path && (!inVault(path) || !existsSync(path) || !NOTE_RE.test(path) || !statSync(path).isFile())) path = null;
-    if (!path) return new Response(shell(null), { headers: { "content-type": "text/html; charset=utf-8" } });
-    let content: string; try { content = readFileSync(path, "utf8"); } catch { return new Response(shell(null), { headers: { "content-type": "text/html; charset=utf-8" } }); }
+    // An explicitly requested file that can't be served gets an explanation on the
+    // welcome screen — silently landing there read as "hyperlinks are broken".
+    let openError: string | null = null;
+    if (path && !(existsSync(path) && statSync(path).isFile())) { if (fileParam) openError = `No such note: ${path}`; path = null; }
+    else if (path && !inVault(path)) { if (fileParam) openError = `That file is outside your open folder${ROOTS.length > 1 ? "s" : ""}. Use “Open folder…” to open ${dirname(path)} first.`; path = null; }
+    else if (path && !NOTE_RE.test(path)) { if (fileParam) openError = `Not a note file (.md / .html): ${path}`; path = null; }
+    if (!path) return new Response(shell(null, openError), { headers: { "content-type": "text/html; charset=utf-8" } });
+    let content: string; try { content = readFileSync(path, "utf8"); } catch { return new Response(shell(null, `Couldn't read ${path}`), { headers: { "content-type": "text/html; charset=utf-8" } }); }
     return new Response(shell({ file: path, format: fmtOf(path), content }), { headers: { "content-type": "text/html; charset=utf-8" } });
   },
 });

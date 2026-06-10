@@ -324,6 +324,41 @@ test("links: clicking a relative note link navigates the app to that note", asyn
   await expect(page.locator(".ProseMirror h1")).toContainText("Target note");
 });
 
+// F9: a link to a missing note used to silently land on the welcome screen ("hyperlinks
+// are broken"). Now the click preflights /exists, explains in place, and stays on the doc;
+// a bad direct ?file= URL gets a reason on the welcome screen.
+test("links: dead relative link explains itself and stays on the doc", async ({ page }) => {
+  await openNote(page, "deadlink.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>d</title></head><body><article><p>See <a href="missing-note.html">ghost</a>.</p></article></body></html>\n');
+  await page.locator('.ProseMirror a[href="missing-note.html"]').click();
+  await expect(page.locator(".toast")).toContainText("doesn't exist");
+  expect(page.url()).toContain("deadlink.html");                                 // didn't navigate away
+  await expect(page.locator(".ProseMirror")).toContainText("See");
+});
+
+test("direct URL to a nonexistent file shows a reason, not a bare welcome screen", async ({ page }) => {
+  await page.goto("/?file=" + encodeURIComponent(join(VAULT, "nope-not-here.html")));
+  await expect(page.locator(".onboard .notice")).toContainText("No such note");
+});
+
+// F10: "Open folder" used to repoint ONE global vault — another tab's open-folder made
+// this tab's saves fail 403 ("files failed to save" while dogfooding in a second tab).
+// Every root opened in a session stays live; each tab keeps working against its own.
+test("multi-vault: opening another folder doesn't break the first tab", async ({ page, request }) => {
+  const path = await openNote(page, "tab-a.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>a</title></head><body><article><p>alpha</p></article></body></html>\n');
+  const vault2 = resolve("tests/e2e/.vault2");
+  mkdirSync(vault2, { recursive: true });
+  writeFileSync(join(vault2, "b.md"), "beta\n");
+  const r = await (await request.post("/open-folder", { data: { dir: vault2 } })).json();
+  expect(r.ok).toBe(true);                                                       // tab B's switch succeeded…
+  await page.evaluate(() => { const e = (window as any).__editor; e.chain().focus("end").run(); e.view.focus(); });
+  await page.keyboard.type(" still-saving");
+  await page.waitForTimeout(1300); // autosave
+  expect(readFileSync(path, "utf8")).toContain("still-saving");                  // …and tab A still saves
+  await page.goto("/?file=" + encodeURIComponent(path));                         // and still re-opens
+  await page.waitForSelector(".ProseMirror");
+  await expect(page.locator(".ProseMirror")).toContainText("still-saving");
+});
+
 test("links: web links open externally, app stays put", async ({ page }) => {
   await openNote(page, "linkweb.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>w</title></head><body><article><p>Visit <a href="https://example.com/page">example</a>.</p></article></body></html>\n');
   await page.evaluate(() => { (window as any).__opened = null; window.open = ((u: string) => { (window as any).__opened = u; return null; }) as any; });

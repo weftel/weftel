@@ -580,7 +580,15 @@ if (note && mount) {
         if (/\.(md|markdown|html?|htm)(#.*)?$/i.test(href)) {
           const clean = href.split("#")[0];
           const abs = clean.startsWith("/") ? clean : noteDirOf(note!.file) + "/" + clean;
-          event.preventDefault(); go("/?file=" + encodeURIComponent(abs));
+          event.preventDefault();
+          // F9: preflight the target — a dead link used to dump you on the welcome
+          // screen with no explanation. Explain in place and stay on the doc.
+          fetch("/exists?file=" + encodeURIComponent(abs)).then((r) => r.json()).then((x) => {
+            if (x.exists && x.inVault && x.isNote) go("/?file=" + encodeURIComponent(abs));
+            else if (!x.exists) flash("linked note doesn't exist: " + clean, false);
+            else if (!x.inVault) flash("linked note is outside your open folder: " + clean, false);
+            else flash("link target isn't a note: " + clean, false);
+          }).catch(() => flash("couldn't check link target: " + clean, false));
           return true;
         }
         return true; // unknown relative target — swallow rather than 404 the app
