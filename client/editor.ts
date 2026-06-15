@@ -774,6 +774,9 @@ if (note && mount) {
     },
   });
   W.__editor = editor;
+  // EDIT (default) vs INTERACT mode (K5). Flipped by the mode controller below; read here so
+  // the click-to-continue handler stands down while the sandboxed preview owns the pane.
+  let interactMode = false;
 
   // FULL_PARSE: scope the doc's <style> to the editor mount so classed/styled editable content
   // renders with its real design, while editor chrome (outside #editor) is untouched.
@@ -868,6 +871,7 @@ if (note && mount) {
   // editor (a click there focused <body> and typing went nowhere). Caret goes to the end;
   // in a self-framed doc the escape-trap then folds typed content into the page.
   document.querySelector(".layout .main")?.addEventListener("mousedown", (e) => {
+    if (interactMode) return; // the sandboxed preview owns the pane — don't steal focus to the editor
     const t = e.target as HTMLElement | null;
     if (!editor || !t || t.closest(".ProseMirror") || t.closest("a,button,input,select,textarea")) return;
     e.preventDefault();
@@ -1097,10 +1101,74 @@ if (note && mount) {
     else if (kind === "rich") { editor.chain().focus().insertContent('<div data-rich-block><div style="padding:16px;border:1px dashed var(--border-strong);border-radius:8px;text-align:center;color:var(--muted)">empty rich block — ⌘K to fill it with AI</div></div>').run(); markEdited(); }
   }
 
+  // ============================ edit / interact mode (resolves boundary K5) ============================
+  // EDIT = today's JS-free ProseMirror editor (unchanged). INTERACT = the document's OWN
+  // JavaScript runs so interactive docs (JS tabs, live dashboards) work — by rendering the RAW
+  // file in an ISOLATED iframe: `sandbox="allow-scripts"` WITHOUT `allow-same-origin`. That gives
+  // the frame an OPAQUE origin, which is the boundary: it can run the doc's JS but cannot read the
+  // vault, call the server's file endpoints (POSTs send `Origin: null` → 403; GET responses carry
+  // no CORS headers → unreadable cross-origin), or reach the parent page / app cookies+storage.
+  // The EDITOR never executes imported JS — only this walled-off frame does. (HTML notes only.)
+  //
+  // Raw file → iframe via `srcdoc` (the bytes are already in window.__NOTE__.content), NOT a
+  // server route: the doc never becomes a navigable app-origin URL, so it can never run with app
+  // privileges. srcdoc also preserves the doc's original <script> position (end-of-body IIFEs run
+  // after their DOM exists), which a serialize()-rebuilt head would break.
+  const INTERACTABLE = note.format === "html";
+  let interactView: HTMLElement | null = null;
+  const mainPane = document.querySelector(".layout .main") as HTMLElement | null;
+  const modeSeg = document.getElementById("modeseg");
+  const askchip = document.getElementById("askchip");
+  const insertchip = document.getElementById("insertchip");
+  function setMode(m: "edit" | "interact") {
+    if (!INTERACTABLE || (m === "interact") === interactMode) return;
+    if (m === "interact") {
+      // Close any edit-mode overlay so it can't orphan over the preview, then persist edits to
+      // disk (the editor also stays alive, hidden — so toggling back never loses an edit).
+      if (cmdk.classList.contains("show")) closeCmdk();
+      if (switcher.classList.contains("show")) closeSwitcher();
+      flushSave();
+      interactView = document.createElement("div"); interactView.className = "interact-view";
+      const frame = document.createElement("iframe");
+      frame.className = "interact-frame";
+      frame.setAttribute("sandbox", "allow-scripts"); // NO allow-same-origin: opaque origin IS the wall
+      frame.setAttribute("title", "Interactive preview (sandboxed)");
+      // The RAW file AS LOADED — verbatim, unsanitized, only ever a document INSIDE the sandbox.
+      // We use the original bytes (not serialize()) deliberately: it's the one representation that
+      // keeps the doc's own <script> in its authored position. End-of-body IIFEs that query the DOM
+      // (the motivating tabs bug) would break if relocated to <head>, which a save/serialize does.
+      // Trade-off: in-session edits are not mirrored in the preview (the editor retains them).
+      frame.srcdoc = note!.content;
+      const tag = document.createElement("div"); tag.className = "interact-note";
+      tag.innerHTML = '<span class="dot"></span>Interactive preview — runs this document’s own code, sandboxed';
+      interactView.appendChild(frame); interactView.appendChild(tag);
+      mainPane?.appendChild(interactView);
+      mount!.style.display = "none";
+      askchip?.setAttribute("hidden", ""); insertchip?.setAttribute("hidden", "");
+      interactMode = true;
+    } else {
+      interactView?.remove(); interactView = null; // tear the frame down → its JS/timers stop
+      mount!.style.display = "";
+      askchip?.removeAttribute("hidden"); insertchip?.removeAttribute("hidden");
+      interactMode = false;
+      editor?.commands.focus();
+    }
+    modeSeg?.querySelectorAll("button").forEach((b) => b.classList.toggle("on", (b as HTMLElement).dataset.mode === m));
+  }
+  function toggleMode() { if (INTERACTABLE) setMode(interactMode ? "edit" : "interact"); }
+  modeSeg?.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => setMode((b as HTMLElement).dataset.mode === "interact" ? "interact" : "edit")));
+  W.__setMode = setMode; // test seam
+
   // ============================ chrome wiring ============================
   document.addEventListener("keydown", (e) => {
     const mod = e.metaKey || e.ctrlKey;
-    if (mod && e.key.toLowerCase() === "k") { e.preventDefault(); openCmdk(); }
+    // ⌘E toggles modes — only claim the key when there's a mode to toggle (HTML notes), so it
+    // stays a no-op (not a swallowed shortcut) on md/txt notes.
+    if (mod && e.key.toLowerCase() === "e") { if (INTERACTABLE) { e.preventDefault(); toggleMode(); } }
+    // In INTERACT mode the editor is hidden — edit/AI shortcuts would mutate it invisibly, so the
+    // only keys that apply are ⌘E (above) and Escape (exit). Everything else is ignored.
+    else if (interactMode) { if (e.key === "Escape") setMode("edit"); }
+    else if (mod && e.key.toLowerCase() === "k") { e.preventDefault(); openCmdk(); }
     else if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); flushSave(); }
     else if (mod && (e.key.toLowerCase() === "p" || e.key.toLowerCase() === "o")) { e.preventDefault(); openSwitcher(); }
     else if (e.key === "Escape") { if (cmdk.classList.contains("show")) closeCmdk(); else if (switcher.classList.contains("show")) closeSwitcher(); }

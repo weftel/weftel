@@ -187,6 +187,16 @@ function styles(): string {
   .bar .chip{font-size:12px;color:var(--muted);border:1px solid var(--border);background:transparent;border-radius:6px;padding:4px 10px;cursor:pointer;display:inline-flex;gap:6px;align-items:center}
   .bar .chip:hover{border-color:var(--border-strong);color:var(--text)}
   .bar .chip kbd{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--accent-ink);background:var(--accent-tint);border-radius:3px;padding:0 4px}
+  .bar .seg{display:inline-flex;border:1px solid var(--border);border-radius:7px;overflow:hidden}
+  .bar .seg button{font:inherit;font-size:12px;color:var(--muted);background:transparent;border:none;padding:4px 11px;cursor:pointer;line-height:1.5}
+  .bar .seg button:hover{color:var(--text)}
+  .bar .seg button.on{background:var(--accent);color:#fff}
+  .bar .chip[hidden]{display:none}
+  /* INTERACT mode: the doc's own code runs in a sandboxed iframe filling the note pane */
+  .interact-view{height:calc(100vh - 40px)}
+  .interact-view iframe{width:100%;height:100%;border:0;display:block;background:#fff}
+  .interact-note{position:fixed;bottom:14px;right:16px;z-index:8;font-size:11px;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:5px 10px;display:flex;align-items:center;gap:7px;box-shadow:0 4px 14px rgba(0,0,0,.1)}
+  .interact-note .dot{width:7px;height:7px;border-radius:50%;background:var(--win);flex:none}
   .layout{display:flex;align-items:flex-start}
   .sidebar{width:256px;flex:none;border-right:1px solid var(--border);height:calc(100vh - 40px);overflow:auto;padding:10px 8px;position:sticky;top:40px}
   .sidebar .vault{display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;font:inherit;font-size:12px;font-weight:600;color:var(--muted);background:transparent;border:none;padding:5px 8px;border-radius:7px;cursor:pointer;text-align:left}
@@ -333,8 +343,13 @@ function shell(note: { file: string; format: string; content: string } | null, o
   const title = escHtml(note ? basename(note.file).replace(NOTE_RE, "") : "note-editor");
   // a tab's vault is the one CONTAINING its note, not the latest-opened global
   const json = note ? JSON.stringify({ ...note, root: vaultOf(note.file) ?? ROOT }).replace(/</g, "\\u003c") : `{"root":${JSON.stringify(ROOT).replace(/</g, "\\u003c")}}`;
+  // INTERACT toggle (HTML notes only): EDIT = the JS-free ProseMirror editor; INTERACT runs
+  // the doc's OWN code in a sandboxed iframe. md notes have no JS, so no toggle for them.
+  const modeSeg = note && note.format === "html"
+    ? `<div class="seg" id="modeseg" role="group" aria-label="View mode"><button data-mode="edit" class="on" title="Edit — fluid editor (⌘E)">Edit</button><button data-mode="interact" title="Interact — run this doc’s own code, sandboxed (⌘E)">Interact</button></div>`
+    : "";
   const body = note
-    ? `<div class="bar"><span class="title" id="title">${title}</span><span class="badge">${note.format}</span><span class="spacer"></span><span class="status dirty" id="savestatus"><span class="dot"></span><span class="lbl">—</span></span><button class="chip" id="askchip"><kbd>⌘K</kbd> AI edit</button><button class="chip" id="insertchip">+ Insert</button></div>
+    ? `<div class="bar"><span class="title" id="title">${title}</span><span class="badge">${note.format}</span>${modeSeg}<span class="spacer"></span><span class="status dirty" id="savestatus"><span class="dot"></span><span class="lbl">—</span></span><button class="chip" id="askchip"><kbd>⌘K</kbd> AI edit</button><button class="chip" id="insertchip">+ Insert</button></div>
   <div class="layout"><aside class="sidebar" id="sidebar"></aside><main class="main"><div id="editor" class="doc"></div></main></div>`
     : `<div class="onboard">${openError ? `<div class="notice">⚠️ ${escHtml(openError)}</div>` : ""}<h1>Your notes, in HTML, with AI.</h1><p>Open a folder of markdown or HTML notes, or create your first one. Everything stays local, in your own files.</p><div class="actions"><button class="primary" id="ob-open">Open folder…</button><button id="ob-new">New note</button></div></div>`;
   return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>
