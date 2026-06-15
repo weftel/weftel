@@ -9,6 +9,14 @@ import { join, resolve } from "node:path";
 const VAULT = resolve("tests/e2e/.vault");
 mkdirSync(VAULT, { recursive: true });
 
+// In-app AI edit (⌘K) is cut for first launch (server AI_EDIT_ENABLED=false; see
+// notes-editor-wiki/quality-gaps.html F23). These tests drive the ⌘K UI, so they skip
+// unless the feature is turned on for the run (AI_EDIT_ENABLED=1, matching the server const
+// the rebuild will flip). NOTE: they replay from .ai-cache, so they verify the PARSE/render
+// pipeline (rich-block → editable native table), NOT live AI output quality — the rebuild
+// owes a real quality eval, not a cache-replay assertion.
+const AI_EDIT_ENABLED = process.env.AI_EDIT_ENABLED === "1";
+
 async function openNote(page: Page, name: string, content: string): Promise<string> {
   const path = join(VAULT, name);
   writeFileSync(path, content);
@@ -43,7 +51,8 @@ test("slash menu opens, filters, and inserts", async ({ page }) => {
   await clearAndFocus(page);
   await page.keyboard.type("/");
   await expect(page.locator(".slash")).toBeVisible();
-  await expect(page.locator(".slash-group")).toContainText(["Writing", "Embeds", "AI"]);
+  // "AI" group only exists when in-app AI edit is enabled (cut for launch — F23)
+  await expect(page.locator(".slash-group")).toContainText(AI_EDIT_ENABLED ? ["Writing", "Embeds", "AI"] : ["Writing", "Embeds"]);
   await page.keyboard.type("table");
   await expect(page.locator(".slash .slash-item")).toHaveCount(1);
   await page.keyboard.press("Enter");
@@ -104,6 +113,7 @@ test("'/callout' inserts an editable callout (not a rich block)", async ({ page 
 });
 
 test("cmd+K 'a 2x2 table' yields a NATIVE EDITABLE table, not a frozen rich block", async ({ page }) => {
+  test.skip(!AI_EDIT_ENABLED, "in-app AI edit (⌘K) cut for first launch — F23");
   await openNote(page, "aitable.md", "# t\n\n");
   await clearAndFocus(page);
   await page.keyboard.press("Meta+k");
@@ -600,6 +610,7 @@ test("md: empty to-do round-trips as a to-do, not escaped junk", async ({ page }
 });
 
 test("cmd+K 2x2 table is a clean 2-column Pros/Cons", async ({ page }) => {
+  test.skip(!AI_EDIT_ENABLED, "in-app AI edit (⌘K) cut for first launch — F23; this is a cache-replay parse check, not a live-quality guard");
   await openNote(page, "aitableq.md", "# t\n\n");
   await clearAndFocus(page);
   await page.keyboard.press("Meta+k");

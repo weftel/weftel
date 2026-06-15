@@ -14,6 +14,16 @@ import { resolve, extname, basename, dirname, sep, join } from "node:path";
 import { createHash } from "node:crypto";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 
+// In-app AI edit (⌘K) — cut for first launch. It was net-negative on dogfooding (harmed
+// notes more than it helped; 2026-06-15 generation regression) — see
+// notes-editor-wiki/quality-gaps.html F23 + ai-quality-audit.html. The plumbing below
+// (SYSTEM, streamAI, /rewrite) stays intact behind this flag so the rebuild flips it back
+// on rather than rebuilding the Agent-SDK + cache + sanitize integration. SINGLE SOURCE OF
+// TRUTH: this const gates the /rewrite route AND is injected into the client (shell()), so
+// front and back never drift. The rebuild also needs a real quality eval before flipping —
+// today's e2e tests replay a cached response and don't catch live-quality regressions.
+const AI_EDIT_ENABLED = false;
+
 // Output-format contract — the quality fix. Passed as the SDK systemPrompt so every AI
 // edit obeys it regardless of the per-mode instruction.
 const SYSTEM = `You generate content that is inserted DIRECTLY into a user's note. Obey strictly:
@@ -334,14 +344,14 @@ function shell(note: { file: string; format: string; content: string } | null, o
   // a tab's vault is the one CONTAINING its note, not the latest-opened global
   const json = note ? JSON.stringify({ ...note, root: vaultOf(note.file) ?? ROOT }).replace(/</g, "\\u003c") : `{"root":${JSON.stringify(ROOT).replace(/</g, "\\u003c")}}`;
   const body = note
-    ? `<div class="bar"><span class="title" id="title">${title}</span><span class="badge">${note.format}</span><span class="spacer"></span><span class="status dirty" id="savestatus"><span class="dot"></span><span class="lbl">—</span></span><button class="chip" id="askchip"><kbd>⌘K</kbd> AI edit</button><button class="chip" id="insertchip">+ Insert</button></div>
+    ? `<div class="bar"><span class="title" id="title">${title}</span><span class="badge">${note.format}</span><span class="spacer"></span><span class="status dirty" id="savestatus"><span class="dot"></span><span class="lbl">—</span></span>${AI_EDIT_ENABLED ? '<button class="chip" id="askchip"><kbd>⌘K</kbd> AI edit</button>' : ""}<button class="chip" id="insertchip">+ Insert</button></div>
   <div class="layout"><aside class="sidebar" id="sidebar"></aside><main class="main"><div id="editor" class="doc"></div></main></div>`
     : `<div class="onboard">${openError ? `<div class="notice">⚠️ ${escHtml(openError)}</div>` : ""}<h1>Your notes, in HTML, with AI.</h1><p>Open a folder of markdown or HTML notes, or create your first one. Everything stays local, in your own files.</p><div class="actions"><button class="primary" id="ob-open">Open folder…</button><button id="ob-new">New note</button></div></div>`;
   return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>
 <style>${styles()}</style></head>
 <body>
   ${body}
-  <script>window.__NOTE__=${json};
+  <script>window.__NOTE__=${json};window.__AI_EDIT_ENABLED=${AI_EDIT_ENABLED};
   // This app uses no service worker. If a stale one (e.g. from a prior project on this port)
   // is registered on this origin it will intercept /editor.js and serve old code, immune to
   // refresh. Unregister any SW + drop its caches so the next load is always the fresh bundle.
@@ -435,6 +445,7 @@ Bun.serve({
         return json({ ok: true, first: firstNote() });
       }
       if (url.pathname === "/rewrite") {
+        if (!AI_EDIT_ENABLED) return json({ ok: false, error: "ai edit disabled" }, 404);
         const mode = String(body.mode || "");
         const prompt = String(body.prompt || "");
         const model = "haiku"; // fast; the system prompt now carries the structure/quality
