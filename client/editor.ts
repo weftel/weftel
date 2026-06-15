@@ -24,7 +24,7 @@ import Suggestion from "@tiptap/suggestion";
 import { TextStyle } from "@tiptap/extension-text-style";
 import { Color } from "@tiptap/extension-color";
 import { Highlight } from "@tiptap/extension-highlight";
-import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, subtreeEditable, nativeInsertable, scopeCss, tidyInsertHtml, tidySaveHtml, mdLite, buildTree, countFiles, type TreeNode } from "./lib";
+import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, subtreeEditable, nativeInsertable, collectSvgTextLeaves, scopeCss, tidyInsertHtml, tidySaveHtml, mdLite, buildTree, countFiles, type TreeNode } from "./lib";
 import { DOMSerializer } from "@tiptap/pm/model";
 import { Plugin, TextSelection } from "@tiptap/pm/state";
 
@@ -388,13 +388,103 @@ const RichBlock = Node.create({
   } }]; },
   renderHTML({ node }: any) { const d = document.createElement("div"); d.setAttribute("data-rich-block", ""); d.innerHTML = node.attrs.html; return d; },
   addNodeView() {
-    return ({ node }: any) => {
+    return ({ node, editor, getPos }: any) => {
       const d = document.createElement("div"); d.setAttribute("data-rich-block", ""); d.className = "rich-block"; d.contentEditable = "false";
       // Render the (already-sanitized) HTML + the doc's styles in a SHADOW ROOT so the
       // content's CSS is fully contained — it can't reach out and restyle the editor.
       const shadow = d.attachShadow({ mode: "open" });
-      shadow.innerHTML = (RICH_STYLES || "") + (node.attrs.html || "");
-      return { dom: d };
+      let currentHtml = node.attrs.html || "";
+      let contentNodes: ChildNode[] = []; // the live content top-level nodes (NOT the injected <style>s)
+      // The single floating overlay editor for the SVG text leaf currently being edited.
+      let overlay: HTMLInputElement | null = null, overlayLeaf: Element | null = null, overlayOrig = "", overlayBlur: (() => void) | null = null, committing = false;
+
+      // Re-serialize ONLY the content (styles are injected fresh each render, never saved).
+      // Editing a leaf changes just its text node, so EVERY surrounding byte is preserved —
+      // elements verbatim, and comment nodes (e.g. an exporter banner) kept too.
+      const contentHtml = () => contentNodes.map((n) =>
+        n.nodeType === 1 ? (n as Element).outerHTML
+        : n.nodeType === 8 ? "<!--" + ((n as any).data || "") + "-->"
+        : (n.textContent || "")).join("");
+
+      // SILENT close — detach the blur listener BEFORE removing the input, so tearing the
+      // overlay down (render / destroy / leaf-switch) can never re-enter as a phantom commit.
+      const closeOverlay = () => {
+        if (!overlay) return;
+        if (overlayBlur) overlay.removeEventListener("blur", overlayBlur);
+        overlay.remove(); overlay = null; overlayLeaf = null; overlayBlur = null;
+      };
+      // Commit the overlay's text into the SVG string, then close. No-op when unchanged —
+      // compared against the input's OWN initial value (the browser may normalize it, e.g. strip
+      // newlines), so merely focusing+blurring a whitespace/multi-line leaf never churns the file.
+      const commitOverlay = () => {
+        if (!overlay || committing) return;
+        committing = true;
+        try {
+          const leaf = overlayLeaf, val = overlay.value;
+          closeOverlay();
+          if (!leaf || val === overlayOrig) return;             // untouched → leave the bytes exactly as they were
+          const pos = typeof getPos === "function" ? getPos() : null;
+          if (typeof pos !== "number") return;                  // node torn down / moved → drop the edit, never throw
+          leaf.textContent = val;                               // single clean text node — no contentEditable cruft
+          const newHtml = stripActive(contentHtml());           // matches the reload-parse form exactly (idempotent)
+          currentHtml = newHtml;                                // mark as ours so update() skips a redundant rebuild
+          editor.commands.command(({ tr }: any) => { tr.setNodeMarkup(pos, undefined, { html: newHtml }); return true; }); // undoable via ⌘Z
+          armEdit();
+        } finally { committing = false; }
+      };
+
+      // K1: open a floating plain-text editor over an SVG <text>/<tspan> leaf on DOUBLE-CLICK.
+      // Single click still node-selects the whole block (⌘K rewrite / drag) — only dblclick edits.
+      // (contentEditable doesn't work on SVG text in Chromium, so we edit via this overlay input
+      // and write the result straight back into the verbatim SVG string.)
+      function openOverlay(leaf: Element) {
+        commitOverlay(); // bank any in-progress edit on a sibling leaf first
+        const rect = (leaf as any).getBoundingClientRect();
+        const cs = getComputedStyle(leaf as Element);
+        const input = document.createElement("input"); input.type = "text"; input.className = "svgtext-overlay";
+        input.value = leaf.textContent || "";
+        overlayOrig = input.value; // capture AFTER the browser normalizes the value
+        input.style.cssText = "position:absolute;z-index:80;box-sizing:border-box;"
+          + "left:" + (window.scrollX + rect.left - 5) + "px;top:" + (window.scrollY + rect.top - 3) + "px;"
+          + "min-width:" + Math.max(34, Math.round(rect.width) + 18) + "px;height:" + (Math.max(16, Math.round(rect.height)) + 8) + "px;"
+          + "font-size:" + (cs.fontSize || "14px") + ";font-family:" + (cs.fontFamily || "inherit") + ";"
+          + "padding:1px 4px;border:1px solid var(--accent);border-radius:5px;background:var(--surface);color:var(--text);"
+          + "box-shadow:0 6px 22px rgba(0,0,0,.22);outline:none;text-align:center";
+        overlay = input; overlayLeaf = leaf; overlayBlur = commitOverlay;
+        input.addEventListener("keydown", (e: KeyboardEvent) => {
+          if (e.key === "Enter") { e.preventDefault(); commitOverlay(); }
+          else if (e.key === "Escape") { e.preventDefault(); closeOverlay(); editor.commands.focus(); }
+        });
+        input.addEventListener("blur", overlayBlur);
+        document.body.appendChild(input);
+        input.focus(); input.select();
+      }
+
+      const render = (html: string) => {
+        closeOverlay();
+        shadow.innerHTML = RICH_STYLES || ""; // styles first (scoped, never leak / never saved)
+        const tpl = document.createElement("template"); tpl.innerHTML = html || "";
+        contentNodes = Array.from(tpl.content.childNodes);
+        contentNodes.forEach((n) => shadow.appendChild(n)); // move content in after the styles — identical DOM to before
+        // K1: wire any SVG text leaves for double-click-to-edit. No attribute is ever added to the
+        // leaves (that would leak into the saved file) — only listeners + a shadow cursor hint.
+        const leaves = collectSvgTextLeaves(shadow);
+        if (leaves.length) {
+          d.setAttribute("data-svg-editable", "");
+          const hint = document.createElement("style"); hint.textContent = "text,tspan{cursor:text}"; shadow.appendChild(hint);
+          leaves.forEach((leaf) => leaf.addEventListener("dblclick", (e: Event) => { e.preventDefault(); e.stopPropagation(); openOverlay(leaf); }));
+        } else d.removeAttribute("data-svg-editable");
+      };
+      render(currentHtml);
+
+      return {
+        dom: d,
+        // Re-render only on an EXTERNAL change (⌘K rewrite, undo/redo); our own text commit
+        // already updated the live DOM and set currentHtml, so skip the rebuild (keeps caret/feel).
+        update(n: any) { if (n.type.name !== "richBlock") return false; if (n.attrs.html === currentHtml) return true; currentHtml = n.attrs.html || ""; render(currentHtml); return true; },
+        destroy: closeOverlay,
+        ignoreMutation: () => true,
+      };
     };
   },
 });

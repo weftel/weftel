@@ -4,7 +4,7 @@ import { test, expect } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 if (typeof (globalThis as any).document === "undefined") GlobalRegistrator.register();
 
-import { stripActive, spliceBody, proseModelable, editableModelable, subtreeEditable, scopeCss, filterInlineStyle, escapeAttr, mdLite, buildTree, countFiles, tidySaveHtml } from "../../client/lib";
+import { stripActive, spliceBody, proseModelable, editableModelable, subtreeEditable, scopeCss, filterInlineStyle, escapeAttr, mdLite, buildTree, countFiles, tidySaveHtml, isSvgTextLeaf, collectSvgTextLeaves } from "../../client/lib";
 
 // ───────────────────────── spliceBody — the $-corruption bug ─────────────────────────
 const TOKEN = "%%NOTE_BODY%%";
@@ -118,6 +118,33 @@ test("subtreeEditable: any unmodelable descendant makes the whole subtree non-ed
   // img is NATIVE now (image node — paste support): no longer a freeze trigger
   expect(subtreeEditable(el('<div class="x"><p>ok</p><img src="y"></div>'))).toBe(true);
   expect(subtreeEditable(el('<img src="assets/x.png">'))).toBe(true);
+});
+
+// ───────────────────────── isSvgTextLeaf / collectSvgTextLeaves — SVG text editing (K1) ─────────────────────────
+function svgEl(html: string): Element { const t = document.createElement("template"); t.innerHTML = html; return t.content.querySelector("svg")!.querySelector("*")!; }
+test("isSvgTextLeaf: a <text>/<tspan> holding only text is an editable leaf", () => {
+  expect(isSvgTextLeaf(svgEl('<svg><text x="0" y="10">Hello</text></svg>'))).toBe(true);
+  const t = document.createElement("template"); t.innerHTML = '<svg><text><tspan>run</tspan></text></svg>';
+  expect(isSvgTextLeaf(t.content.querySelector("tspan")!)).toBe(true);   // inner tspan is a leaf
+  expect(isSvgTextLeaf(t.content.querySelector("text")!)).toBe(false);   // the wrapping <text> is a container
+});
+test("isSvgTextLeaf: empty/whitespace text and non-text elements are not leaves", () => {
+  expect(isSvgTextLeaf(svgEl('<svg><text></text></svg>'))).toBe(false);          // empty
+  expect(isSvgTextLeaf(svgEl('<svg><text>   </text></svg>'))).toBe(false);       // whitespace only
+  expect(isSvgTextLeaf(svgEl('<svg><rect width="4" height="4"/></svg>'))).toBe(false); // not text/tspan
+  expect(isSvgTextLeaf(svgEl('<svg><circle r="4"><title>label</title></circle></svg>'))).toBe(false);
+});
+test("collectSvgTextLeaves: gathers every editable run, skips containers + empties", () => {
+  const t = document.createElement("template");
+  t.innerHTML = '<svg viewBox="0 0 100 60"><rect width="100" height="60"/><text x="5" y="20">one</text><text x="5" y="40"><tspan>two</tspan><tspan>three</tspan></text><text></text></svg>';
+  const leaves = collectSvgTextLeaves(t.content).map((e) => e.textContent);
+  expect(leaves).toEqual(["one", "two", "three"]); // the wrapping <text> and the empty one are excluded
+});
+test("collectSvgTextLeaves: pure-shape SVG yields no leaves (canary stays frozen); text reachable inside a frozen figure", () => {
+  const count = (html: string) => { const t = document.createElement("template"); t.innerHTML = html; return collectSvgTextLeaves(t.content).length; };
+  expect(count('<svg><text x="0" y="10">Label</text></svg>')).toBe(1);
+  expect(count('<svg><circle cx="25" cy="25" r="20"/></svg>')).toBe(0);                         // no affordance for a pure-shape SVG
+  expect(count('<figure><svg><text>cap</text></svg><figcaption>x</figcaption></figure>')).toBe(1); // text reachable even inside a frozen figure
 });
 
 // ───────────────────────── scopeCss — confine an imported sheet to the editor ─────────────────────────

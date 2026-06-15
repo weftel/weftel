@@ -122,6 +122,28 @@ export function subtreeEditable(el: Element, relaxClass = true): boolean {
 // unstyled — keep AI on the strict (no-class) gate even under the FULL_PARSE experiment.
 export function nativeInsertable(html: string): boolean { return editableModelable(html); }
 
+// ── SVG text editing (K1 / "crack open frozen leaves") ────────────────────────
+// An <svg> still freezes whole (it can't be modeled as prose), but its DECLARATIVE
+// <text>/<tspan> runs are reachable: a leaf is a <text>/<tspan> that holds ONLY text
+// (no element children) and some non-whitespace content. Its text run can be replaced
+// without touching ANY surrounding SVG byte (geometry, paths, gradients) — so the SVG
+// round-trips byte-faithfully while the words become editable in place.
+// A <text> that WRAPS <tspan>s is a container, not a leaf — its inner <tspan> leaves are
+// edited individually, preserving the multi-run layout. foreignObject HTML (Marp slides)
+// is the hard sub-case: its <div>/<p> text is NOT a native SVG text leaf, so it stays
+// frozen and view-only — handled deliberately, not by accident.
+export function isSvgTextLeaf(el: Element): boolean {
+  const tag = (el.tagName || "").toLowerCase();
+  if (tag !== "text" && tag !== "tspan") return false;
+  if (el.children && el.children.length) return false;       // wraps elements → container, not a leaf
+  if (!(el.textContent || "").trim()) return false;          // empty / whitespace-only → nothing to edit
+  try { if ((el as any).closest && (el as any).closest("foreignObject")) return false; } catch {} // foreignObject HTML stays frozen
+  return true;
+}
+export function collectSvgTextLeaves(root: ParentNode): Element[] {
+  return Array.from(root.querySelectorAll("text, tspan")).filter(isSvgTextLeaf);
+}
+
 // ── CSS scoping ──────────────────────────────────────────────────────────────
 // Rewrite an imported note's stylesheet so every rule is confined to a scope wrapper (the
 // editor mount), letting the note's class/element CSS render the EDITABLE content while
