@@ -41,9 +41,12 @@ const FLOW_DOC = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>flow</
 </body></html>
 `;
 
-// dblclick an HTML element leaf in the frozen shadow (open contentEditable), by selector + optional
-// text match. Returns the leaf's current text + whether it became the shadow's active (focused) edit.
-async function openHtmlLeaf(page: Page, selector: string, matchText?: string): Promise<{ text: string; ce: string | null; focused: boolean }> {
+// dblclick an HTML element leaf in the frozen shadow, by selector + optional text match. The edit
+// opens in a BODY-LEVEL contentEditable overlay (.leaftext-overlay) — Chromium won't paint a caret
+// for a contentEditable nested under a contenteditable=false host inside a shadow root, so the leaf
+// is edited through a floating editor in document.body (the same "plan B" the SVG path uses). Returns
+// the leaf's current text + the overlay's editable/focused state (the leaf itself is never mutated).
+async function openHtmlLeaf(page: Page, selector: string, matchText?: string): Promise<{ text: string; overlay: boolean; ce: string | null; focused: boolean; collapsedInOverlay: boolean }> {
   return await page.evaluate(({ selector, matchText }) => {
     const host = document.querySelector(".ProseMirror [data-rich-block]") as HTMLElement;
     const sr = host.shadowRoot!;
@@ -51,7 +54,10 @@ async function openHtmlLeaf(page: Page, selector: string, matchText?: string): P
     const el = (matchText ? els.find((e) => (e.textContent || "").trim() === matchText) : els[0]) as HTMLElement;
     const r = el.getBoundingClientRect();
     el.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
-    return { text: el.textContent || "", ce: el.getAttribute("contenteditable"), focused: sr.activeElement === el };
+    const ov = document.querySelector("body > .leaftext-overlay") as HTMLElement | null;
+    const sel = window.getSelection();
+    const collapsedInOverlay = !!ov && !!sel && sel.rangeCount > 0 && sel.getRangeAt(0).collapsed && ov.contains(sel.getRangeAt(0).startContainer);
+    return { text: el.textContent || "", overlay: !!ov, ce: ov ? ov.getAttribute("contenteditable") : null, focused: document.activeElement === ov, collapsedInOverlay };
   }, { selector, matchText });
 }
 
@@ -73,13 +79,16 @@ test("an HTML <figcaption> in a frozen figure is click-to-edit; the figure stays
   expect(r.svgEditable).toBe(true);       // and SVG-text affordance too (both coexist)
 });
 
-test("editing a figcaption in place: contentEditable opens, commit persists, surrounding bytes byte-faithful", async ({ page }) => {
+test("editing a figcaption via overlay: caret opens, commit persists, surrounding bytes byte-faithful", async ({ page }) => {
   const path = await openNote(page, "leaf-fig2.html", FIG_DOC);
   const o = await openHtmlLeaf(page, "figcaption");
   expect(o.text).toBe("OLDCAPTION here.");
-  expect(o.ce).toBe("true");              // flipped to contentEditable in place
-  expect(o.focused).toBe(true);           // caret is in the real styled box
-  await page.keyboard.insertText("NEWCAPTION done.");   // selection (all) is replaced
+  expect(o.overlay).toBe(true);           // a body-level editor opened
+  expect(o.ce).toBe("true");              // it's contentEditable
+  expect(o.focused).toBe(true);           // and focused (document.activeElement)
+  expect(o.collapsedInOverlay).toBe(true);// with a real collapsed caret inside it (the bug: no caret)
+  await page.keyboard.press("ControlOrMeta+a");          // select all, then
+  await page.keyboard.insertText("NEWCAPTION done.");    // replace
   await page.keyboard.press("Enter");                    // commits
   const live = await page.evaluate(() => {
     const host = document.querySelector(".ProseMirror [data-rich-block]") as HTMLElement;
@@ -134,6 +143,7 @@ test("boundary: flow-chart HTML labels next to an SVG icon stay NORMAL editable 
 test("closure + idempotence: an edited HTML leaf survives reload, stays editable, round-trip settles in ≤1 pass", async ({ page }) => {
   const path = await openNote(page, "leaf-closure.html", FIG_DOC);
   await openHtmlLeaf(page, "figcaption");
+  await page.keyboard.press("ControlOrMeta+a");
   await page.keyboard.insertText("PERSISTED caption.");
   await page.keyboard.press("Enter");
   await page.waitForTimeout(1300);
@@ -162,6 +172,7 @@ test("security: typed <script> persists ESCAPED as text, never executes; 0 live 
   // install a tripwire the payload would flip if it ever executed
   await page.evaluate(() => ((window as any).__pwned = false));
   await openHtmlLeaf(page, "figcaption");
+  await page.keyboard.press("ControlOrMeta+a");
   await page.keyboard.insertText('<script>window.__pwned=true</script><img src=x onerror=window.__pwned=true>');
   await page.keyboard.press("Enter");
   await page.waitForTimeout(1300);

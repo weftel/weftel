@@ -400,9 +400,27 @@ const RichBlock = Node.create({
       // leaf is an Element (a whole <text>/<tspan>/<textPath> run) or a Text node; both expose
       // textContent for read + write.
       let overlay: HTMLInputElement | null = null, overlayLeaf: Node | null = null, overlayOrig = "", overlayBlur: (() => void) | null = null, committing = false;
-      // F36: the HTML element leaf currently edited IN PLACE via contentEditable (better fidelity +
-      // multi-line than the SVG overlay input; Chromium WILL caret HTML text). Null when none active.
-      let activeLeaf: HTMLElement | null = null, activeLeafOrig = "", activeLeafHandlers: (() => void) | null = null;
+      // F36: the HTML element leaf currently being edited, plus the floating editor that drives it.
+      // Chromium will NOT paint a caret for a contentEditable nested under a contenteditable=false host
+      // INSIDE a shadow root — even with focus + a correct collapsed selection in the leaf, the caret
+      // is suppressed (the flat-tree editability check sees the false host). So instead of editing the
+      // leaf in place we mirror the WORKING SVG path: a real editor in document.body, OUTSIDE PM and the
+      // shadow root, gets a reliable caret. Unlike the SVG <input> it's a multi-line contentEditable
+      // <div>, so a wrapped figcaption edits naturally. The overlay carries an OPAQUE background (the
+      // leaf's effective ancestor bg) so it covers the leaf's own text — we never mutate the leaf
+      // itself (no style/attr touch), so the block round-trips byte-faithfully. Null when none active.
+      let activeLeaf: HTMLElement | null = null, leafOverlay: HTMLDivElement | null = null, activeLeafOrig = "", activeLeafHandlers: (() => void) | null = null;
+      // First non-transparent background walking up from a leaf (through the shadow boundary to the
+      // host), so the floating overlay can paint over the leaf's own text without a see-through gap.
+      const effectiveBg = (el: Element): string => {
+        let n: Node | null = el;
+        while (n && (n as Element).nodeType === 1) {
+          const bg = getComputedStyle(n as Element).backgroundColor;
+          if (bg && bg !== "transparent" && !/^rgba\(\s*0,\s*0,\s*0,\s*0\s*\)$/.test(bg)) return bg;
+          const p = (n as Element).parentElement; n = p || ((n as any).getRootNode?.() as ShadowRoot)?.host || null;
+        }
+        return "var(--surface)";
+      };
       // Geometry/style for either leaf kind: a Text node has no box of its own, so measure it
       // with a Range and read its font off the parent element.
       const elementOf = (n: Node): Element => (n.nodeType === 1 ? (n as Element) : (n.parentElement as Element));
@@ -480,23 +498,23 @@ const RichBlock = Node.create({
         input.focus(); input.select();
       }
 
-      // F36: edit an HTML element leaf (a <figcaption>/<div>/<p>/<li>… holding only text) IN PLACE
-      // via contentEditable — caret lands in the real styled box (fidelity + natural wrapping), no
-      // floating overlay needed. SILENT close: detach listeners + strip the transient
-      // contentEditable attr BEFORE clearing state, so the re-serialized block stays attribute-clean
-      // and a teardown can never re-enter as a phantom commit.
+      // F36: edit an HTML element leaf (a <figcaption>/<div>/<p>/<li>… holding only text) through a
+      // BODY-LEVEL contentEditable overlay (the SVG path's "plan B", multi-line for wrapped captions).
+      // SILENT close: detach listeners + remove the overlay BEFORE clearing state, so a teardown can
+      // never re-enter as a phantom commit. The leaf itself is NEVER mutated while editing (no style or
+      // attribute touch) — the opaque overlay simply covers it — so the block stays byte-faithful.
       let committingLeaf = false;
       const closeActiveLeaf = () => {
         if (!activeLeaf) return;
         if (activeLeafHandlers) activeLeafHandlers();
-        activeLeaf.removeAttribute("contenteditable"); activeLeaf.removeAttribute("spellcheck");
-        activeLeaf = null; activeLeafHandlers = null;
+        if (leafOverlay) leafOverlay.remove();                 // the leaf was never mutated → nothing to restore
+        activeLeaf = null; leafOverlay = null; activeLeafHandlers = null;
       };
       const commitActiveLeaf = () => {
-        if (!activeLeaf || committingLeaf) return;
+        if (!activeLeaf || !leafOverlay || committingLeaf) return;
         committingLeaf = true;
         try {
-          const leaf = activeLeaf, val = activeLeaf.textContent || ""; // textContent ONLY — never innerHTML (drops any stray markup/paste)
+          const leaf = activeLeaf, val = leafOverlay.textContent || ""; // textContent ONLY — never innerHTML (drops any stray markup/paste)
           closeActiveLeaf();
           if (val === activeLeafOrig) return;                  // untouched → byte-identical, no churn
           commitLeaf(leaf, val);
@@ -504,14 +522,30 @@ const RichBlock = Node.create({
       };
       // Commit ANY in-progress edit (overlay or in-place leaf) before opening a new one or rendering.
       const bankPending = () => { commitOverlay(); commitActiveLeaf(); };
-      function openLeaf(leaf: HTMLElement) {
+      function openLeaf(leaf: HTMLElement, ev?: MouseEvent) {
         bankPending();
         activeLeaf = leaf; activeLeafOrig = leaf.textContent || "";
-        leaf.setAttribute("contenteditable", "true"); leaf.setAttribute("spellcheck", "false");
+        const rect = rectOf(leaf), cs = getComputedStyle(leaf);
+        const ov = document.createElement("div"); ov.className = "leaftext-overlay";
+        ov.setAttribute("contenteditable", "true"); ov.setAttribute("spellcheck", "false");
+        ov.textContent = leaf.textContent || "";
+        // Box the overlay exactly over the leaf and copy its type, so it reads as editing in place.
+        // An OPAQUE background (the leaf's effective ancestor bg) paints over the leaf's own text so
+        // there's no double image — without ever mutating the leaf (byte-faithful). The accent outline
+        // is the edit affordance (the in-place version had it via a shadow style hint).
+        ov.style.cssText = "position:absolute;z-index:80;margin:0;box-sizing:border-box;border:0;"
+          + "left:" + (window.scrollX + rect.left) + "px;top:" + (window.scrollY + rect.top) + "px;"
+          + "width:" + (Math.ceil(rect.width) + 2) + "px;min-height:" + Math.ceil(rect.height) + "px;"
+          + "background:" + effectiveBg(leaf) + ";outline:1.5px solid var(--accent);outline-offset:2px;border-radius:3px";
+        (["fontFamily","fontSize","fontWeight","fontStyle","fontVariant","lineHeight","letterSpacing",
+          "wordSpacing","textAlign","textTransform","textIndent","whiteSpace","color",
+          "paddingTop","paddingRight","paddingBottom","paddingLeft"] as const)
+          .forEach((p) => { (ov.style as any)[p] = (cs as any)[p]; });
+        document.body.appendChild(ov); leafOverlay = ov;
         // PLAINTEXT GUARD: a contentEditable can otherwise accrue <br>/<div> on Enter or absorb rich
         // pasted markup. We neutralize both — Enter commits (these leaves are single logical lines),
         // and paste inserts text/plain only. commit reads textContent regardless, so this is purely
-        // to keep the LIVE shadow DOM clean mid-edit; nothing here can make imported markup execute.
+        // to keep the LIVE overlay clean mid-edit; nothing here can make imported markup execute.
         const onKey = (e: KeyboardEvent) => {
           if (e.key === "Enter") { e.preventDefault(); commitActiveLeaf(); editor.commands.focus(); }
           else if (e.key === "Escape") { e.preventDefault(); closeActiveLeaf(); editor.commands.focus(); }
@@ -524,22 +558,34 @@ const RichBlock = Node.create({
         const onPaste = (e: ClipboardEvent) => {
           e.preventDefault();
           const text = ((e.clipboardData && e.clipboardData.getData("text/plain")) || "").replace(/\r/g, "");
-          const sel: Selection | null = (shadow as any).getSelection ? (shadow as any).getSelection() : window.getSelection();
+          const sel: Selection | null = window.getSelection();
           if (sel && sel.rangeCount) { const r = sel.getRangeAt(0); r.deleteContents(); const tn = document.createTextNode(text); r.insertNode(tn); r.setStartAfter(tn); r.collapse(true); sel.removeAllRanges(); sel.addRange(r); }
         };
         const onBlur = () => commitActiveLeaf();
-        leaf.addEventListener("keydown", onKey);
-        leaf.addEventListener("beforeinput", onBeforeInput as EventListener);
-        leaf.addEventListener("paste", onPaste as EventListener);
-        leaf.addEventListener("blur", onBlur);
+        ov.addEventListener("keydown", onKey);
+        ov.addEventListener("beforeinput", onBeforeInput as EventListener);
+        ov.addEventListener("paste", onPaste as EventListener);
+        ov.addEventListener("blur", onBlur);
         activeLeafHandlers = () => {
-          leaf.removeEventListener("keydown", onKey);
-          leaf.removeEventListener("beforeinput", onBeforeInput as EventListener);
-          leaf.removeEventListener("paste", onPaste as EventListener);
-          leaf.removeEventListener("blur", onBlur);
+          ov.removeEventListener("keydown", onKey);
+          ov.removeEventListener("beforeinput", onBeforeInput as EventListener);
+          ov.removeEventListener("paste", onPaste as EventListener);
+          ov.removeEventListener("blur", onBlur);
         };
-        leaf.focus();
-        try { const s: Selection | null = (shadow as any).getSelection ? (shadow as any).getSelection() : window.getSelection(); const r = document.createRange(); r.selectNodeContents(leaf); s!.removeAllRanges(); s!.addRange(r); } catch {}
+        ov.focus();
+        // Place a COLLAPSED caret (a visible blinking cursor), not a select-all. The overlay lives in
+        // document.body (light DOM), so window.getSelection drives it and the caret paints reliably.
+        // Prefer the exact double-click point (the overlay now sits on top there); else end-of-text.
+        try {
+          const s: Selection | null = window.getSelection();
+          let r: Range | null = null;
+          if (ev && (document as any).caretRangeFromPoint) {
+            const cr: Range | null = (document as any).caretRangeFromPoint(ev.clientX, ev.clientY);
+            if (cr && ov.contains(cr.startContainer)) { cr.collapse(true); r = cr; }
+          }
+          if (!r) { r = document.createRange(); r.selectNodeContents(ov); r.collapse(false); }
+          s!.removeAllRanges(); s!.addRange(r);
+        } catch {}
       }
 
       const render = (html: string) => {
@@ -584,8 +630,7 @@ const RichBlock = Node.create({
         const htmlRunsByEl = byEl(collectHtmlTextRuns(shadow));
         if (htmlLeaves.length || htmlRunsByEl.size) {
           d.setAttribute("data-leaf-editable", "");
-          const hint = document.createElement("style"); hint.textContent = "[contenteditable]{cursor:text;outline:1.5px solid var(--accent);outline-offset:2px;border-radius:3px}"; shadow.appendChild(hint);
-          htmlLeaves.forEach((leaf) => (leaf as HTMLElement).addEventListener("dblclick", (e: Event) => { e.preventDefault(); e.stopPropagation(); openLeaf(leaf as HTMLElement); }));
+          htmlLeaves.forEach((leaf) => (leaf as HTMLElement).addEventListener("dblclick", (e: Event) => { e.preventDefault(); e.stopPropagation(); openLeaf(leaf as HTMLElement, e as MouseEvent); }));
           htmlRunsByEl.forEach((nodes, el) => wireRunContainer(el, nodes));
         } else d.removeAttribute("data-leaf-editable");
       };
