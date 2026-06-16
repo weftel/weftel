@@ -24,6 +24,13 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 // today's e2e tests replay a cached response and don't catch live-quality regressions.
 const AI_EDIT_ENABLED = false;
 
+// [AI:ghost] Tab ghost-text ("Cursor-Tab for notes", v1) — inline faded completion accepted with
+// Tab. Default OFF for launch; flip with GHOST_TEXT_ENABLED=1 in the env. This single const gates
+// the /ghost route AND is injected into the client (shell() below), so front and back never drift
+// — same single-source-of-truth pattern as AI_EDIT_ENABLED. The completion routes through the one
+// streamAI() call-site, so the backend can later swap to a fast/local model in one line.
+const GHOST_TEXT_ENABLED = process.env.GHOST_TEXT_ENABLED === "1";
+
 // Output-format contract — the quality fix. Passed as the SDK systemPrompt so every AI
 // edit obeys it regardless of the per-mode instruction.
 const SYSTEM = `You generate content that is inserted DIRECTLY into a user's note. Obey strictly:
@@ -61,7 +68,7 @@ async function streamAI(prompt: string, model: string, onChunk: (s: string) => v
   } catch (e) { return { ok: false, error: String(e).slice(0, 200) }; }
 }
 import sanitizeHtml from "sanitize-html";
-import { hasInteractiveScript } from "./client/lib";
+import { hasInteractiveScript, buildGhostPrompt, cleanGhostCompletion } from "./client/lib"; // [AI:ghost] buildGhostPrompt/cleanGhostCompletion
 
 const PORT = Number(process.env.PORT) || 4321;
 const ARG = resolve(process.argv[2] ?? "./sample.md");
@@ -405,7 +412,7 @@ function shell(note: { file: string; format: string; content: string } | null, o
 <style>${styles()}</style></head>
 <body>
   ${body}
-  <script>window.__NOTE__=${json};window.__AI_EDIT_ENABLED=${AI_EDIT_ENABLED};
+  <script>window.__NOTE__=${json};window.__AI_EDIT_ENABLED=${AI_EDIT_ENABLED};window.__GHOST_TEXT_ENABLED=${GHOST_TEXT_ENABLED};
   // This app uses no service worker. If a stale one (e.g. from a prior project on this port)
   // is registered on this origin it will intercept /editor.js and serve old code, immune to
   // refresh. Unregister any SW + drop its caches so the next load is always the fresh bundle.
@@ -533,6 +540,21 @@ Bun.serve({
           },
         });
         return new Response(stream, { headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache" } });
+      }
+      // [AI:ghost] Tab ghost-text: return a SHORT plain-text continuation of the block at the
+      // cursor. Gated on GHOST_TEXT_ENABLED (404 when off, like /rewrite). The prompt is built by
+      // the shared buildGhostPrompt (single source with the client's gate) and routed through the
+      // one streamAI() call-site — no streaming back to the client (a ghost is one short string),
+      // so the model can later be swapped to a fast/local one here without touching the client.
+      if (url.pathname === "/ghost") {
+        if (!GHOST_TEXT_ENABLED) return json({ ok: false, error: "ghost text disabled" }, 404);
+        const blockType = String(body.blockType || "paragraph");
+        const context = String(body.context || "").slice(0, 4000); // bound the prompt; ghosts use local context only
+        if (!context.trim()) return json({ ok: false, error: "no context" }, 400);
+        const model = "haiku"; // fast; SINGLE call-site — swap to a faster/local model here later
+        const r = await streamAI(buildGhostPrompt(blockType, context), model, () => {});
+        if (!r.ok) return json({ ok: false, error: r.error }, 502);
+        return json({ ok: true, text: cleanGhostCompletion(r.out) });
       }
       return json({ ok: false, error: "unknown" }, 404);
     }

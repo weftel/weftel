@@ -28,6 +28,7 @@ import { Highlight } from "@tiptap/extension-highlight";
 import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, subtreeEditable, nativeInsertable, collectSvgTextLeaves, collectSvgTextRuns, collectHtmlTextLeaves, collectHtmlTextRuns, scopeCss, tidyInsertHtml, tidySaveHtml, mdLite, buildTree, countFiles, buildInteractSrcdoc, sanitizeRelNotePath, type TreeNode } from "./lib";
 import { DOMSerializer } from "@tiptap/pm/model";
 import { Plugin, TextSelection } from "@tiptap/pm/state";
+import { mountGhostCompletion } from "./ghost-completion"; // [AI:ghost] Tab ghost-text controller
 
 // F42: soft line breaks (a single "\n" with no blank line) must render like Obsidian's
 // default — a visible line break — not collapse onto the previous line the way strict
@@ -289,6 +290,12 @@ const EscapeTrap = Extension.create({
   },
 });
 
+// [AI:ghost] Tab arbitration hook. Rebound to the live ghost controller's acceptTab() when
+// GHOST_TEXT_ENABLED mounts it (below). Default no-op returns false, so when no ghost is showing
+// (or the flag is off / controller unmounted) Tab falls through to the list-indent / table / code
+// behavior below, byte-identical to today. Shared mutable ref — not a TabKeys rewrite.
+let ghostAcceptTab: () => boolean = () => false;
+
 // Tab must never throw focus out of the editor ("takes me to weird places"). Lists
 // indent/outdent, code blocks get a literal tab, tables keep their own cell-hopping
 // (pass through), and anywhere else the key is consumed.
@@ -297,6 +304,7 @@ const TabKeys = Extension.create({
   addKeyboardShortcuts() {
     return {
       Tab: ({ editor: e }: any) => {
+        if (ghostAcceptTab()) return true;      // [AI:ghost] a showing ghost claims Tab (accept + consume); else falls through
         if (e.isActive("table")) return false; // Table's own Tab → next cell
         if (e.isActive("codeBlock")) return e.commands.insertContent("\t");
         if (e.can().sinkListItem("taskItem")) return e.commands.sinkListItem("taskItem");
@@ -1451,6 +1459,17 @@ if (note && mount) {
   editor.view.dom.addEventListener("paste", armNow);
   editor.view.dom.addEventListener("cut", armNow);
   editor.view.dom.addEventListener("drop", armNow);
+
+  // [AI:ghost] Tab ghost-text ("Cursor-Tab for notes", v1) — mounted ONLY when the server flag is
+  // on (window.__GHOST_TEXT_ENABLED, default off). Wires the controller's acceptTab into the Tab
+  // arbitration hook (ghostAcceptTab, top of TabKeys) so a showing ghost claims Tab and otherwise
+  // Tab/list-indent is unchanged. onAccept → markEdited so accepting arms autosave (the insert is
+  // programmatic, so no beforeinput fires). When the flag is off this whole block is skipped and
+  // ghostAcceptTab stays the no-op — base behavior is byte-identical.
+  if ((window as any).__GHOST_TEXT_ENABLED) {
+    const ghost = mountGhostCompletion(editor, { onAccept: markEdited });
+    ghostAcceptTab = ghost.acceptTab;
+  }
 
   // flush before leaving (covers cmd+W / refresh). sendBeacon caps payload (~64KB in
   // some engines); if it refuses, block the unload so the user keeps their edits.

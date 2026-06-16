@@ -486,3 +486,92 @@ export function countFiles(n: TreeNode): number {
   n.dirs.forEach((d) => (c += countFiles(d)));
   return c;
 }
+
+// ── Tab ghost-text (Cursor-Tab for notes, v1) ────────────────────────────── // [AI:ghost]
+// Pure, DOM-free decision layer for the inline ghost-completion feature, shared by the client
+// controller (client/ghost-completion.ts) and the /ghost server route. Kept here so the trigger
+// GATE, the prompt, the output-clean, and the cursor-join are unit-tested without booting the
+// editor or making a model call. v1 SCOPE: prose + SIMPLE structure (paragraphs, headings, list
+// items, table cells, blockquotes). Rich / class-styled / code blocks are deliberately out of
+// scope (a later gated expansion) — the controller maps the cursor to one of these names or null,
+// and shouldRequestGhost refuses anything else.
+export const GHOST_BLOCK_TYPES = new Set(["paragraph", "heading", "listItem", "taskItem", "tableCell", "tableHeader", "blockquote"]);
+// Human label per block type for the prompt's "Continue this <label>" — keeps the prompt readable
+// while the controller/gate speak the TipTap node names above.
+const GHOST_BLOCK_LABELS: Record<string, string> = {
+  paragraph: "paragraph", heading: "heading", listItem: "list item", taskItem: "to-do item",
+  tableCell: "table cell", tableHeader: "table header", blockquote: "blockquote",
+};
+// Don't offer a completion until there's at least this much real text in the block to continue
+// from — firing on an empty/one-letter line is noise, not help.
+export const GHOST_MIN_CONTEXT = 3;
+// Hard cap on a ghost: it's a 1–2 clause hint, never a paragraph. Bounds both the visible span
+// and what Tab inserts (defence-in-depth against a chatty model).
+export const GHOST_MAX_LEN = 120;
+
+// The single trigger predicate (integrity-critical: this is where the v1 scope discipline lives).
+// All inputs are plain values the controller derives from ProseMirror state, so this stays pure.
+export function shouldRequestGhost(ctx: {
+  selectionEmpty: boolean;   // a range selection is not a completion point
+  atTextEnd: boolean;        // cursor at the very end of the block's text (continue, don't insert mid-word)
+  inCodeBlock: boolean;      // out of scope — never predict code
+  inRichBlock: boolean;      // out of scope — frozen / class-styled rich block
+  blockType: string | null;  // mapped TipTap node name, or null if none of the supported kinds
+  textBefore: string;        // the block text up to the cursor
+}): boolean {
+  if (!ctx.selectionEmpty) return false;
+  if (ctx.inCodeBlock || ctx.inRichBlock) return false;
+  if (!ctx.atTextEnd) return false;
+  if (!ctx.blockType || !GHOST_BLOCK_TYPES.has(ctx.blockType)) return false;
+  if (ctx.textBefore.trim().length < GHOST_MIN_CONTEXT) return false;
+  return true;
+}
+
+// Tight prompt for a short continuation. Built on the SERVER (single call-site through streamAI)
+// so the model layer can be swapped with a one-line change. Self-contained — does not rely on the
+// note's surrounding SYSTEM prompt — and explicitly tells the model to emit ONLY the continuation.
+export function buildGhostPrompt(blockType: string, context: string): string {
+  const label = GHOST_BLOCK_LABELS[blockType] || "text";
+  return `Continue this ${label} naturally, 1-2 short clauses, no preamble.\n`
+    + `Output ONLY the text that comes immediately AFTER the user's text — do not repeat or restate it, no quotes, no explanation. If it already reads as complete, output nothing.\n\n`
+    + `<text>${context}</text>`;
+}
+
+// Clean a raw model completion into a short, single-segment continuation. Pure: strips common
+// wrappers (surrounding quotes/backticks a model adds), keeps only the first line, and caps length
+// — so a chatty or multi-paragraph response still renders as a 1–2 clause ghost. Does NOT add the
+// cursor-join space — that depends on the live preceding char (see joinGhost).
+export function cleanGhostCompletion(raw: string): string {
+  let s = (raw || "").replace(/\r/g, "");
+  s = s.split("\n")[0];                                   // first line only — a ghost is one segment
+  s = s.replace(/^\s*["'`]+/, "").replace(/["'`]+\s*$/, ""); // drop wrapping quotes/backticks
+  s = s.trim();
+  if (s.length > GHOST_MAX_LEN) {
+    // cut at the last word boundary within the cap so we never sever a word mid-letter
+    s = s.slice(0, GHOST_MAX_LEN);
+    const sp = s.lastIndexOf(" ");
+    if (sp > GHOST_MAX_LEN * 0.6) s = s.slice(0, sp);
+  }
+  return s.trimEnd();
+}
+
+// Join a cleaned completion to the live text before the cursor, inserting a single leading space
+// only when needed: the preceding char is a word/closing char AND the completion starts with a
+// word char (so "The quick"+"brown" → " brown", but "The quick "+"brown" stays "brown" and
+// "word"+", then" gets no space before the comma). The ghost SPAN shows exactly this string and
+// Tab inserts exactly this string, so what you see is what you accept.
+export function joinGhost(textBefore: string, completion: string): string {
+  if (!completion) return "";
+  const prev = textBefore.slice(-1);
+  const first = completion[0];
+  const needSpace = !!prev && /[A-Za-z0-9)\]"'.,!?:;]/.test(prev) && /[A-Za-z0-9([{"']/.test(first);
+  return (needSpace ? " " : "") + completion;
+}
+
+// Tab arbitration (ghost-accept vs list-indent), as a pure mirror of the runtime contract: a
+// VISIBLE ghost claims Tab (accept + consume the key); with no ghost, Tab "falls through" to the
+// existing TabKeys list-indent / code-tab / table behavior, unchanged. The editor wires this via
+// a `ghostAcceptTab()` hook at the top of TabKeys (returns true exactly when this is "accept").
+export function ghostTabAction(ghostVisible: boolean): "accept" | "fallthrough" {
+  return ghostVisible ? "accept" : "fallthrough";
+}
