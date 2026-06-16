@@ -655,3 +655,88 @@ test("cmd+K 2x2 table is a clean 2-column Pros/Cons", async ({ page }) => {
   await expect(page.locator(".ProseMirror table")).toContainText("Pros");
   await expect(page.locator(".ProseMirror table")).toContainText("Cons");
 });
+
+// ============================ ⌘K REBUILD (Track A) ============================
+// The rebuilt ⌘K is selection-first and routes surgical edits to DETERMINISTIC editor commands —
+// no model call, so these two run offline (they still need the ⌘K UI, which is gated on
+// AI_EDIT_ENABLED). They cover the two exact failures that made the old ⌘K net-negative:
+// (1) a formatting instruction must apply a REAL mark, never insert literal markdown text;
+// (2) a native-block instruction must edit THAT node's attrs, never spawn a duplicate beside it.
+
+test("⌘K format intent applies a real mark (not literal markdown)", async ({ page }) => {
+  test.skip(!AI_EDIT_ENABLED, "⌘K UI gated on AI_EDIT_ENABLED (F23) — deterministic, no model call");
+  await openNote(page, "fmt.md", "# t\n\nThe quick brown fox jumps.\n");
+  const before = await page.evaluate(() => (window as any).__editor.getText());
+  await page.evaluate(() => {
+    const e = (window as any).__editor; let from = 0, to = 0;
+    e.state.doc.descendants((n: any, pos: number) => { if (n.isText) { const i = n.text.indexOf("quick brown"); if (i >= 0) { from = pos + i; to = pos + i + "quick brown".length; } } });
+    e.chain().focus().setTextSelection({ from, to }).run(); e.view.focus();
+  });
+  await page.keyboard.press("Meta+k");
+  const input = page.locator(".cmdk input");
+  await expect(input).toBeVisible();
+  await input.fill("bold these words");
+  await input.press("Enter");
+  // a REAL strong mark wraps the words …
+  await expect(page.locator(".ProseMirror strong")).toContainText("quick brown");
+  // … and NO literal markdown was inserted into the text (the old failure: "**quick brown**" as text)
+  const after = await page.evaluate(() => (window as any).__editor.getText());
+  expect(after).toBe(before);
+  expect(after).not.toContain("*");
+  await expect(page.locator(".cmdk.show")).toHaveCount(0); // closed after applying
+});
+
+test("⌘K clock intent edits the node's tz — exactly one clock, no duplicate", async ({ page }) => {
+  test.skip(!AI_EDIT_ENABLED, "⌘K UI gated on AI_EDIT_ENABLED (F23) — deterministic, no model call");
+  await openNote(page, "clock.md", "# clock\n\n");
+  // insert a clock, then node-select it (a ⌘K target)
+  await page.evaluate(() => {
+    const e = (window as any).__editor;
+    e.chain().focus("end").insertContent({ type: "clockBlock", attrs: { tz: "local" } }).run();
+    let pos = -1; e.state.doc.descendants((n: any, p: number) => { if (n.type.name === "clockBlock") pos = p; });
+    e.commands.setNodeSelection(pos);
+  });
+  await expect(page.locator(".ProseMirror [data-clock]")).toHaveCount(1);
+  await page.keyboard.press("Meta+k");
+  const input = page.locator(".cmdk input");
+  await expect(input).toBeVisible();
+  await input.fill("change clock to PT");
+  await input.press("Enter");
+  // STILL exactly one clock (no second block emitted beside it) …
+  await expect(page.locator(".ProseMirror [data-clock]")).toHaveCount(1);
+  // … and the SAME node now carries the PT zone, in the editor and in the saved bytes
+  const tz = await page.evaluate(() => { let v = ""; (window as any).__editor.state.doc.descendants((n: any) => { if (n.type.name === "clockBlock") v = n.attrs.tz; }); return v; });
+  expect(tz).toBe("America/Los_Angeles");
+  const out: string = await page.evaluate(() => (window as any).__serialize());
+  expect((out.match(/data-clock/g) || []).length).toBe(1);     // one clock in the file
+  expect(out).toContain('data-tz="America/Los_Angeles"');
+});
+
+// AI apply pipeline: a node-selected rich (frozen) block, rewritten by ⌘K, must REPLACE that one
+// block's inner HTML in place — pure HTML, exactly one block (the old ⌘K duplicated it). Replays
+// from .ai-cache when present, else records once live (parse/format-contract check, not a quality guard).
+test("⌘K rich-block rewrite edits the same block in place (pure HTML, no duplicate)", async ({ page }) => {
+  test.skip(!AI_EDIT_ENABLED, "in-app AI edit (⌘K) cut for first launch — F23; cache-replay parse check");
+  const html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>r</title></head><body><article><h1>Rich</h1>'
+    + '<div data-rich-block><svg width="40" height="40"><circle cx="20" cy="20" r="10" fill="#6d5cf0"/></svg></div></article></body></html>\n';
+  await openNote(page, "rich.html", html);
+  await expect(page.locator(".ProseMirror [data-rich-block]")).toHaveCount(1);
+  await page.evaluate(() => {
+    const e = (window as any).__editor; let pos = -1;
+    e.state.doc.descendants((n: any, p: number) => { if (n.type.name === "richBlock") pos = p; });
+    e.commands.setNodeSelection(pos);
+  });
+  await page.keyboard.press("Meta+k");
+  const input = page.locator(".cmdk input");
+  await expect(input).toBeVisible();
+  await input.fill("make the circle bigger");
+  await input.press("Enter");
+  await expect(page.locator(".cmdk.show")).toHaveCount(0, { timeout: 60_000 }); // committed + closed
+  // STILL exactly one rich block (rewritten in place, not duplicated) …
+  await expect(page.locator(".ProseMirror [data-rich-block]")).toHaveCount(1);
+  // … holding PURE HTML (no leaked markdown emphasis/pipe-table)
+  const inner = await page.evaluate(() => { let h = ""; (window as any).__editor.state.doc.descendants((n: any) => { if (n.type.name === "richBlock") h = n.attrs.html; }); return h; });
+  expect(inner).toContain("<");
+  expect(inner).not.toContain("**");
+  expect(inner).not.toMatch(/\|\s*-{3,}/); // no markdown pipe-table separator
+});

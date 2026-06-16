@@ -14,25 +14,34 @@ import { resolve, extname, basename, dirname, sep, join } from "node:path";
 import { createHash } from "node:crypto";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 
-// In-app AI edit (⌘K) — cut for first launch. It was net-negative on dogfooding (harmed
-// notes more than it helped; 2026-06-15 generation regression) — see
-// notes-editor-wiki/quality-gaps.html F23 + ai-quality-audit.html. The plumbing below
-// (SYSTEM, streamAI, /rewrite) stays intact behind this flag so the rebuild flips it back
-// on rather than rebuilding the Agent-SDK + cache + sanitize integration. SINGLE SOURCE OF
-// TRUTH: this const gates the /rewrite route AND is injected into the client (shell()), so
-// front and back never drift. The rebuild also needs a real quality eval before flipping —
-// today's e2e tests replay a cached response and don't catch live-quality regressions.
-const AI_EDIT_ENABLED = false;
+// [AI:cmdk] In-app AI edit (⌘K) — DEFAULT OFF in committed code (it was net-negative on the
+// pre-rebuild dogfood; see notes-editor-wiki/quality-gaps.html F23). Now env-gated so the
+// orchestrator can flip it on for evaluation with no diff: `AI_EDIT_ENABLED=1 bun run server.ts`
+// (the playwright webServer forwards the same var). SINGLE SOURCE OF TRUTH: this gates the
+// /rewrite route AND is injected into the client via shell(), so front and back never drift.
+// The rebuild still owes a real quality eval before defaulting on — the e2e tests replay a
+// cached response and verify the FORMAT CONTRACT / parse pipeline, not live-output quality.
+const AI_EDIT_ENABLED = process.env.AI_EDIT_ENABLED === "1";
 
-// Output-format contract — the quality fix. Passed as the SDK systemPrompt so every AI
-// edit obeys it regardless of the per-mode instruction.
-const SYSTEM = `You generate content that is inserted DIRECTLY into a user's note. Obey strictly:
-- Output ONLY the content. No preamble, no explanation, no "Here's", no apologies, no code fences.
-- HTML block requested -> pure HTML, inline styles only. NEVER use markdown syntax inside it (no **bold**, no backslash line breaks, no |---| pipe tables).
-- Prose rewrite requested -> plain text only. The app applies bold/headings/color itself; never emit markdown or HTML.
-- Produce the EXACT structure asked for: a "2x2 table" is exactly 2 columns and 2 rows with no empty spacer cells; an N-item list has exactly N items.
-- Respect the note's theme: do NOT hardcode text or background colors unless the user explicitly asks; let colors inherit.
-- Prefer the simplest native structure (a plain <table>, a plain list) over heavily-styled HTML, unless the user asks for something visual or designed. Use inline SVG only for genuine vector graphics (diagrams, charts).`;
+// [AI:cmdk] Model is config-driven so the swappable model-provider layer (separate track) plugs
+// in by changing this one value; streamAI() below stays the single AI call-site it routes through.
+const CMDK_MODEL = process.env.AI_MODEL || "haiku"; // fast; the SYSTEM contract carries structure/quality
+
+// [AI:cmdk] Output-format contract — passed as the SDK systemPrompt so every ⌘K edit obeys it
+// regardless of the per-target instruction. Reworked for the rebuild to HARD-SEPARATE the two
+// output formats (HTML block vs prose) and to FRAME ACTION (produce the artifact, never narrate),
+// the two failure modes that made the old ⌘K net-negative.
+const SYSTEM = `You are an inline editor for ONE note. The user selected a target and gave one instruction. Apply it and output ONLY THE RESULT — the artifact itself, nothing wrapped around it.
+
+ALWAYS
+- No preamble, no explanation, no apology, no "Here is", no closing remark, no code fences. If you cannot do exactly what was asked, output your single best attempt at the artifact anyway — NEVER a message about it.
+- Edit ONLY the stated target. The rest of the note is context for tone and facts, not something to regenerate or echo back. Keep the target's length and scope unless told otherwise.
+- Produce EXACTLY the structure asked for: "a 2x2 table" = 2 columns and 2 rows, no empty spacer cells; "3 bullets" = 3 list items.
+- Respect the note's theme: never hardcode text or background colors unless explicitly asked; let colors inherit.
+
+OUTPUT FORMAT — the instruction names the target; obey its rule exactly:
+- HTML block target -> output PURE HTML only, inline styles only. NEVER markdown: no **bold**, no _italic_, no \`code\`, no |---| pipe tables, no backslash-newline. Prefer the simplest native element (a plain <table>, <ul>, <p>) over heavy wrappers unless asked for something visual; use inline SVG only for a genuine diagram or chart.
+- Text (prose) target -> output PLAIN TEXT only: the rewritten words, no markup of any kind (the app owns bold / italic / color / headings). Do not wrap the result in quotes.`;
 
 // AI record/replay cache — for deterministic e2e tests. AI_CACHE=<dir>: hash model+system+
 // prompt, replay the cached response if present, else call the model once and save it.
@@ -61,7 +70,7 @@ async function streamAI(prompt: string, model: string, onChunk: (s: string) => v
   } catch (e) { return { ok: false, error: String(e).slice(0, 200) }; }
 }
 import sanitizeHtml from "sanitize-html";
-import { hasInteractiveScript } from "./client/lib";
+import { hasInteractiveScript, stripCodeFence, cleanProseResult } from "./client/lib"; // [AI:cmdk] shared output-format hygiene
 
 const PORT = Number(process.env.PORT) || 4321;
 const ARG = resolve(process.argv[2] ?? "./sample.md");
@@ -514,20 +523,29 @@ Bun.serve({
         return json({ ok: true, first: firstNote() });
       }
       if (url.pathname === "/rewrite") {
+        // [AI:cmdk] AI generation for the three GENERATIVE ⌘K targets only (rich / author / prose).
+        // Native-block attr/structure edits + prose FORMATTING never reach here — the client routes
+        // those to deterministic editor commands, so the model can't duplicate a block or emit a
+        // literal markdown mark. streamAI() is the single AI call-site (model-layer swap-point).
         if (!AI_EDIT_ENABLED) return json({ ok: false, error: "ai edit disabled" }, 404);
         const mode = String(body.mode || "");
         const prompt = String(body.prompt || "");
-        const model = "haiku"; // fast; the system prompt now carries the structure/quality
         const stream = new ReadableStream({
           async start(controller) {
             const enc = new TextEncoder();
             const send = (o: any) => { try { controller.enqueue(enc.encode("data: " + JSON.stringify(o) + "\n\n")); } catch {} };
-            const r = await streamAI(prompt, model, (chunk) => send({ chunk }));
+            const r = await streamAI(prompt, CMDK_MODEL, (chunk) => send({ chunk }));
             if (!r.ok) { send({ error: r.error }); controller.close(); return; }
-            let text = r.out.trim();
-            const fence = text.match(/^```[a-zA-Z]*\n([\s\S]*?)\n```$/); if (fence) text = fence[1].trim();
-            let html = mode === "rich"; if (mode === "author" && /<[a-z][\s\S]*>/i.test(text)) html = true;
-            if (html) text = safeRichHtml(text);
+            // Enforce the output-format contract on the RESULT (belt-and-suspenders to the SYSTEM
+            // prompt): a rich block is always pure sanitized HTML; prose is de-narrated plain text;
+            // author content becomes HTML only if it actually carries tags.
+            let text: string, html: boolean;
+            if (mode === "rich") { text = safeRichHtml(stripCodeFence(r.out)); html = true; }
+            else if (mode === "author") {
+              const body2 = stripCodeFence(r.out);
+              html = /<[a-z][\s\S]*>/i.test(body2);
+              text = html ? safeRichHtml(body2) : cleanProseResult(body2);
+            } else { text = cleanProseResult(r.out); html = false; } // prose
             send({ done: { ok: !!text, text, html } });
             controller.close();
           },

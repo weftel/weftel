@@ -17,6 +17,8 @@ export default defineConfig({
     timeout: 20_000,
     reuseExistingServer: false,
     // AI calls record/replay through this dir; AI_OFFLINE=1 (in CI) errors on a miss.
-    env: { PORT: String(PORT), AI_CACHE: "tests/e2e/.ai-cache", AI_OFFLINE: process.env.AI_OFFLINE || "" },
+    // [AI:cmdk] forward AI_EDIT_ENABLED so the orchestrator can turn ⌘K on for a run with one env
+    // var (server gates the /rewrite route + client UI on it): `AI_EDIT_ENABLED=1 bun run e2e`.
+    env: { PORT: String(PORT), AI_CACHE: "tests/e2e/.ai-cache", AI_OFFLINE: process.env.AI_OFFLINE || "", AI_EDIT_ENABLED: process.env.AI_EDIT_ENABLED || "" },
   },
 });

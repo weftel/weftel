@@ -25,7 +25,7 @@ import Suggestion from "@tiptap/suggestion";
 import { TextStyle } from "@tiptap/extension-text-style";
 import { Color } from "@tiptap/extension-color";
 import { Highlight } from "@tiptap/extension-highlight";
-import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, subtreeEditable, nativeInsertable, collectSvgTextLeaves, collectSvgTextRuns, collectHtmlTextLeaves, collectHtmlTextRuns, scopeCss, tidyInsertHtml, tidySaveHtml, mdLite, buildTree, countFiles, buildInteractSrcdoc, sanitizeRelNotePath, type TreeNode } from "./lib";
+import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, subtreeEditable, nativeInsertable, collectSvgTextLeaves, collectSvgTextRuns, collectHtmlTextLeaves, collectHtmlTextRuns, scopeCss, tidyInsertHtml, tidySaveHtml, mdLite, buildTree, countFiles, buildInteractSrcdoc, sanitizeRelNotePath, parseFormatIntent, parseClockTz, parseCalloutKind, parseTableIntent, type FormatOp, type TableOp, type TreeNode } from "./lib"; // [AI:cmdk] intent recognizers
 import { DOMSerializer } from "@tiptap/pm/model";
 import { Plugin, TextSelection } from "@tiptap/pm/state";
 
@@ -747,10 +747,13 @@ const ClockBlock = Node.create({
   addNodeView() {
     return ({ node }: any) => {
       const dom = document.createElement("div"); dom.className = "app-block"; dom.setAttribute("data-clock", ""); dom.contentEditable = "false";
-      dom.appendChild(appHead("Clock"));
+      // [AI:cmdk] render the node's tz attr (so a ⌘K "change clock to PT" edit is actually visible),
+      // label the zone in the head, and fall back to local time if the zone is invalid/unsupported.
+      const tz = node.attrs.tz && node.attrs.tz !== "local" ? String(node.attrs.tz) : "";
+      dom.appendChild(appHead("Clock" + (tz ? " · " + tz : "")));
       const face = document.createElement("div"); face.style.cssText = "font:600 38px ui-monospace,Menlo,monospace;letter-spacing:.04em;text-align:center;padding:26px 0;color:var(--accent-ink)";
       dom.appendChild(face);
-      const tick = () => { const d = new Date(); face.textContent = d.toLocaleTimeString(); };
+      const tick = () => { try { face.textContent = new Date().toLocaleTimeString([], tz ? { timeZone: tz } : undefined); } catch { face.textContent = new Date().toLocaleTimeString(); } };
       tick(); const iv = setInterval(tick, 1000);
       return { dom, stopEvent: () => true, ignoreMutation: () => true, destroy: () => clearInterval(iv) };
     };
@@ -1468,7 +1471,7 @@ if (note && mount) {
 
   // ============================ cmd+K ============================
   const cmdk = document.createElement("div"); cmdk.className = "cmdk";
-  cmdk.innerHTML = '<input type="text" placeholder="Tell AI what to edit or write… (Enter to run, Esc to cancel)"><div class="cmdk-hint"></div>';
+  cmdk.innerHTML = '<input type="text" placeholder="Edit the selection — format, rewrite, or generate… (Enter to run, Esc to cancel)"><div class="cmdk-hint"></div>'; // [AI:cmdk]
   document.body.appendChild(cmdk);
   const cmdkInput = cmdk.querySelector("input") as HTMLInputElement;
   const cmdkHint = cmdk.querySelector(".cmdk-hint") as HTMLElement;
@@ -1476,15 +1479,50 @@ if (note && mount) {
 
   const docContext = (): string => { if (!editor) return ""; if (note.format === "md") { const s: any = editor.storage; return s.markdown && s.markdown.getMarkdown ? s.markdown.getMarkdown() : editor.getText(); } return editor.getHTML(); };
 
+  // [AI:cmdk] ⌘K is SELECTION-FIRST: the thing the user selected is the target; the doc is only
+  // background context. Classify the target by what's selected, then route on submit — deterministic
+  // editor commands for the surgical cases (formatting marks, native-block attr/structure edits) and
+  // the model ONLY for genuine generation (rewrite prose / author content / rebuild an HTML block).
+  const CMDK_HINT: Record<string, string> = {
+    rich: "edit this HTML block — e.g. “make the grid 6×6”",
+    clock: "change the clock — “PT”, “Tokyo”, “UTC”",
+    calendar: "set the calendar — paste a Google Calendar URL",
+    callout: "recolor this callout — “make it a warning / tip / info”",
+    table: "edit this table — “add a row”, “delete column”, “toggle header”",
+    author: "write — a paragraph, list, table, or diagram (HTML when it helps)",
+  };
+  // Nearest ancestor of one of `names` containing the cursor (for content blocks the cursor sits
+  // INSIDE — callout, table — which aren't NodeSelections). Returns the block start + the cursor pos.
+  function enclosing(names: string[]): { pos: number; anchor: number } | null {
+    const $f: any = editor!.state.selection.$from;
+    for (let d = $f.depth; d > 0; d--) { if (names.includes($f.node(d).type.name)) return { pos: $f.before(d), anchor: $f.pos }; }
+    return null;
+  }
   function openCmdk() {
     if (!editor) return;
     const sel: any = editor.state.selection;
-    if (sel.node && sel.node.type.name === "richBlock") { cmdkTarget = { mode: "rich", html: sel.node.attrs.html, pos: sel.from }; cmdkHint.textContent = "rewrite this rich block — e.g. “make the grid 6×6”"; }
-    else {
-      const text = editor.state.doc.textBetween(sel.from, sel.to, " ");
-      if (text) { cmdkTarget = { mode: "prose", from: sel.from, to: sel.to, text }; cmdkHint.textContent = '"' + text.slice(0, 56) + (text.length > 56 ? "…" : "") + '"'; }
-      else { cmdkTarget = { mode: "author", from: sel.from, to: sel.to }; cmdkHint.textContent = "add — a paragraph, or a diagram / table / chart (AI builds the HTML)"; }
+    let tgt: any = null;
+    if (sel.node) {                                          // a block node is selected (atom) — target it directly
+      const n = sel.node.type.name;
+      if (n === "richBlock") tgt = { kind: "rich", nodeType: n, pos: sel.from, html: sel.node.attrs.html };
+      else if (n === "clockBlock") tgt = { kind: "clock", nodeType: n, pos: sel.from };
+      else if (n === "calendarBlock") tgt = { kind: "calendar", nodeType: n, pos: sel.from };
+      else if (n === "callout") tgt = { kind: "callout", nodeType: n, pos: sel.from };
     }
+    if (!tgt) {
+      const text = sel.empty ? "" : editor.state.doc.textBetween(sel.from, sel.to, " ");
+      if (text) tgt = { kind: "prose", from: sel.from, to: sel.to, text };  // selection is PRIMARY
+      else {
+        const tbl = enclosing(["table"]); const co = enclosing(["callout"]); // cursor inside a content block?
+        if (tbl) tgt = { kind: "table", anchor: tbl.anchor };
+        else if (co) tgt = { kind: "callout", nodeType: "callout", pos: co.pos };
+        else tgt = { kind: "author", from: sel.from };       // bare caret → author new content
+      }
+    }
+    cmdkTarget = tgt;
+    cmdkHint.textContent = tgt.kind === "prose"
+      ? "“" + tgt.text.slice(0, 52) + (tgt.text.length > 52 ? "…" : "") + "” — format, rewrite, or transform"
+      : (CMDK_HINT[tgt.kind] || "");
     let left = 60, top = 130;
     const s = window.getSelection();
     if (s && s.rangeCount && String(s)) { const r = s.getRangeAt(0).getBoundingClientRect(); if (r.width || r.height) { left = r.left; top = r.bottom + window.scrollY + 8; } }
@@ -1499,18 +1537,101 @@ if (note && mount) {
     return pos;
   }
 
+  // ---- deterministic appliers (no model) -------------------------------------------------------
+  // Format a text selection with REAL marks (the contract: never insert literal markdown).
+  function applyFormat(t: any, op: FormatOp) {
+    const c: any = editor!.chain().focus().setTextSelection({ from: t.from, to: t.to });
+    if (op.op === "bold") c.toggleBold();
+    else if (op.op === "italic") c.toggleItalic();
+    else if (op.op === "strike") c.toggleStrike();
+    else if (op.op === "code") c.toggleCode();
+    else if (op.op === "clear") c.unsetAllMarks();
+    else if (op.op === "highlight") c.setHighlight({ color: op.color || "#fde047" });
+    else if (op.op === "color") c.setColor(op.color);
+    c.run();
+  }
+  // Patch a native block's attrs IN PLACE (re-validating the captured position) — never inserts a
+  // second block (the old ⌘K's failure). Returns false + a hint if the node moved/changed.
+  function setNodeAttrs(t: any, patch: any): boolean {
+    if (typeof t.pos !== "number") return false;
+    const node = editor!.state.doc.nodeAt(t.pos);
+    if (!node || node.type.name !== t.nodeType) { cmdkHint.textContent = "block moved — reopen ⌘K"; return false; }
+    const pos = t.pos, attrs = { ...node.attrs, ...patch };
+    editor!.chain().command(({ tr }: any) => { tr.setNodeMarkup(pos, undefined, attrs); return true; }).run(); // undoable
+    return true;
+  }
+  // Run a structural TipTap table command on the table the cursor was in.
+  function runTableOp(t: any, op: TableOp) {
+    const chain: any = editor!.chain().focus();
+    if (typeof t.anchor === "number") chain.setTextSelection(t.anchor);
+    chain[op]().run();
+  }
+
+  // ---- generative path (model) -----------------------------------------------------------------
+  function buildCmdkPrompt(t: any, mode: string, intent: string): string {
+    if (mode === "rich")
+      return "TARGET: an HTML block. Rewrite its inner HTML to satisfy the instruction. Output pure HTML only.\n\nInstruction: " + intent + "\n\nCurrent inner HTML:\n" + t.html;
+    if (mode === "author")
+      return "TARGET: the cursor position in the note. Produce new content to insert. Prose → plain text; a table / list / diagram / card → pure HTML.\n\nInstruction: " + intent + "\n\nNote so far (context only — do not repeat it):\n" + docContext().slice(0, 6000);
+    return "TARGET: the selected text shown between « ». Rewrite ONLY that text to satisfy the instruction. Output plain text only — no markup.\n\nInstruction: " + intent + "\n\nSelected text:\n«" + t.text + "»\n\nSurrounding note (context only):\n" + docContext().slice(0, 4000);
+  }
+  // Commit a model RESULT to its target — the SINGLE place a generated result mutates the doc, so
+  // the diff-gate (separate track) has exactly one call to intercept. Returns false (cmdk stays
+  // open, with a hint) when it can't apply.
+  function applyAiResult(t: any, mode: string, r: any): boolean {
+    if (mode === "rich") {
+      if (r.text.indexOf("<") < 0) { cmdkHint.textContent = "AI didn’t return HTML — try again"; return false; }
+      let pos: number | null = t.pos;                        // trust the captured pos; else re-find by content
+      const at = pos == null ? null : editor!.state.doc.nodeAt(pos);
+      if (!at || at.type.name !== "richBlock" || at.attrs.html !== t.html) pos = findRichPos(t.html);
+      if (pos == null) { cmdkHint.textContent = "block moved — try again"; return false; }
+      const node = editor!.state.doc.nodeAt(pos);
+      editor!.chain().command(({ tr }: any) => { tr.setNodeMarkup(pos as number, undefined, { ...(node ? node.attrs : {}), html: r.text }); return true; }).run(); // edits the block, no duplicate
+    } else if (mode === "author") {
+      const at = Math.min(t.from, editor!.state.doc.content.size);
+      if (r.html && !nativeInsertable(r.text)) editor!.chain().focus().insertContentAt(at, { type: "richBlock", attrs: { html: r.text } }).run();
+      else editor!.chain().focus().insertContentAt(at, tidyInsertHtml(r.text)).run();
+    } else { // prose: replace ONLY the selection with the rewritten plain text
+      const to = Math.min(t.to, editor!.state.doc.content.size); const from = Math.min(t.from, to);
+      editor!.chain().focus().insertContentAt({ from, to }, r.text).run();
+    }
+    return true;
+  }
+
   cmdkInput.addEventListener("keydown", async (e) => {
     if (e.key !== "Enter" || !cmdkTarget || !cmdkInput.value.trim() || !editor) return;
     const intent = cmdkInput.value.trim(); const t = cmdkTarget;
+
+    // 1) Deterministic, in-app ops — handled WITHOUT the model so they can't duplicate a block or
+    //    emit a literal markdown mark. Unrecognized instructions on a native block show a hint
+    //    (we do NOT fall through to generation for those — generation is what used to duplicate them).
+    if (t.kind === "prose") {
+      const fmt = parseFormatIntent(intent);
+      if (fmt) { applyFormat(t, fmt); markEdited(); closeCmdk(); flash("formatted"); return; }
+    } else if (t.kind === "clock") {
+      const tz = parseClockTz(intent);
+      if (tz) { if (setNodeAttrs(t, { tz })) { markEdited(); closeCmdk(); flash("clock → " + tz); } return; }
+      cmdkHint.textContent = "name a zone — “PT”, “UTC”, “Tokyo”…"; return;
+    } else if (t.kind === "calendar") {
+      const url = (intent.match(/https?:\/\/\S+/) || [])[0];
+      if (url) { if (setNodeAttrs(t, { src: url })) { markEdited(); closeCmdk(); flash("calendar updated"); } return; }
+      cmdkHint.textContent = "paste a Google Calendar embed URL"; return;
+    } else if (t.kind === "callout") {
+      const kind = parseCalloutKind(intent);
+      if (kind) { if (setNodeAttrs(t, { kind })) { markEdited(); closeCmdk(); flash("callout → " + kind); } return; }
+      cmdkHint.textContent = "try “make it a warning / tip / info”"; return;
+    } else if (t.kind === "table") {
+      const op = parseTableIntent(intent);
+      if (op) { runTableOp(t, op); markEdited(); closeCmdk(); flash("table updated"); return; }
+      cmdkHint.textContent = "try “add a row”, “delete column”, “toggle header”"; return;
+    }
+
+    // 2) Generative path — only rich / author / prose-rewrite reach the model. Stream the result.
     cmdkInput.disabled = true; cmdkHint.textContent = "thinking with your Claude…";
-    const prompt = t.mode === "rich"
-      ? "Rewrite the INNER HTML of one block per the instruction. Output the resulting inner HTML.\n\nInstruction: " + intent + "\n\nCurrent inner HTML:\n" + t.html
-      : t.mode === "author"
-      ? "Insert content at the cursor per the instruction — prose as text, or a structured/visual HTML fragment when appropriate.\n\nInstruction: " + intent + "\n\nNote so far (context):\n" + docContext().slice(0, 8000)
-      : "Rewrite the selected text per the instruction.\n\nInstruction: " + intent + "\n\nSelected text:\n" + t.text + "\n\nNote (context):\n" + docContext().slice(0, 8000);
+    const mode = t.kind === "rich" ? "rich" : t.kind === "author" ? "author" : "prose";
+    const prompt = buildCmdkPrompt(t, mode, intent);
     try {
-      // stream the result so the output appears live (perceived speed)
-      const res = await fetch("/rewrite", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt, mode: t.mode }) });
+      const res = await fetch("/rewrite", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt, mode }) });
       const reader = res.body!.getReader(); const dec = new TextDecoder(); let buf = ""; let preview = ""; let r: any = null;
       while (true) {
         const { value, done } = await reader.read(); if (done) break;
@@ -1526,25 +1647,11 @@ if (note && mount) {
         }
       }
       if (!r || !r.ok || !r.text) { cmdkInput.disabled = false; cmdkHint.textContent = "failed: " + ((r && r.error) || "empty"); return; }
-      if (t.mode === "rich") {
-        if (r.text.indexOf("<") < 0) { cmdkInput.disabled = false; cmdkHint.textContent = "AI didn't return HTML — try again"; return; }
-        // trust the captured pos if it still points at this block; else re-find by content
-        let pos: number | null = t.pos;
-        const at = pos == null ? null : editor.state.doc.nodeAt(pos);
-        if (!at || at.type.name !== "richBlock" || at.attrs.html !== t.html) pos = findRichPos(t.html);
-        if (pos == null) { cmdkInput.disabled = false; cmdkHint.textContent = "block moved — try again"; return; }
-        const node = editor.state.doc.nodeAt(pos);
-        editor.chain().command(({ tr }: any) => { tr.setNodeMarkup(pos as number, undefined, { ...(node ? node.attrs : {}), html: r.text }); return true; }).run(); // undoable via cmd+Z
-      } else if (t.mode === "author") {
-        const at = Math.min(t.from, editor.state.doc.content.size);
-        // prefer editable: only lock into an atomic rich block if the HTML isn't prose-modelable
-        if (r.html && !nativeInsertable(r.text)) editor.chain().focus().insertContentAt(at, { type: "richBlock", attrs: { html: r.text } }).run();
-        else editor.chain().focus().insertContentAt(at, tidyInsertHtml(r.text)).run();
-      } else {
-        const to = Math.min(t.to, editor.state.doc.content.size); const from = Math.min(t.from, to);
-        editor.chain().focus().insertContentAt({ from, to }, r.text).run();
-      }
-      markEdited(); closeCmdk(); flash("rewritten → saved");
+      // [AI:cmdk] diff-gate goes here — the rendered diff-approve gate (separate track) wraps the
+      // applyAiResult call below: surface `r` as a proposed diff, await accept/reject, and commit
+      // ONLY on accept. applyAiResult is the single commit chokepoint, so the gate has one seam.
+      if (!applyAiResult(t, mode, r)) { cmdkInput.disabled = false; return; }
+      markEdited(); closeCmdk(); flash("done → saved");
     } catch { cmdkInput.disabled = false; cmdkHint.textContent = "failed — try again"; }
   });
 
@@ -1688,7 +1795,8 @@ if (note && mount) {
     // In INTERACT mode the editor is hidden — edit/AI shortcuts would mutate it invisibly, so the
     // only keys that apply are ⌘E (above) and Escape (exit). Everything else is ignored.
     else if (interactMode) { if (e.key === "Escape") setMode("edit"); }
-    // ⌘K AI-edit is cut for v1 behind AI_EDIT_ENABLED (F23) — gated so it's a no-op when off.
+    // [AI:cmdk] ⌘K (rebuilt, selection-scoped) stays gated on AI_EDIT_ENABLED — a no-op when off,
+    // so it's dark in committed/default builds until the orchestrator flips the flag for eval.
     else if (AI_EDIT_ENABLED && mod && e.key.toLowerCase() === "k") { e.preventDefault(); openCmdk(); }
     else if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); flushSave(); }
     else if (mod && (e.key.toLowerCase() === "p" || e.key.toLowerCase() === "o")) { e.preventDefault(); openSwitcher(); }
