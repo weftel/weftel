@@ -27,6 +27,7 @@ import { Color } from "@tiptap/extension-color";
 import { Highlight } from "@tiptap/extension-highlight";
 import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, subtreeEditable, nativeInsertable, collectSvgTextLeaves, collectSvgTextRuns, collectHtmlTextLeaves, collectHtmlTextRuns, scopeCss, tidyInsertHtml, tidySaveHtml, mdLite, buildTree, countFiles, buildInteractSrcdoc, sanitizeRelNotePath, type TreeNode } from "./lib";
 import { DOMSerializer } from "@tiptap/pm/model";
+import { diffApprove } from "./diff-viewer"; // [AI:diff-gate]
 import { Plugin, TextSelection } from "@tiptap/pm/state";
 
 // F42: soft line breaks (a single "\n" with no blank line) must render like Obsidian's
@@ -907,6 +908,11 @@ const TaskListMd = TaskList.extend({
 // (server.ts shell()). Off ⇒ no ⌘K keybinding, chip, slash item, or bubble button.
 const AI_EDIT_ENABLED: boolean = !!(window as any).__AI_EDIT_ENABLED;
 
+// [AI:diff-gate] Optional human-approval gate: when on, a computed AI edit is shown as a
+// RENDERED visual diff (client/diff-viewer.ts) and only inserted on accept. Default OFF so
+// base behavior is byte-identical to the no-gate path; the rebuild flips __DIFF_GATE_ENABLED.
+const DIFF_GATE_ENABLED: boolean = !!(window as any).__DIFF_GATE_ENABLED;
+
 // Slash menu. Cross-references into the main scope (Ask AI → cmd+K, calendar prompt)
 // go through this hooks object, populated once the editor + helpers exist.
 const slashHooks: { askAI?: () => void; insertEmbed?: (k: string) => void } = {};
@@ -1526,6 +1532,15 @@ if (note && mount) {
         }
       }
       if (!r || !r.ok || !r.text) { cmdkInput.disabled = false; cmdkHint.textContent = "failed: " + ((r && r.error) || "empty"); return; }
+      // [AI:diff-gate] human-approval gate (default off). Present the computed edit as a RENDERED
+      // visual diff and only insert what's accepted; r.text becomes exactly what the user approved
+      // (whole or per-hunk composed). Rejecting aborts before any insertion. No-op when flag off.
+      if (DIFF_GATE_ENABLED) {
+        const before = t.mode === "rich" ? t.html : t.mode === "author" ? "" : (t.text || "");
+        const gate = await diffApprove(before, r.text, t.mode, t.mode === "rich" ? { css: RICH_STYLES } : {});
+        if (!gate.accepted) { cmdkInput.disabled = false; cmdkHint.textContent = "change discarded"; return; }
+        if (gate.html != null) r.text = gate.html;
+      }
       if (t.mode === "rich") {
         if (r.text.indexOf("<") < 0) { cmdkInput.disabled = false; cmdkHint.textContent = "AI didn't return HTML — try again"; return; }
         // trust the captured pos if it still points at this block; else re-find by content
