@@ -4,7 +4,7 @@ import { test, expect } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 if (typeof (globalThis as any).document === "undefined") GlobalRegistrator.register();
 
-import { stripActive, spliceBody, proseModelable, editableModelable, subtreeEditable, scopeCss, filterInlineStyle, escapeAttr, mdLite, buildTree, countFiles, tidySaveHtml, isSvgTextLeaf, collectSvgTextLeaves, svgDirectTextRuns, collectSvgTextRuns } from "../../client/lib";
+import { stripActive, spliceBody, proseModelable, editableModelable, subtreeEditable, scopeCss, filterInlineStyle, escapeAttr, mdLite, buildTree, countFiles, tidySaveHtml, isSvgTextLeaf, collectSvgTextLeaves, svgDirectTextRuns, collectSvgTextRuns, isHtmlTextLeaf, collectHtmlTextLeaves, htmlDirectTextRuns, collectHtmlTextRuns, inForeignObject } from "../../client/lib";
 
 // ───────────────────────── spliceBody — the $-corruption bug ─────────────────────────
 const TOKEN = "%%NOTE_BODY%%";
@@ -186,6 +186,57 @@ test("collectSvgTextRuns: gathers direct runs across the tree, incl. nested <tsp
     + '<defs><text>D <tspan>x</tspan></text></defs></svg>';
   const runs = collectSvgTextRuns(t.content).map((r) => (r.node.textContent || "").trim());
   expect(runs).toEqual(["Lead", "tail", "Outer"]); // defs run excluded; inner tspan is its own simple leaf
+});
+
+// ───────────────────────── isHtmlTextLeaf / collectHtmlTextLeaves — HTML text editing (F36) ─────────────────────────
+const frag = (html: string) => { const t = document.createElement("template"); t.innerHTML = html; return t.content; };
+test("isHtmlTextLeaf: a text-only <div>/<figcaption>/<p>/<li> is an editable leaf", () => {
+  expect(isHtmlTextLeaf(frag('<div>Commit</div>').querySelector("div")!)).toBe(true);          // flow-chart label
+  expect(isHtmlTextLeaf(frag('<figcaption>Pre-norm block.</figcaption>').querySelector("figcaption")!)).toBe(true);
+  expect(isHtmlTextLeaf(frag('<p>para</p>').querySelector("p")!)).toBe(true);
+  expect(isHtmlTextLeaf(frag('<ul><li>item</li></ul>').querySelector("li")!)).toBe(true);
+  expect(isHtmlTextLeaf(frag('<table><tr><td>cell</td></tr></table>').querySelector("td")!)).toBe(true);
+});
+test("isHtmlTextLeaf: containers, empties, and decorative spans are NOT leaves (F12 not regressed)", () => {
+  expect(isHtmlTextLeaf(frag('<div>a<span>x</span></div>').querySelector("div")!)).toBe(false); // has element children → container
+  expect(isHtmlTextLeaf(frag('<div></div>').querySelector("div")!)).toBe(false);                 // empty
+  expect(isHtmlTextLeaf(frag('<div>   </div>').querySelector("div")!)).toBe(false);              // whitespace only
+  expect(isHtmlTextLeaf(frag('<span style="width:2px;height:24px;background:#aaa"></span>').querySelector("span")!)).toBe(false); // decorative connector span (F12)
+  expect(isHtmlTextLeaf(frag('<section>x</section>').querySelector("section")!)).toBe(false);    // not a leaf tag
+});
+test("isHtmlTextLeaf: SVG-namespaced text + foreignObject HTML are NOT html leaves (owned by SVG path / frozen F27)", () => {
+  // an SVG <text> is owned by the SVG path, never the HTML path
+  expect(isHtmlTextLeaf(frag('<svg><text>t</text></svg>').querySelector("text")!)).toBe(false);
+  // an SVG <a> (same localName as HTML <a>) is namespace-excluded
+  const sa = frag('<svg><a><text>l</text></a></svg>').querySelector("a")!;
+  expect((sa as any).namespaceURI).toBe("http://www.w3.org/2000/svg");
+  expect(isHtmlTextLeaf(sa)).toBe(false);
+  // HTML inside a <foreignObject> stays frozen (F27)
+  expect(inForeignObject(frag('<svg><foreignObject><div>fo</div></foreignObject></svg>').querySelector("div")!)).toBe(true);
+});
+test("collectHtmlTextLeaves: gathers every editable HTML leaf, skips containers/empties/decorative", () => {
+  // mirrors ai-diagrams.md diagram 1: nested flex divs, leaf labels, an icon-wrapper div holding an <svg>
+  const c = frag('<div><div><div><svg><circle r="3"></circle></svg></div><div>Commit</div><div>push to repo</div></div></div>');
+  expect(collectHtmlTextLeaves(c).map((e) => e.textContent)).toEqual(["Commit", "push to repo"]);
+});
+test("collectHtmlTextLeaves: a frozen <figure> exposes its <figcaption> AND skips its SVG text (SVG path owns that)", () => {
+  const c = frag('<figure class="d"><svg><text>ln1</text></svg><figcaption>The caption.</figcaption></figure>');
+  expect(collectHtmlTextLeaves(c).map((e) => e.textContent)).toEqual(["The caption."]); // figcaption only; <text> excluded
+  expect(collectSvgTextLeaves(c).map((e) => e.textContent)).toEqual(["ln1"]);            // the SVG text is the SVG path's
+});
+test("htmlDirectTextRuns: direct runs mixed with INLINE children are editable; block-mixed/pure containers have none", () => {
+  const mixed = frag('<p>Lead <strong>x</strong> tail</p>').querySelector("p")!;
+  expect(htmlDirectTextRuns(mixed).map((n) => (n.textContent || "").trim())).toEqual(["Lead", "tail"]);
+  // a simple leaf has no direct runs (it IS a leaf)
+  expect(htmlDirectTextRuns(frag('<p>only</p>').querySelector("p")!)).toEqual([]);
+  // a container with a BLOCK child is not a flat run — its block descendants own their own leaves
+  expect(htmlDirectTextRuns(frag('<div>label <div>block</div></div>').querySelector("div")!)).toEqual([]);
+  // a pure inline container (only element children) has no direct runs
+  expect(htmlDirectTextRuns(frag('<p><strong>a</strong><em>b</em></p>').querySelector("p")!)).toEqual([]);
+});
+test("collectHtmlTextRuns: gathers direct runs across the tree; skips foreignObject", () => {
+  const c = frag('<div><p>Lead <a href="#">link</a> tail</p><svg><foreignObject><p>fo <b>x</b> y</p></foreignObject></svg></div>');
+  expect(collectHtmlTextRuns(c).map((r) => (r.node.textContent || "").trim())).toEqual(["Lead", "tail"]); // foreignObject run excluded
 });
 
 // ───────────────────────── scopeCss — confine an imported sheet to the editor ─────────────────────────

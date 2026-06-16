@@ -276,7 +276,9 @@ function styles(): string {
   .ProseMirror .rich-block{margin:16px 0;border-radius:8px;position:relative}
   .ProseMirror .rich-block.ProseMirror-selectednode{outline:2px solid var(--accent);outline-offset:4px}
   .ProseMirror .rich-block::after{content:"rich block · ⌘K to edit";position:absolute;top:-9px;right:8px;font-family:ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);background:var(--bg);padding:1px 6px;border-radius:3px;opacity:0;transition:opacity .12s}
+  .ProseMirror .rich-block[data-leaf-editable]::after{content:"frozen block · double-click text to edit · ⌘K"}
   .ProseMirror .rich-block[data-svg-editable]::after{content:"svg · double-click text to edit · ⌘K"}
+  .ProseMirror .rich-block[data-svg-editable][data-leaf-editable]::after{content:"frozen block · double-click any text to edit · ⌘K"}
   .ProseMirror .rich-block:hover::after{opacity:1}
   .ProseMirror .app-block{margin:18px 0;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--surface)}
   .ProseMirror .app-block.ProseMirror-selectednode{outline:2px solid var(--accent);outline-offset:3px}
