@@ -4,7 +4,7 @@ import { test, expect } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 if (typeof (globalThis as any).document === "undefined") GlobalRegistrator.register();
 
-import { stripActive, spliceBody, proseModelable, editableModelable, subtreeEditable, scopeCss, filterInlineStyle, escapeAttr, mdLite, buildTree, countFiles, tidySaveHtml, isSvgTextLeaf, collectSvgTextLeaves } from "../../client/lib";
+import { stripActive, spliceBody, proseModelable, editableModelable, subtreeEditable, scopeCss, filterInlineStyle, escapeAttr, mdLite, buildTree, countFiles, tidySaveHtml, isSvgTextLeaf, collectSvgTextLeaves, svgDirectTextRuns, collectSvgTextRuns } from "../../client/lib";
 
 // ───────────────────────── spliceBody — the $-corruption bug ─────────────────────────
 const TOKEN = "%%NOTE_BODY%%";
@@ -145,6 +145,47 @@ test("collectSvgTextLeaves: pure-shape SVG yields no leaves (canary stays frozen
   expect(count('<svg><text x="0" y="10">Label</text></svg>')).toBe(1);
   expect(count('<svg><circle cx="25" cy="25" r="20"/></svg>')).toBe(0);                         // no affordance for a pure-shape SVG
   expect(count('<figure><svg><text>cap</text></svg><figcaption>x</figcaption></figure>')).toBe(1); // text reachable even inside a frozen figure
+});
+// GAP FIX: <textPath> (curved text on a path) is a leaf — its <path>/<defs> aren't touched by an edit.
+test("isSvgTextLeaf: <textPath> is an editable leaf; its wrapping <text> is a container", () => {
+  const t = document.createElement("template");
+  t.innerHTML = '<svg><defs><path id="c" d="M0,0 L9,9"/></defs><text><textPath href="#c">Curved</textPath></text></svg>';
+  expect(isSvgTextLeaf(t.content.querySelector("textPath")!)).toBe(true);
+  expect(isSvgTextLeaf(t.content.querySelector("text")!)).toBe(false); // wraps the textPath → container
+  expect(collectSvgTextLeaves(t.content).map((e) => e.textContent)).toEqual(["Curved"]);
+});
+// BY DESIGN: text inside <defs>/<symbol> is a non-rendered template (paints only via <use>, no
+// geometry to click) and foreignObject text is HTML — none are directly-editable leaves.
+test("isSvgTextLeaf: <defs>/<symbol> template text + foreignObject HTML are not leaves", () => {
+  const defs = document.createElement("template"); defs.innerHTML = '<svg><defs><text>tmpl</text></defs></svg>';
+  expect(isSvgTextLeaf(defs.content.querySelector("text")!)).toBe(false);
+  const sym = document.createElement("template"); sym.innerHTML = '<svg><symbol id="s"><text>badge</text></symbol></svg>';
+  expect(isSvgTextLeaf(sym.content.querySelector("text")!)).toBe(false);
+  const fo = document.createElement("template"); fo.innerHTML = '<svg><foreignObject><text>fo</text></foreignObject></svg>';
+  expect(isSvgTextLeaf(fo.content.querySelector("text")!)).toBe(false);
+  // and they contribute zero collected leaves
+  const all = document.createElement("template");
+  all.innerHTML = '<svg><defs><text>d</text></defs><symbol><text>s</text></symbol><text>real</text></svg>';
+  expect(collectSvgTextLeaves(all.content).map((e) => e.textContent)).toEqual(["real"]);
+});
+// GAP FIX (F26): a direct text run mixed alongside element children is editable per-run.
+test("svgDirectTextRuns: direct runs mixed with <tspan> children are editable; pure containers have none", () => {
+  const mixed = document.createElement("template");
+  mixed.innerHTML = '<svg><text x="1" y="2">Label <tspan>val</tspan> tail</text></svg>';
+  expect(svgDirectTextRuns(mixed.content.querySelector("text")!).map((n) => (n.textContent || "").trim())).toEqual(["Label", "tail"]);
+  // a simple leaf has no "direct runs" (it IS a leaf, handled separately)
+  const leaf = document.createElement("template"); leaf.innerHTML = '<svg><text>only</text></svg>';
+  expect(svgDirectTextRuns(leaf.content.querySelector("text")!)).toEqual([]);
+  // a pure container (only element children + whitespace) has no runs
+  const pure = document.createElement("template"); pure.innerHTML = '<svg><text x="1" y="2"><tspan>a</tspan><tspan>b</tspan></text></svg>';
+  expect(svgDirectTextRuns(pure.content.querySelector("text")!)).toEqual([]);
+});
+test("collectSvgTextRuns: gathers direct runs across the tree, incl. nested <tspan>; skips defs/symbol/foreignObject", () => {
+  const t = document.createElement("template");
+  t.innerHTML = '<svg><text x="1" y="2">Lead <tspan>v</tspan> tail</text><text x="1" y="3"><tspan>Outer <tspan>inner</tspan></tspan></text>'
+    + '<defs><text>D <tspan>x</tspan></text></defs></svg>';
+  const runs = collectSvgTextRuns(t.content).map((r) => (r.node.textContent || "").trim());
+  expect(runs).toEqual(["Lead", "tail", "Outer"]); // defs run excluded; inner tspan is its own simple leaf
 });
 
 // ───────────────────────── scopeCss — confine an imported sheet to the editor ─────────────────────────

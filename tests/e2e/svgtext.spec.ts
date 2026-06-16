@@ -148,3 +148,98 @@ test("canary: a pure-shape SVG exposes no text-editing affordance", async ({ pag
   const editable = await page.evaluate(() => (document.querySelector(".ProseMirror [data-rich-block]") as HTMLElement).hasAttribute("data-svg-editable"));
   expect(editable).toBe(false);
 });
+
+// dblclick a leaf in the frozen shadow by CSS selector (+ optional text match), at its box center
+// (so a mixed <text>'s direct-run hit-test resolves to the right run). Returns the prefilled text.
+async function dblclickLeaf(page: Page, selector: string, matchText?: string): Promise<string> {
+  return await page.evaluate(({ selector, matchText }) => {
+    const sr = (document.querySelector(".ProseMirror [data-rich-block]") as HTMLElement).shadowRoot!;
+    const els = Array.from(sr.querySelectorAll(selector));
+    const el = (matchText ? els.find((e) => (e.textContent || "").trim() === matchText) : els[0])!;
+    const r = (el as any).getBoundingClientRect();
+    el.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+    return el.textContent || "";
+  }, { selector, matchText });
+}
+
+// GAP FIX: <textPath> (curved text on a path). The whole diagram was previously non-editable —
+// the text only lives inside the <textPath>, which the detector didn't reach.
+const TEXTPATH_DOC = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>tp</title></head><body>
+<article><h1>Curved</h1>
+<figure><svg viewBox="0 0 300 100" width="300"><defs><path id="curve" d="M10,50 Q150,10 290,50"/></defs><text font-size="14" fill="#333"><textPath href="#curve">OLDCURVE</textPath></text></svg></figure>
+<p>Caption.</p></article>
+</body></html>
+`;
+test("textPath: curved text is editable; its <path>/<defs> round-trip byte-faithfully", async ({ page }) => {
+  const path = await openNote(page, "svgtextpath.html", TEXTPATH_DOC);
+  const host = page.locator(".ProseMirror [data-rich-block]");
+  await expect(host).toHaveAttribute("data-svg-editable", ""); // affordance now advertised (was missing)
+  const before = await dblclickLeaf(page, "textPath, textpath");
+  expect(before).toBe("OLDCURVE");
+  const overlay = page.locator("input.svgtext-overlay");
+  await expect(overlay).toHaveValue("OLDCURVE");
+  await overlay.fill("NEWCURVE");
+  await overlay.press("Enter");
+  await page.waitForTimeout(1300);
+  const saved = readFileSync(path, "utf8");
+  expect(saved).toContain(">NEWCURVE</textPath>");
+  expect(saved).not.toContain("OLDCURVE");
+  expect(saved).toContain('<path id="curve" d="M10,50 Q150,10 290,50">'); // the path geometry untouched
+  expect(saved).toContain('<textPath href="#curve">');                    // href + camelCase tag preserved
+  expect(saved).toContain("Caption.");
+});
+
+// GAP FIX (F26): a direct text run mixed alongside <tspan> children. Each run is editable in place
+// without disturbing the sibling element runs.
+const MIXED_DOC = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>f26</title></head><body>
+<article><h1>Mixed</h1>
+<figure><svg viewBox="0 0 320 60" width="320"><text x="10" y="35" font-size="14" fill="#333">LEADRUN <tspan fill="#6d5cf0" font-weight="bold">KEEPSPAN</tspan> TAILRUN</text></svg></figure>
+<p>Caption.</p></article>
+</body></html>
+`;
+test("F26: a direct run mixed with a <tspan> is editable; the sibling tspan + other run survive", async ({ page }) => {
+  const path = await openNote(page, "svgmixed.html", MIXED_DOC);
+  // edit the LEADING direct run (dblclick on the <text>, hit-test resolves to the left run)
+  await page.evaluate(() => {
+    const sr = (document.querySelector(".ProseMirror [data-rich-block]") as HTMLElement).shadowRoot!;
+    const text = sr.querySelector("text")!;
+    const lead = Array.from(text.childNodes).find((n) => n.nodeType === 3 && (n.textContent || "").trim() === "LEADRUN")!;
+    const rng = document.createRange(); rng.selectNode(lead); const r = rng.getBoundingClientRect();
+    text.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+  });
+  const overlay = page.locator("input.svgtext-overlay");
+  await expect(overlay).toHaveValue("LEADRUN ");          // prefilled with the run's own text (trailing space kept)
+  await overlay.fill("NEWLEAD");
+  await overlay.press("Enter");
+  await page.waitForTimeout(1300);
+  const saved = readFileSync(path, "utf8");
+  expect(saved).toContain("NEWLEAD");
+  expect(saved).not.toContain("LEADRUN");
+  expect(saved).toContain('<tspan fill="#6d5cf0" font-weight="bold">KEEPSPAN</tspan>'); // sibling element run byte-intact
+  expect(saved).toContain("TAILRUN");                                                    // the other direct run survives
+
+  // CLOSURE: reload our own save — still editable, both runs intact
+  await page.reload();
+  await page.waitForSelector(".ProseMirror");
+  await page.waitForFunction(() => (window as any).__serialize);
+  const r = await page.evaluate(() => {
+    const host = document.querySelector(".ProseMirror [data-rich-block]") as HTMLElement;
+    return { editable: host.hasAttribute("data-svg-editable"), text: host.shadowRoot!.querySelector("text")!.textContent };
+  });
+  expect(r.editable).toBe(true);
+  expect(r.text).toContain("NEWLEAD");
+  expect(r.text).toContain("KEEPSPAN");
+  expect(r.text).toContain("TAILRUN");
+});
+
+// BY DESIGN: text inside <defs>/<symbol> is a non-rendered template (paints only via <use>, no
+// geometry to click) — it must NOT advertise an (unreachable) editing affordance. Half-editable
+// zero-rect phantoms are the bug we're avoiding.
+test("by design: <symbol>/<defs> template text exposes no editing affordance", async ({ page }) => {
+  await openNote(page, "svgsymbol.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>sym</title></head><body>'
+    + '<figure><svg viewBox="0 0 200 80" width="200"><defs><symbol id="badge"><rect width="80" height="30" fill="#eef"/><text x="40" y="20" text-anchor="middle">SYMTEXT</text></symbol></defs><use href="#badge" x="10" y="10"/></svg></figure>'
+    + '</body></html>\n');
+  await expect(page.locator(".ProseMirror [data-rich-block]")).toHaveCount(1);
+  const editable = await page.evaluate(() => (document.querySelector(".ProseMirror [data-rich-block]") as HTMLElement).hasAttribute("data-svg-editable"));
+  expect(editable).toBe(false); // template text in <symbol> is not a directly-editable leaf
+});

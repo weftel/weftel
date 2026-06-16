@@ -24,7 +24,7 @@ import Suggestion from "@tiptap/suggestion";
 import { TextStyle } from "@tiptap/extension-text-style";
 import { Color } from "@tiptap/extension-color";
 import { Highlight } from "@tiptap/extension-highlight";
-import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, subtreeEditable, nativeInsertable, collectSvgTextLeaves, scopeCss, tidyInsertHtml, tidySaveHtml, mdLite, buildTree, countFiles, type TreeNode } from "./lib";
+import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, subtreeEditable, nativeInsertable, collectSvgTextLeaves, collectSvgTextRuns, scopeCss, tidyInsertHtml, tidySaveHtml, mdLite, buildTree, countFiles, type TreeNode } from "./lib";
 import { DOMSerializer } from "@tiptap/pm/model";
 import { Plugin, TextSelection } from "@tiptap/pm/state";
 
@@ -395,8 +395,14 @@ const RichBlock = Node.create({
       const shadow = d.attachShadow({ mode: "open" });
       let currentHtml = node.attrs.html || "";
       let contentNodes: ChildNode[] = []; // the live content top-level nodes (NOT the injected <style>s)
-      // The single floating overlay editor for the SVG text leaf currently being edited.
-      let overlay: HTMLInputElement | null = null, overlayLeaf: Element | null = null, overlayOrig = "", overlayBlur: (() => void) | null = null, committing = false;
+      // The single floating overlay editor for the SVG text leaf currently being edited. A leaf
+      // is either an Element (a whole <text>/<tspan>/<textPath> run) or a Text node (one direct
+      // run mixed alongside sibling elements — F26); both expose textContent for read + write.
+      let overlay: HTMLInputElement | null = null, overlayLeaf: Node | null = null, overlayOrig = "", overlayBlur: (() => void) | null = null, committing = false;
+      // Geometry/style for either leaf kind: a Text node has no box of its own, so measure it
+      // with a Range and read its font off the parent element.
+      const elementOf = (n: Node): Element => (n.nodeType === 1 ? (n as Element) : (n.parentElement as Element));
+      const rectOf = (n: Node): DOMRect => { if (n.nodeType === 1) return (n as Element).getBoundingClientRect(); const r = document.createRange(); r.selectNode(n); return r.getBoundingClientRect(); };
 
       // Re-serialize ONLY the content (styles are injected fresh each render, never saved).
       // Editing a leaf changes just its text node, so EVERY surrounding byte is preserved —
@@ -437,10 +443,10 @@ const RichBlock = Node.create({
       // Single click still node-selects the whole block (⌘K rewrite / drag) — only dblclick edits.
       // (contentEditable doesn't work on SVG text in Chromium, so we edit via this overlay input
       // and write the result straight back into the verbatim SVG string.)
-      function openOverlay(leaf: Element) {
+      function openOverlay(leaf: Node) {
         commitOverlay(); // bank any in-progress edit on a sibling leaf first
-        const rect = (leaf as any).getBoundingClientRect();
-        const cs = getComputedStyle(leaf as Element);
+        const rect = rectOf(leaf);
+        const cs = getComputedStyle(elementOf(leaf));
         const input = document.createElement("input"); input.type = "text"; input.className = "svgtext-overlay";
         input.value = leaf.textContent || "";
         overlayOrig = input.value; // capture AFTER the browser normalizes the value
@@ -466,13 +472,31 @@ const RichBlock = Node.create({
         const tpl = document.createElement("template"); tpl.innerHTML = html || "";
         contentNodes = Array.from(tpl.content.childNodes);
         contentNodes.forEach((n) => shadow.appendChild(n)); // move content in after the styles — identical DOM to before
-        // K1: wire any SVG text leaves for double-click-to-edit. No attribute is ever added to the
-        // leaves (that would leak into the saved file) — only listeners + a shadow cursor hint.
+        // K1: wire SVG text for double-click-to-edit. No attribute is ever added to the leaves
+        // (that would leak into the saved file) — only listeners + a shadow cursor hint.
         const leaves = collectSvgTextLeaves(shadow);
-        if (leaves.length) {
+        // F26: direct runs mixed alongside element children (`<text>Label <tspan>x</tspan></text>`).
+        // A run's text node isn't an event target, so the listener rides the container element;
+        // on dblclick we pick the run whose box is nearest the pointer (multiple runs per container
+        // are possible). Child <tspan> leaves stopPropagation, so they keep their own edit.
+        const runs = collectSvgTextRuns(shadow);
+        const runsByEl = new Map<Element, Text[]>();
+        runs.forEach(({ el, node }) => { const a = runsByEl.get(el) || []; a.push(node); runsByEl.set(el, a); });
+        if (leaves.length || runsByEl.size) {
           d.setAttribute("data-svg-editable", "");
-          const hint = document.createElement("style"); hint.textContent = "text,tspan{cursor:text}"; shadow.appendChild(hint);
+          const hint = document.createElement("style"); hint.textContent = "text,tspan,textPath{cursor:text}"; shadow.appendChild(hint);
           leaves.forEach((leaf) => leaf.addEventListener("dblclick", (e: Event) => { e.preventDefault(); e.stopPropagation(); openOverlay(leaf); }));
+          runsByEl.forEach((nodes, el) => el.addEventListener("dblclick", (e: Event) => {
+            e.preventDefault(); e.stopPropagation();
+            const ev = e as MouseEvent; let best = nodes[0], bestD = Infinity;
+            for (const n of nodes) {
+              const r = rectOf(n);
+              const cx = Math.max(r.left, Math.min(ev.clientX, r.right)), cy = Math.max(r.top, Math.min(ev.clientY, r.bottom));
+              const dx = ev.clientX - cx, dy = ev.clientY - cy, dist = dx * dx + dy * dy;
+              if (dist < bestD) { bestD = dist; best = n; }
+            }
+            openOverlay(best);
+          }));
         } else d.removeAttribute("data-svg-editable");
       };
       render(currentHtml);
