@@ -122,6 +122,125 @@ export function subtreeEditable(el: Element, relaxClass = true): boolean {
 // unstyled — keep AI on the strict (no-class) gate even under the FULL_PARSE experiment.
 export function nativeInsertable(html: string): boolean { return editableModelable(html); }
 
+// ── SVG text editing (K1 / "crack open frozen leaves") ────────────────────────
+// An <svg> still freezes whole (it can't be modeled as prose), but its DECLARATIVE
+// text runs are reachable: replacing ONE run's text touches no surrounding SVG byte
+// (geometry, paths, gradients) — so the SVG round-trips byte-faithfully while the words
+// become editable in place. The rendered text elements are <text>, <tspan> and <textPath>
+// (curved text on a path; its <path>/<defs> are untouched by an edit). A run is editable
+// in two shapes:
+//   • SIMPLE LEAF  — a text element holding ONLY text (no element children): edit its text.
+//   • DIRECT RUN   — a text element that MIXES a direct text run with child elements
+//                    (F26: `<text>Label: <tspan>5</tspan></text>`, or a <tspan> wrapping a
+//                    nested <tspan>): each direct (non-whitespace) child text node is its own
+//                    editable run, edited without disturbing the sibling elements.
+// FROZEN by design: text inside <foreignObject> (HTML, e.g. Marp slides) is not a native SVG
+// run; text inside <defs>/<symbol> is a non-rendered TEMPLATE (it only paints via <use>, with
+// no geometry of its own to click) — both stay view-only, deliberately, not half-editable.
+const SVG_TEXT_TAGS = new Set(["text", "tspan", "textpath"]);
+function svgTextTag(el: Element): boolean { return SVG_TEXT_TAGS.has(((el as any).localName || el.tagName || "").toLowerCase()); }
+// In a non-rendered / foreign SVG scope? Walk ancestors (case-robust; avoids querySelector's
+// case-sensitivity on camelCase SVG names like foreignObject across DOM impls).
+function inFrozenSvgScope(el: Element): boolean {
+  let p: Element | null = el.parentElement;
+  while (p) {
+    const t = ((p as any).localName || p.tagName || "").toLowerCase();
+    if (t === "foreignobject" || t === "defs" || t === "symbol") return true;
+    p = p.parentElement;
+  }
+  return false;
+}
+export function isSvgTextLeaf(el: Element): boolean {
+  if (!svgTextTag(el)) return false;
+  if (el.children && el.children.length) return false;       // wraps elements → container, not a simple leaf
+  if (!(el.textContent || "").trim()) return false;          // empty / whitespace-only → nothing to edit
+  if (inFrozenSvgScope(el)) return false;                    // foreignObject HTML / defs+symbol template — frozen
+  return true;
+}
+// The direct (non-whitespace) child text nodes of a MIXED text container — the runs that sit
+// alongside <tspan>/<textPath> children (F26). A whitespace-only gap between elements is not a
+// run. Empty for a simple leaf (handled above) or a pure container (only element children).
+export function svgDirectTextRuns(el: Element): Text[] {
+  if (!svgTextTag(el) || inFrozenSvgScope(el)) return [];
+  if (!(el.children && el.children.length)) return [];       // simple leaf, not a mixed container
+  return Array.from(el.childNodes).filter((n) => n.nodeType === 3 && !!(n.textContent || "").trim()) as Text[];
+}
+// camelCase <textPath> is matched case-sensitively in a browser; include both spellings.
+const SVG_TEXT_SELECTOR = "text, tspan, textPath, textpath";
+export function collectSvgTextLeaves(root: ParentNode): Element[] {
+  return Array.from(root.querySelectorAll(SVG_TEXT_SELECTOR)).filter(isSvgTextLeaf);
+}
+// Every editable direct run across the tree, paired with its container element (for wiring a
+// dblclick listener — the run's own text node is not an event target).
+export function collectSvgTextRuns(root: ParentNode): { el: Element; node: Text }[] {
+  const out: { el: Element; node: Text }[] = [];
+  root.querySelectorAll(SVG_TEXT_SELECTOR).forEach((el) => svgDirectTextRuns(el).forEach((node) => out.push({ el, node })));
+  return out;
+}
+
+// ── HTML text-leaf editing (F36 / generalize "crack open frozen leaves") ──────
+// The SVG section above cracks open native <text>/<tspan> runs inside a frozen block. F36
+// applies the SAME byte-faithful mechanism to HTML text leaves, so EVERY visible text node in
+// a frozen rich block is editable — a flow-chart <div> label ("Commit"), a <figcaption>, a
+// <p>/<li>/<td>/heading — not just SVG. Same invariant: replacing ONE text node's content
+// touches no surrounding byte, so the block round-trips byte-faithfully. Two shapes (mirroring SVG):
+//   • SIMPLE LEAF — an element holding ONLY text (no element children): edit its text in place.
+//   • MIXED RUN   — an element mixing a direct text run with INLINE element children
+//                   (`<p>Lead <strong>x</strong> tail`): each direct (non-whitespace) text node is
+//                   its own editable run, edited without disturbing the sibling elements.
+// FROZEN/skipped by design: SVG-namespaced text (the SVG path owns it, not here); text inside
+// <foreignObject> (frozen per F27); empty / whitespace-only / decorative elements (no text → not a
+// leaf, so F12's empty/decorative spans stay non-editable). This classifier is pure structure; the
+// nodeView only ever runs it INSIDE the frozen RichBlock shadow, so editable-in-the-normal-flow
+// content (an org-chart <div> NOT in a data-rich-block) is never re-routed through the frozen path.
+const HTML_NS = "http://www.w3.org/1999/xhtml";
+const HTML_LEAF_TAGS = new Set(["FIGCAPTION", "DIV", "SPAN", "P", "H1", "H2", "H3", "H4", "H5", "H6", "LI", "TD", "TH", "DT", "DD", "CAPTION", "SMALL", "STRONG", "EM", "B", "I", "U", "CODE", "A", "LABEL", "SUMMARY"]);
+// Inline children a mixed-run container may hold and still expose its DIRECT text as editable runs
+// (editing one run can't disturb block layout). A BLOCK child (div/p/table/svg…) means the element
+// isn't a flat text run — its block descendants carry their own leaves instead.
+const HTML_INLINE_TAGS = new Set(["SPAN", "STRONG", "EM", "B", "I", "U", "CODE", "A", "SMALL", "SUB", "SUP", "MARK", "LABEL", "TIME", "ABBR", "CITE", "Q", "KBD", "SAMP", "VAR", "BR", "WBR", "DEL", "INS", "S"]);
+// HTML-namespaced? SVG/MathML elements carry their own namespaceURI — exclude them so the SVG path
+// keeps sole ownership of <text>/<tspan> and an SVG <a>/<title> never counts as an HTML leaf.
+function htmlNamespaced(el: Element): boolean { const ns = (el as any).namespaceURI; return !ns || ns === HTML_NS; }
+// Inside a <foreignObject>? Its HTML is frozen (F27) even though it's HTML-namespaced in a real
+// browser — walk ancestors (case-robust, like inFrozenSvgScope's camelCase handling).
+export function inForeignObject(el: Element): boolean {
+  let p: Element | null = el.parentElement;
+  while (p) { if (((p as any).localName || p.tagName || "").toLowerCase() === "foreignobject") return true; p = p.parentElement; }
+  return false;
+}
+function htmlLeafTag(el: Element): boolean { return htmlNamespaced(el) && HTML_LEAF_TAGS.has((el.tagName || "").toUpperCase()); }
+function htmlInlineEl(el: Element): boolean { return htmlNamespaced(el) && HTML_INLINE_TAGS.has((el.tagName || "").toUpperCase()); }
+export function isHtmlTextLeaf(el: Element): boolean {
+  if (!htmlLeafTag(el)) return false;
+  if (el.children && el.children.length) return false;       // wraps elements → container, not a simple leaf
+  if (!(el.textContent || "").trim()) return false;          // empty / whitespace-only / decorative → nothing to edit (F12)
+  if (inForeignObject(el)) return false;                     // frozen foreignObject HTML (F27)
+  return true;
+}
+// The direct (non-whitespace) child text nodes of a MIXED container — the runs sitting alongside
+// inline element children (`<p>Lead <strong>x</strong> tail`). Empty for a simple leaf (handled
+// above), a pure container (only element children + whitespace), or a container holding a BLOCK
+// child (its block descendants own their own leaves — keeping runs strictly inline-safe).
+export function htmlDirectTextRuns(el: Element): Text[] {
+  if (!htmlLeafTag(el) || inForeignObject(el)) return [];
+  const kids = Array.from(el.children);
+  if (!kids.length) return [];                               // simple leaf, not a mixed container
+  if (kids.some((c) => !htmlInlineEl(c))) return [];         // a block/SVG child → not a flat inline-text run
+  return Array.from(el.childNodes).filter((n) => n.nodeType === 3 && !!(n.textContent || "").trim()) as Text[];
+}
+const HTML_LEAF_SELECTOR = Array.from(HTML_LEAF_TAGS).map((t) => t.toLowerCase()).join(",");
+export function collectHtmlTextLeaves(root: ParentNode): Element[] {
+  return Array.from(root.querySelectorAll(HTML_LEAF_SELECTOR)).filter(isHtmlTextLeaf);
+}
+// Every editable direct run across the tree, paired with its container element (for wiring a
+// dblclick listener — the run's own text node is not an event target).
+export function collectHtmlTextRuns(root: ParentNode): { el: Element; node: Text }[] {
+  const out: { el: Element; node: Text }[] = [];
+  root.querySelectorAll(HTML_LEAF_SELECTOR).forEach((el) => htmlDirectTextRuns(el).forEach((node) => out.push({ el, node })));
+  return out;
+}
+
 // ── CSS scoping ──────────────────────────────────────────────────────────────
 // Rewrite an imported note's stylesheet so every rule is confined to a scope wrapper (the
 // editor mount), letting the note's class/element CSS render the EDITABLE content while

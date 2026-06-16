@@ -24,7 +24,7 @@ import Suggestion from "@tiptap/suggestion";
 import { TextStyle } from "@tiptap/extension-text-style";
 import { Color } from "@tiptap/extension-color";
 import { Highlight } from "@tiptap/extension-highlight";
-import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, subtreeEditable, nativeInsertable, scopeCss, tidyInsertHtml, tidySaveHtml, mdLite, buildTree, countFiles, buildInteractSrcdoc, type TreeNode } from "./lib";
+import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, subtreeEditable, nativeInsertable, collectSvgTextLeaves, collectSvgTextRuns, collectHtmlTextLeaves, collectHtmlTextRuns, scopeCss, tidyInsertHtml, tidySaveHtml, mdLite, buildTree, countFiles, buildInteractSrcdoc, type TreeNode } from "./lib";
 import { DOMSerializer } from "@tiptap/pm/model";
 import { Plugin, TextSelection } from "@tiptap/pm/state";
 
@@ -135,9 +135,32 @@ const sboxMd = { markdown: { serialize(state: any, node: any) {
   dom.querySelectorAll("[data-sbox]").forEach((e) => e.removeAttribute("data-sbox")); dom.removeAttribute("data-sbox");
   state.write(dom.outerHTML); state.closeBlock(node);
 } } };
+// Preserve ARBITRARY data-* attributes on styled nodes (e.g. the data-p/data-t hooks a doc's own
+// end-of-body <script> reads to drive tabs/toggles). data-* carry no executable content, so they're
+// safe on the live editable surface — and silently dropping them broke script-driven docs on save
+// (F32: the tabs no longer switched because every panel's data-p was gone). The exclusion list is
+// ONLY the editor's own structural <div> markers — those that a *different* node would re-claim on
+// reload (so echoing one back would flip a styled div into a rich/calendar/clock/callout block) or
+// that we strip ourselves (data-sbox). Generic names a doc legitimately uses as its own hooks
+// (data-type, data-id, data-src, data-state, …) are USER CONTENT and must round-trip — keeping them
+// here was the whole point. (The app's companion-keyed nodes need data-calendar/clock/callout to
+// match, so a lone data-kind/data-src/data-tz on a styled div is unambiguous user content.)
+const APP_DATA_HOOKS = new Set(["data-sbox", "data-rich-block", "data-calendar", "data-clock", "data-callout"]);
+const dataAttrs = () => ({
+  data: {
+    default: null,
+    parseHTML: (el: any) => {
+      const o: Record<string, string> = {};
+      for (const a of Array.from(el.attributes) as any[]) { const n = (a.name || "").toLowerCase(); if (n.startsWith("data-") && !APP_DATA_HOOKS.has(n)) o[a.name] = a.value; }
+      return Object.keys(o).length ? o : null;
+    },
+    renderHTML: (a: any) => a.data || {},
+  },
+});
 const sboxAttrs = () => ({
   style: { default: null, parseHTML: (el: any) => el.getAttribute("style"), renderHTML: (a: any) => (a.style ? { style: a.style } : {}) },
   class: { default: null, parseHTML: (el: any) => el.getAttribute("class"), renderHTML: (a: any) => (a.class ? { class: a.class } : {}) },
+  ...dataAttrs(),
 });
 const StyledBox = Node.create({
   name: "styledBox", group: "block", content: "block+", defining: true,
@@ -269,7 +292,10 @@ const DecoSpan = Node.create({
   renderHTML({ HTMLAttributes }: any) { return ["span", HTMLAttributes]; },
   addStorage() { return { markdown: { serialize(state: any, node: any) {
     const a = node.attrs || {};
-    state.write("<span" + (a.class ? ' class="' + escapeAttr(a.class) + '"' : "") + (a.style ? ' style="' + escapeAttr(a.style) + '"' : "") + "></span>");
+    // emit any preserved data-* too (symmetry with the HTML path; the sibling styled nodes serialize
+    // theirs via DOMSerializer) so a decorative span's hooks survive a .md round-trip as well
+    const dataStr = a.data ? Object.keys(a.data).map((k) => " " + k + '="' + escapeAttr(a.data[k]) + '"').join("") : "";
+    state.write("<span" + (a.class ? ' class="' + escapeAttr(a.class) + '"' : "") + (a.style ? ' style="' + escapeAttr(a.style) + '"' : "") + dataStr + "></span>");
   } } }; },
 });
 
@@ -362,13 +388,221 @@ const RichBlock = Node.create({
   } }]; },
   renderHTML({ node }: any) { const d = document.createElement("div"); d.setAttribute("data-rich-block", ""); d.innerHTML = node.attrs.html; return d; },
   addNodeView() {
-    return ({ node }: any) => {
+    return ({ node, editor, getPos }: any) => {
       const d = document.createElement("div"); d.setAttribute("data-rich-block", ""); d.className = "rich-block"; d.contentEditable = "false";
       // Render the (already-sanitized) HTML + the doc's styles in a SHADOW ROOT so the
       // content's CSS is fully contained — it can't reach out and restyle the editor.
       const shadow = d.attachShadow({ mode: "open" });
-      shadow.innerHTML = (RICH_STYLES || "") + (node.attrs.html || "");
-      return { dom: d };
+      let currentHtml = node.attrs.html || "";
+      let contentNodes: ChildNode[] = []; // the live content top-level nodes (NOT the injected <style>s)
+      // The single floating overlay editor for an SVG text leaf — or an HTML MIXED RUN (a direct
+      // text node, which can't be made contentEditable in isolation) — currently being edited. A
+      // leaf is an Element (a whole <text>/<tspan>/<textPath> run) or a Text node; both expose
+      // textContent for read + write.
+      let overlay: HTMLInputElement | null = null, overlayLeaf: Node | null = null, overlayOrig = "", overlayBlur: (() => void) | null = null, committing = false;
+      // F36: the HTML element leaf currently edited IN PLACE via contentEditable (better fidelity +
+      // multi-line than the SVG overlay input; Chromium WILL caret HTML text). Null when none active.
+      let activeLeaf: HTMLElement | null = null, activeLeafOrig = "", activeLeafHandlers: (() => void) | null = null;
+      // Geometry/style for either leaf kind: a Text node has no box of its own, so measure it
+      // with a Range and read its font off the parent element.
+      const elementOf = (n: Node): Element => (n.nodeType === 1 ? (n as Element) : (n.parentElement as Element));
+      const rectOf = (n: Node): DOMRect => { if (n.nodeType === 1) return (n as Element).getBoundingClientRect(); const r = document.createRange(); r.selectNode(n); return r.getBoundingClientRect(); };
+
+      // Re-serialize ONLY the content (styles are injected fresh each render, never saved).
+      // Editing a leaf changes just its text node, so EVERY surrounding byte is preserved —
+      // elements verbatim, and comment nodes (e.g. an exporter banner) kept too.
+      const contentHtml = () => contentNodes.map((n) =>
+        n.nodeType === 1 ? (n as Element).outerHTML
+        : n.nodeType === 8 ? "<!--" + ((n as any).data || "") + "-->"
+        : (n.textContent || "")).join("");
+
+      // The ONE shared commit body for every leaf kind (SVG overlay, HTML mixed-run overlay, HTML
+      // in-place contentEditable). Writes new text into the single leaf node, re-serializes the
+      // verbatim block (only that node changed), and pushes an undoable markup update. Reading the
+      // leaf's textContent — never innerHTML — is the security guarantee: any markup the browser or a
+      // paste slipped into a contentEditable leaf is discarded, so typed `<script>` persists as inert
+      // escaped TEXT and can never execute on reload.
+      const commitLeaf = (leaf: Node, newText: string): void => {
+        const pos = typeof getPos === "function" ? getPos() : null;
+        if (typeof pos !== "number") return;                  // node torn down / moved → drop the edit, never throw
+        leaf.textContent = newText;                           // single clean text node — no contentEditable cruft
+        const newHtml = stripActive(contentHtml());           // matches the reload-parse form exactly (idempotent)
+        currentHtml = newHtml;                                // mark as ours so update() skips a redundant rebuild
+        editor.commands.command(({ tr }: any) => { tr.setNodeMarkup(pos, undefined, { html: newHtml }); return true; }); // undoable via ⌘Z
+        armEdit();
+      };
+
+      // SILENT close — detach the blur listener BEFORE removing the input, so tearing the
+      // overlay down (render / destroy / leaf-switch) can never re-enter as a phantom commit.
+      const closeOverlay = () => {
+        if (!overlay) return;
+        if (overlayBlur) overlay.removeEventListener("blur", overlayBlur);
+        overlay.remove(); overlay = null; overlayLeaf = null; overlayBlur = null;
+      };
+      // Commit the overlay's text into the SVG string, then close. No-op when unchanged —
+      // compared against the input's OWN initial value (the browser may normalize it, e.g. strip
+      // newlines), so merely focusing+blurring a whitespace/multi-line leaf never churns the file.
+      const commitOverlay = () => {
+        if (!overlay || committing) return;
+        committing = true;
+        try {
+          const leaf = overlayLeaf, val = overlay.value;
+          closeOverlay();
+          if (!leaf || val === overlayOrig) return;             // untouched → leave the bytes exactly as they were
+          commitLeaf(leaf, val);
+        } finally { committing = false; }
+      };
+
+      // K1: open a floating plain-text editor over an SVG <text>/<tspan> leaf on DOUBLE-CLICK.
+      // Single click still node-selects the whole block (⌘K rewrite / drag) — only dblclick edits.
+      // (contentEditable doesn't work on SVG text in Chromium, so we edit via this overlay input
+      // and write the result straight back into the verbatim SVG string.)
+      function openOverlay(leaf: Node) {
+        bankPending(); // bank any in-progress edit (overlay or in-place leaf) on a sibling first
+        const rect = rectOf(leaf);
+        const cs = getComputedStyle(elementOf(leaf));
+        const input = document.createElement("input"); input.type = "text"; input.className = "svgtext-overlay";
+        input.value = leaf.textContent || "";
+        overlayOrig = input.value; // capture AFTER the browser normalizes the value
+        input.style.cssText = "position:absolute;z-index:80;box-sizing:border-box;"
+          + "left:" + (window.scrollX + rect.left - 5) + "px;top:" + (window.scrollY + rect.top - 3) + "px;"
+          + "min-width:" + Math.max(34, Math.round(rect.width) + 18) + "px;height:" + (Math.max(16, Math.round(rect.height)) + 8) + "px;"
+          + "font-size:" + (cs.fontSize || "14px") + ";font-family:" + (cs.fontFamily || "inherit") + ";"
+          + "padding:1px 4px;border:1px solid var(--accent);border-radius:5px;background:var(--surface);color:var(--text);"
+          + "box-shadow:0 6px 22px rgba(0,0,0,.22);outline:none;text-align:center";
+        overlay = input; overlayLeaf = leaf; overlayBlur = commitOverlay;
+        input.addEventListener("keydown", (e: KeyboardEvent) => {
+          if (e.key === "Enter") { e.preventDefault(); commitOverlay(); }
+          else if (e.key === "Escape") { e.preventDefault(); closeOverlay(); editor.commands.focus(); }
+        });
+        input.addEventListener("blur", overlayBlur);
+        document.body.appendChild(input);
+        input.focus(); input.select();
+      }
+
+      // F36: edit an HTML element leaf (a <figcaption>/<div>/<p>/<li>… holding only text) IN PLACE
+      // via contentEditable — caret lands in the real styled box (fidelity + natural wrapping), no
+      // floating overlay needed. SILENT close: detach listeners + strip the transient
+      // contentEditable attr BEFORE clearing state, so the re-serialized block stays attribute-clean
+      // and a teardown can never re-enter as a phantom commit.
+      let committingLeaf = false;
+      const closeActiveLeaf = () => {
+        if (!activeLeaf) return;
+        if (activeLeafHandlers) activeLeafHandlers();
+        activeLeaf.removeAttribute("contenteditable"); activeLeaf.removeAttribute("spellcheck");
+        activeLeaf = null; activeLeafHandlers = null;
+      };
+      const commitActiveLeaf = () => {
+        if (!activeLeaf || committingLeaf) return;
+        committingLeaf = true;
+        try {
+          const leaf = activeLeaf, val = activeLeaf.textContent || ""; // textContent ONLY — never innerHTML (drops any stray markup/paste)
+          closeActiveLeaf();
+          if (val === activeLeafOrig) return;                  // untouched → byte-identical, no churn
+          commitLeaf(leaf, val);
+        } finally { committingLeaf = false; }
+      };
+      // Commit ANY in-progress edit (overlay or in-place leaf) before opening a new one or rendering.
+      const bankPending = () => { commitOverlay(); commitActiveLeaf(); };
+      function openLeaf(leaf: HTMLElement) {
+        bankPending();
+        activeLeaf = leaf; activeLeafOrig = leaf.textContent || "";
+        leaf.setAttribute("contenteditable", "true"); leaf.setAttribute("spellcheck", "false");
+        // PLAINTEXT GUARD: a contentEditable can otherwise accrue <br>/<div> on Enter or absorb rich
+        // pasted markup. We neutralize both — Enter commits (these leaves are single logical lines),
+        // and paste inserts text/plain only. commit reads textContent regardless, so this is purely
+        // to keep the LIVE shadow DOM clean mid-edit; nothing here can make imported markup execute.
+        const onKey = (e: KeyboardEvent) => {
+          if (e.key === "Enter") { e.preventDefault(); commitActiveLeaf(); editor.commands.focus(); }
+          else if (e.key === "Escape") { e.preventDefault(); closeActiveLeaf(); editor.commands.focus(); }
+        };
+        const onBeforeInput = (e: InputEvent) => {
+          const t = (e as any).inputType || "";
+          if (t === "insertParagraph") { e.preventDefault(); commitActiveLeaf(); editor.commands.focus(); }
+          else if (t === "insertLineBreak") e.preventDefault(); // no hard breaks (textContent would drop them anyway)
+        };
+        const onPaste = (e: ClipboardEvent) => {
+          e.preventDefault();
+          const text = ((e.clipboardData && e.clipboardData.getData("text/plain")) || "").replace(/\r/g, "");
+          const sel: Selection | null = (shadow as any).getSelection ? (shadow as any).getSelection() : window.getSelection();
+          if (sel && sel.rangeCount) { const r = sel.getRangeAt(0); r.deleteContents(); const tn = document.createTextNode(text); r.insertNode(tn); r.setStartAfter(tn); r.collapse(true); sel.removeAllRanges(); sel.addRange(r); }
+        };
+        const onBlur = () => commitActiveLeaf();
+        leaf.addEventListener("keydown", onKey);
+        leaf.addEventListener("beforeinput", onBeforeInput as EventListener);
+        leaf.addEventListener("paste", onPaste as EventListener);
+        leaf.addEventListener("blur", onBlur);
+        activeLeafHandlers = () => {
+          leaf.removeEventListener("keydown", onKey);
+          leaf.removeEventListener("beforeinput", onBeforeInput as EventListener);
+          leaf.removeEventListener("paste", onPaste as EventListener);
+          leaf.removeEventListener("blur", onBlur);
+        };
+        leaf.focus();
+        try { const s: Selection | null = (shadow as any).getSelection ? (shadow as any).getSelection() : window.getSelection(); const r = document.createRange(); r.selectNodeContents(leaf); s!.removeAllRanges(); s!.addRange(r); } catch {}
+      }
+
+      const render = (html: string) => {
+        closeOverlay(); closeActiveLeaf();
+        shadow.innerHTML = RICH_STYLES || ""; // styles first (scoped, never leak / never saved)
+        const tpl = document.createElement("template"); tpl.innerHTML = html || "";
+        contentNodes = Array.from(tpl.content.childNodes);
+        contentNodes.forEach((n) => shadow.appendChild(n)); // move content in after the styles — identical DOM to before
+        // Wire every text leaf for double-click-to-edit. NO attribute is ever added to a leaf
+        // (that would leak into the saved file) — only listeners + a shadow cursor hint. A direct
+        // RUN's text node isn't an event target, so its listener rides the container element; on
+        // dblclick we pick the run whose box is nearest the pointer (multiple runs per container are
+        // possible). Child leaves stopPropagation, so they keep their own edit.
+        // RUN container helper (shared by SVG runs + HTML mixed runs — both edit via the overlay).
+        const wireRunContainer = (el: Element, nodes: Text[]) => el.addEventListener("dblclick", (e: Event) => {
+          e.preventDefault(); e.stopPropagation();
+          const ev = e as MouseEvent; let best = nodes[0], bestD = Infinity;
+          for (const n of nodes) {
+            const r = rectOf(n);
+            const cx = Math.max(r.left, Math.min(ev.clientX, r.right)), cy = Math.max(r.top, Math.min(ev.clientY, r.bottom));
+            const dx = ev.clientX - cx, dy = ev.clientY - cy, dist = dx * dx + dy * dy;
+            if (dist < bestD) { bestD = dist; best = n; }
+          }
+          openOverlay(best);
+        });
+        const byEl = (runs: { el: Element; node: Text }[]) => { const m = new Map<Element, Text[]>(); runs.forEach(({ el, node }) => { const a = m.get(el) || []; a.push(node); m.set(el, a); }); return m; };
+
+        // K1/F26: SVG text leaves + direct runs (`<text>Label <tspan>x</tspan></text>`) → overlay
+        // input (Chromium won't caret SVG text, so editing is driven through a floating input).
+        const svgLeaves = collectSvgTextLeaves(shadow);
+        const svgRunsByEl = byEl(collectSvgTextRuns(shadow));
+        if (svgLeaves.length || svgRunsByEl.size) {
+          d.setAttribute("data-svg-editable", "");
+          const hint = document.createElement("style"); hint.textContent = "text,tspan,textPath{cursor:text}"; shadow.appendChild(hint);
+          svgLeaves.forEach((leaf) => leaf.addEventListener("dblclick", (e: Event) => { e.preventDefault(); e.stopPropagation(); openOverlay(leaf); }));
+          svgRunsByEl.forEach((nodes, el) => wireRunContainer(el, nodes));
+        } else d.removeAttribute("data-svg-editable");
+
+        // F36: HTML element leaves (<figcaption>/<div>/<p>/<li>… holding only text) → edit IN PLACE
+        // via contentEditable; HTML mixed runs (direct text alongside inline children) → overlay.
+        const htmlLeaves = collectHtmlTextLeaves(shadow);
+        const htmlRunsByEl = byEl(collectHtmlTextRuns(shadow));
+        if (htmlLeaves.length || htmlRunsByEl.size) {
+          d.setAttribute("data-leaf-editable", "");
+          const hint = document.createElement("style"); hint.textContent = "[contenteditable]{cursor:text;outline:1.5px solid var(--accent);outline-offset:2px;border-radius:3px}"; shadow.appendChild(hint);
+          htmlLeaves.forEach((leaf) => (leaf as HTMLElement).addEventListener("dblclick", (e: Event) => { e.preventDefault(); e.stopPropagation(); openLeaf(leaf as HTMLElement); }));
+          htmlRunsByEl.forEach((nodes, el) => wireRunContainer(el, nodes));
+        } else d.removeAttribute("data-leaf-editable");
+      };
+      render(currentHtml);
+
+      return {
+        dom: d,
+        // Re-render only on an EXTERNAL change (⌘K rewrite, undo/redo); our own text commit
+        // already updated the live DOM and set currentHtml, so skip the rebuild (keeps caret/feel).
+        update(n: any) { if (n.type.name !== "richBlock") return false; if (n.attrs.html === currentHtml) return true; currentHtml = n.attrs.html || ""; render(currentHtml); return true; },
+        destroy: () => { closeOverlay(); closeActiveLeaf(); },
+        // While a leaf edits in place via contentEditable, swallow events at the nodeView boundary so
+        // ProseMirror keymaps (Enter splits a block, Backspace deletes the node…) never fire on the
+        // shadow keystrokes — the leaf's own handlers own them.
+        stopEvent: () => !!activeLeaf,
+        ignoreMutation: () => true,
+      };
     };
   },
 });
@@ -631,14 +865,24 @@ function isolateRich(el: HTMLElement, doc: Document) {
 
 function prepareHtml(raw: string): string {
   const doc = new DOMParser().parseFromString(raw, "text/html");
-  // Preserve every <style>/<script> by relocating into <head> BEFORE tokenizing the body —
-  // otherwise document-level styles/scripts get wiped on save. PRESERVING a user's script is
-  // lossless (their files, often Claude-Code-authored — deleting it is the worse failure); it
-  // is SAFE in-app because the head is never injected into the live page (htmlTemplate is only
-  // a save-splice string) and rich blocks render via innerHTML, which never executes <script>.
-  // Body active content is still neutralized by stripActive for live render. Hardening against
-  // genuinely untrusted imported HTML is deferred — see the corpus 'security' subset.
-  doc.querySelectorAll("style, script").forEach((el) => doc.head.appendChild(el));
+  const container = (doc.querySelector("article, main") as HTMLElement) || doc.body;
+  // Preserve <style>/<script> across tokenizing the body (container.innerHTML = token would wipe
+  // anything inside the container). Two different rules, because POSITION matters differently:
+  //   • <style> → <head>: position-independent, so an in-container sheet is safe to hoist.
+  //   • <script> → END of <body> (NOT <head>): an author's wiring script must keep running AFTER
+  //     the DOM it touches exists. The old code dumped EVERY script into <head>, so an end-of-body
+  //     script ran before the spliced content existed — the F32 corruption that silently killed
+  //     tabs/toggles on save and rewrote the file on disk on the next autosave. We detach
+  //     in-container scripts now (so they aren't parsed as editable content) and re-attach them at
+  //     the end of <body> after tokenizing, below. Scripts ALREADY OUTSIDE the container (e.g.
+  //     already at end of <body>) are left untouched and preserved verbatim in place by htmlTemplate.
+  // Preserving a user's script is lossless (their files, often Claude-Code-authored — deleting it is
+  // the worse failure); it is SAFE in-app because the head/body template is never injected into the
+  // live page (htmlTemplate is only a save-splice string) and rich blocks render via innerHTML,
+  // which never executes <script>. Body active content is still neutralized by stripActive for live
+  // render. Hardening against genuinely untrusted imported HTML is deferred — see corpus 'security'.
+  container.querySelectorAll("style").forEach((el) => doc.head.appendChild(el));
+  const heldScripts = Array.from(container.querySelectorAll("script")); heldScripts.forEach((el) => el.remove());
   // Capture the doc's styles to inject into each rich block's SHADOW root — scoped, so
   // they render the content but NEVER leak into the editor chrome (the white-bg bug).
   // Rewrite :root → :host so a doc's custom props (e.g. --font-mono) resolve in the shadow.
@@ -647,7 +891,6 @@ function prepareHtml(raw: string): string {
   // the EDITABLE content without clobbering the chrome (live-only; the original <style> still
   // round-trips verbatim through htmlTemplate's head).
   SCOPED_NOTE_CSS = FULL_PARSE ? scopeCss(Array.from(doc.querySelectorAll("style")).map((s) => s.textContent || "").join("\n"), ".note-scope") : "";
-  const container = (doc.querySelector("article, main") as HTMLElement) || doc.body;
   const hasMarkers = !!container.querySelector("[data-rich-block],[data-calendar],[data-clock]");
   if (FULL_PARSE) {
     // Re-derive rich blocks from CONTENT, not stale markers: drop every data-rich-block wrapper
@@ -686,6 +929,7 @@ function prepareHtml(raw: string): string {
   while (raw.includes(tok)) tok = "%%NOTE_BODY_" + (++n) + "%%";
   BODY_TOKEN = tok;
   container.innerHTML = tok;
+  heldScripts.forEach((el) => doc.body.appendChild(el)); // re-attach in-container scripts at end of <body> (runs after the spliced DOM)
   htmlTemplate = "<!DOCTYPE html>\n" + doc.documentElement.outerHTML;
   return content;
 }

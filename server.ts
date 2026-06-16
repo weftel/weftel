@@ -232,7 +232,9 @@ function styles(): string {
   .folder-row .row-act button{font:inherit;font-size:11px;color:var(--subtle);background:transparent;border:none;cursor:pointer;padding:1px 4px;border-radius:4px}
   .folder-row .row-act button:hover{color:var(--text);background:var(--surface)}
   .note-empty{font-size:12px;color:var(--subtle);padding:8px 10px;font-style:italic}
-  .main{flex:1;min-width:0}
+  /* F24: the note pane fills at least the viewport below the ~40px bar, so a short/dark
+     note's own background (set on .main by F6) covers the whole pane — no app-gray strip. */
+  .main{flex:1;min-width:0;min-height:calc(100vh - 40px)}
   .doc{max-width:760px;margin:0 auto;padding:40px 32px 22vh}
   .doc.own-frame{max-width:none;padding:0 0 22vh} /* self-framing doc: its own CSS rules the page frame */
   .stale-bar{position:fixed;top:0;left:0;right:0;z-index:9999;background:#d97706;color:#fff;font-size:13.5px;font-weight:600;text-align:center;padding:8px 12px}
@@ -288,6 +290,9 @@ function styles(): string {
   .ProseMirror .rich-block{margin:16px 0;border-radius:8px;position:relative}
   .ProseMirror .rich-block.ProseMirror-selectednode{outline:2px solid var(--accent);outline-offset:4px}
   .ProseMirror .rich-block::after{content:"rich block · ⌘K to edit";position:absolute;top:-9px;right:8px;font-family:ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);background:var(--bg);padding:1px 6px;border-radius:3px;opacity:0;transition:opacity .12s}
+  .ProseMirror .rich-block[data-leaf-editable]::after{content:"frozen block · double-click text to edit · ⌘K"}
+  .ProseMirror .rich-block[data-svg-editable]::after{content:"svg · double-click text to edit · ⌘K"}
+  .ProseMirror .rich-block[data-svg-editable][data-leaf-editable]::after{content:"frozen block · double-click any text to edit · ⌘K"}
   .ProseMirror .rich-block:hover::after{opacity:1}
   .ProseMirror .app-block{margin:18px 0;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--surface)}
   .ProseMirror .app-block.ProseMirror-selectednode{outline:2px solid var(--accent);outline-offset:3px}

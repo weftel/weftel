@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const PORT = Number(process.env.PW_PORT) || 4399; // distinct from the dev server on 4321 (override via PW_PORT for parallel worktrees)
+const PORT = Number(process.env.PW_PORT) || 4399; // distinct from the dev server on 4321; PW_PORT overrides for collision-safe parallel runs
 
 export default defineConfig({
   testDir: "./tests/e2e",
