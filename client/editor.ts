@@ -1075,7 +1075,16 @@ if (note && mount) {
     Placeholder.configure({ placeholder: ({ node }: any) => (node.type.name === "heading" ? "Heading" : "Write, or press “/” for commands…"), showOnlyCurrent: true }),
   ];
   let content = note.content;
-  if (note.format === "md") { content = breakoutBareListLines(content); extensions.push(Markdown.configure({ html: true, linkify: true, breaks: true })); } // breaks:true + breakout → F42 (render single "\n" as a line break, bare lines terminate lists, Obsidian-style)
+  // F43: linkify is OFF. With it on, markdown-it auto-wrapped every BARE url in a link mark; on
+  // save the serializer then rewrote it — `https://x` became `<https://x>` (autolink) or, when the
+  // display text and href diverged, `[decoded text](encoded url)` — URL-DECODING the visible text
+  // (`%20`→space) and mutating a file the user never edited. It also fuzzy-linked bare domains in
+  // prose (`Playabl.ai`→`http://Playabl.ai`). Turning linkify off keeps bare URLs as plain text, so
+  // they round-trip byte-for-byte. Explicitly-authored `[text](url)` links are unaffected (they
+  // still parse to link marks and stay clickable). Trade-off: bare URLs are no longer clickable —
+  // fidelity wins (F40-class zero-mutation invariant). Could be re-added later as a display-only
+  // decoration that never touches the document model.
+  if (note.format === "md") { content = breakoutBareListLines(content); extensions.push(Markdown.configure({ html: true, linkify: false, breaks: true })); } // breaks:true + breakout → F42 (render single "\n" as a line break, bare lines terminate lists, Obsidian-style)
   else if (note.format === "html") { try { content = prepareHtml(note.content); } catch { htmlTemplate = null; content = note.content; } }
 
   // Paste an image → save as a sidecar file (<note-dir>/assets/) via /asset, insert a native
