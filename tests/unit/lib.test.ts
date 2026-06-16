@@ -4,7 +4,7 @@ import { test, expect } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 if (typeof (globalThis as any).document === "undefined") GlobalRegistrator.register();
 
-import { stripActive, spliceBody, proseModelable, editableModelable, subtreeEditable, scopeCss, filterInlineStyle, escapeAttr, mdLite, buildTree, countFiles, tidySaveHtml, hasInteractiveScript, hasOwnStyling, buildInteractSrcdoc, BASE_NOTE_CSS, isSvgTextLeaf, collectSvgTextLeaves, svgDirectTextRuns, collectSvgTextRuns, isHtmlTextLeaf, collectHtmlTextLeaves, htmlDirectTextRuns, collectHtmlTextRuns, inForeignObject } from "../../client/lib";
+import { stripActive, spliceBody, proseModelable, editableModelable, subtreeEditable, scopeCss, filterInlineStyle, escapeAttr, mdLite, buildTree, countFiles, sanitizeRelNotePath, tidySaveHtml, hasInteractiveScript, hasOwnStyling, buildInteractSrcdoc, BASE_NOTE_CSS, isSvgTextLeaf, collectSvgTextLeaves, svgDirectTextRuns, collectSvgTextRuns, isHtmlTextLeaf, collectHtmlTextLeaves, htmlDirectTextRuns, collectHtmlTextRuns, inForeignObject } from "../../client/lib";
 
 // ───────────────────────── spliceBody — the $-corruption bug ─────────────────────────
 const TOKEN = "%%NOTE_BODY%%";
@@ -423,4 +423,29 @@ test("buildInteractSrcdoc: leaves the doc's own bytes/scripts in place (no reser
   expect(out).toContain("/*EOFmarker*/(function(){})()"); // doc script verbatim, still at end of body
   expect(out.indexOf("EOFmarker")).toBeGreaterThan(out.indexOf("body bytes")); // still after body content
   expect(out).toContain("<article><p>body bytes</p></article>");
+});
+
+// ───────────────────────── sanitizeRelNotePath — nested new-note / move names ─────────────────────────
+test("sanitizeRelNotePath: preserves a plain name with dashes/underscores and casing", () => {
+  expect(sanitizeRelNotePath("My-Note_v2")).toBe("My-Note_v2");
+});
+test("sanitizeRelNotePath: keeps '/' as a folder separator (nesting)", () => {
+  expect(sanitizeRelNotePath("Projects/ideas/spec")).toBe("Projects/ideas/spec");
+});
+test("sanitizeRelNotePath: collapses leading/trailing/duplicate slashes and trims segments", () => {
+  expect(sanitizeRelNotePath("/Projects//  ideas  /spec/")).toBe("Projects/ideas/spec");
+});
+test("sanitizeRelNotePath: strips illegal chars per segment, never letting them form a separator", () => {
+  expect(sanitizeRelNotePath("a:b*c?/d<e>f")).toBe("abc/def");
+});
+test("sanitizeRelNotePath: rejects path traversal — '..' segments dissolve, not escape", () => {
+  expect(sanitizeRelNotePath("../../etc/passwd")).toBe("etc/passwd"); // the .. segments drop entirely
+  expect(sanitizeRelNotePath("..")).toBe(null);
+  expect(sanitizeRelNotePath("foo/../bar")).toBe("foo/bar"); // no upward escape, just two folders
+});
+test("sanitizeRelNotePath: returns null when nothing usable remains", () => {
+  expect(sanitizeRelNotePath("")).toBe(null);
+  expect(sanitizeRelNotePath("///")).toBe(null);
+  expect(sanitizeRelNotePath("***")).toBe(null);
+  expect(sanitizeRelNotePath("   ")).toBe(null);
 });

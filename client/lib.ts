@@ -465,6 +465,20 @@ export function buildTree(notes: NoteRef[]): TreeNode {
   }
   return root;
 }
+// Sanitize a user-typed new-note / rename name that MAY include "/" to nest into folders
+// (e.g. "Projects/ideas/spec"). Each path SEGMENT keeps letters, digits, space, "_" and "-";
+// "/" stays as the folder separator. Leading/trailing/duplicate slashes collapse, empty
+// segments drop, and ".."/"." can't survive (their dots are stripped, so they become empty
+// and are dropped) — no path traversal. Returns the clean relative path WITHOUT extension,
+// or null if nothing usable remains. Pure — unit-tested; the server still re-validates.
+export function sanitizeRelNotePath(name: string): string | null {
+  const segs = String(name || "")
+    .split("/")
+    .map((s) => s.replace(/[^a-zA-Z0-9 _-]/g, "").trim())
+    .filter((s) => s.length > 0 && s !== "." && s !== "..");
+  return segs.length ? segs.join("/") : null;
+}
+
 // Total notes under a node, recursively (the count shown next to a folder).
 export function countFiles(n: TreeNode): number {
   let c = n.files.length;
