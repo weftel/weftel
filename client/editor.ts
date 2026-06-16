@@ -1038,7 +1038,7 @@ if (note && mount) {
     } catch { flash("image save failed", false); }
   }
   editor = new Editor({
-    element: mount, extensions, content, autofocus: "end",
+    element: mount, extensions, content, autofocus: "start",
     editorProps: {
       // Make links WORK in the editor (clicks in contenteditable don't navigate natively):
       // relative .md/.html links navigate the app to the sibling note (wiki-style cross-links);
@@ -1187,10 +1187,11 @@ if (note && mount) {
       const first = mount.querySelector(".ProseMirror > *") as HTMLElement | null;
       if (first && selfFraming(first)) {
         mount.classList.add("own-frame");
-        // autofocus("end") parks the caret in the escape paragraph AFTER the wrapper —
-        // typing there lands outside the page frame, hard-left and unstyled ("my words
-        // start at the very left"). Continue-the-document means: caret ends INSIDE the
-        // wrapper. (The escape paragraph stays reachable by clicking below the page.)
+        // Land the caret at the TOP, INSIDE the page wrapper. (Earlier autofocus("end")
+        // parked it in the escape paragraph AFTER the wrapper — typing there lands outside
+        // the frame, hard-left and unstyled, "my words start at the very left." The escape
+        // paragraph stays reachable by clicking below the page.) Continue-the-document means:
+        // caret INSIDE the wrapper, at its start.
         // Heal strays: paragraphs that ended up AFTER the wrapper (typed pre-F17, or via
         // clicks below the page) render hard-left outside the frame — in the browser too.
         // They belong to the page: absorb non-empty ones into the wrapper's end, drop empty
@@ -1207,12 +1208,12 @@ if (note && mount) {
           if (keep.length) tr.insert(fcN.nodeSize - 1, keep);
           return true;
         });
-        // Arm the escape-slot trap (see EscapeTrap), then re-apply the current selection
-        // through it so autofocus("end") — which may already sit in the escape slot — gets
-        // remapped inside the page immediately.
+        // Arm the escape-slot trap (see EscapeTrap), then place the caret at the START of the
+        // page. autofocus:"start" already lands inside the frame at the top; re-applying it
+        // through the armed trap keeps it there (and out of the escape slot below the page).
         OWN_FRAME = true;
         const fc = editor!.state.doc.firstChild;
-        if (fc && fc.type.name === "styledBox") setTimeout(() => editor!.chain().focus(fc.nodeSize - 2).run(), 0);
+        if (fc && fc.type.name === "styledBox") setTimeout(() => editor!.chain().focus("start").run(), 0);
       } else if (first && !frameInfo(first).hasMax) {
         // F39: the frame lived on the stripped <main>/<article> container, NOT on an editable
         // child. Two tells separate this from attention.html (the F18 trap): (1) the container
@@ -1743,6 +1744,14 @@ if (note && mount) {
     else if (e.key === "Enter") { e.preventDefault(); const f = swMatches[swSel]; if (f) go("/?file=" + encodeURIComponent(f.path)); }
   });
   switcher.addEventListener("click", (e) => { if (e.target === switcher) closeSwitcher(); });
+
+  // Default to INTERACT when the doc has something to run — opening a live dashboard/app should
+  // show it RUNNING, not the editor markup. Only fires for INTERACTABLE docs (HTML with executable
+  // JS, F31); md/txt and static HTML still open in edit as before. ⌘E or the Edit segment flips to
+  // the editor. Runs LAST in setup so setMode's deps (cmdk, switcher, flushSave…) all exist — calling
+  // it earlier hits switcher's temporal dead zone. flushSave() inside is a no-op on load (nothing
+  // dirty), and the editor stays mounted (hidden) so toggling to edit is instant and loses nothing.
+  if (INTERACTABLE) setMode("interact");
 }
 
 // ============================ onboarding (no note) ============================
