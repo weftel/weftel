@@ -24,11 +24,11 @@ import Suggestion from "@tiptap/suggestion";
 import { TextStyle } from "@tiptap/extension-text-style";
 import { Color } from "@tiptap/extension-color";
 import { Highlight } from "@tiptap/extension-highlight";
-import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, subtreeEditable, nativeInsertable, scopeCss, tidyInsertHtml, tidySaveHtml, mdLite, buildTree, countFiles, type TreeNode } from "./lib";
+import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, subtreeEditable, nativeInsertable, scopeCss, tidyInsertHtml, tidySaveHtml, mdLite, buildTree, countFiles, buildInteractSrcdoc, type TreeNode } from "./lib";
 import { DOMSerializer } from "@tiptap/pm/model";
 import { Plugin, TextSelection } from "@tiptap/pm/state";
 
-type Note = { file: string; format: string; content: string; root: string };
+type Note = { file: string; format: string; content: string; root: string; interactive?: boolean };
 // FULL_PARSE (experiment): parse class/<style>-driven bespoke HTML into editable nodes —
 // preserving classes and scoping the doc's <style> into the live editor — instead of
 // freezing it into an atomic shadow-DOM rich block. Set false to revert to the legacy
@@ -784,6 +784,42 @@ if (note && mount) {
     mount.classList.add("note-scope");
     const st = document.createElement("style"); st.id = "note-scoped"; st.textContent = SCOPED_NOTE_CSS;
     document.head.appendChild(st);
+    // F29: a JS-driven doc ships its non-active panels with display:none (e.g. class="… hidden");
+    // edit mode never runs the doc's JS that would toggle them, so only the first tab's panel was
+    // editable and the rest were invisible/unreachable. Reveal them FOR EDITING — STACK every
+    // hidden element visible at once, each carrying a small "hidden by default" marker. The markup
+    // /attributes are untouched (the class stays in the model), so a save round-trips byte-faithful
+    // and Interact mode still hides/switches correctly. This is a LIVE-ONLY override sheet, derived
+    // from the scoped sheet's own display:none rules — never serialized.
+    requestAnimationFrame(() => {
+      const scoped = (document.getElementById("note-scoped") as HTMLStyleElement | null)?.sheet;
+      if (!scoped) return;
+      const sels = new Set<string>();
+      const collect = (rules: CSSRuleList, printOnly: boolean) => {
+        for (const r of Array.from(rules) as any[]) {
+          if (r.selectorText && r.style) {
+            if (printOnly || r.style.getPropertyValue("display") !== "none") continue;
+            for (const part of String(r.selectorText).split(",")) {
+              const s = part.trim();
+              if (s && s.indexOf("::") < 0) sels.add(s); // skip pseudo-elements (decorative, not panels)
+            }
+          } else if (r.cssRules && r.cssRules.length) {
+            const media = (r.media && r.media.mediaText) || "";
+            collect(r.cssRules, /\bprint\b/i.test(media) && !/\bscreen\b/i.test(media)); // a print-only @media never applies on screen
+          }
+        }
+      };
+      try { collect(scoped.cssRules, false); } catch {}
+      // inline display:none lives on the element, not the sheet — catch it generically too.
+      const targets = [...sels, '.note-scope [style*="display:none"]', '.note-scope [style*="display: none"]'];
+      const revealSel = targets.join(",");
+      const badgeSel = targets.map((s) => s + "::after").join(",");
+      const css =
+        revealSel + "{display:revert !important;position:relative;outline:1.5px dashed var(--accent-line);outline-offset:2px}" +
+        badgeSel + '{content:"hidden by default";position:absolute;top:0;right:0;z-index:2;font:600 9px/1.45 ui-monospace,Menlo,monospace;letter-spacing:.04em;text-transform:uppercase;color:#fff;background:var(--accent);border-radius:0 0 0 5px;padding:1px 6px;pointer-events:none;opacity:.85}';
+      const rs = document.createElement("style"); rs.id = "note-edit-reveal"; rs.textContent = css;
+      document.head.appendChild(rs);
+    });
     // F6: the doc's body background lands on the 760px mount only — a skinny dark strip on
     // the app-gray pane ("looks and feels weird"). Extend the note's canvas COLOR across the
     // whole note pane; sidebar/bar chrome stays app-themed. (Color only — gradients/images
@@ -1114,7 +1150,9 @@ if (note && mount) {
   // server route: the doc never becomes a navigable app-origin URL, so it can never run with app
   // privileges. srcdoc also preserves the doc's original <script> position (end-of-body IIFEs run
   // after their DOM exists), which a serialize()-rebuilt head would break.
-  const INTERACTABLE = note.format === "html";
+  // F31: only HTML docs that actually contain executable JS are interactable — the server
+  // detects this from the raw bytes and passes the flag (single source of truth, no drift).
+  const INTERACTABLE = !!note.interactive;
   let interactView: HTMLElement | null = null;
   const mainPane = document.querySelector(".layout .main") as HTMLElement | null;
   const modeSeg = document.getElementById("modeseg");
@@ -1138,7 +1176,10 @@ if (note && mount) {
       // keeps the doc's own <script> in its authored position. End-of-body IIFEs that query the DOM
       // (the motivating tabs bug) would break if relocated to <head>, which a save/serialize does.
       // Trade-off: in-session edits are not mirrored in the preview (the editor retains them).
-      frame.srcdoc = note!.content;
+      // buildInteractSrcdoc only HEAD-injects: the history/wakeLock shim (F33, always) and — for
+      // docs with no styling of their own — the app's base note CSS so the render stays
+      // themed+centered like edit (F30). The doc's own bytes/scripts are otherwise untouched.
+      frame.srcdoc = buildInteractSrcdoc(note!.content);
       const tag = document.createElement("div"); tag.className = "interact-note";
       tag.innerHTML = '<span class="dot"></span>Interactive preview — runs this document’s own code, sandboxed';
       interactView.appendChild(frame); interactView.appendChild(tag);
@@ -1158,6 +1199,14 @@ if (note && mount) {
   function toggleMode() { if (INTERACTABLE) setMode(interactMode ? "edit" : "interact"); }
   modeSeg?.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => setMode((b as HTMLElement).dataset.mode === "interact" ? "interact" : "edit")));
   W.__setMode = setMode; // test seam
+
+  // F34: the interact view's height was `calc(100vh - 40px)` with a hardcoded 40px bar — but the
+  // bar measures ~47px at 1280×900, so the sticky bar overlapped the iframe's top ~7px (+ a scroll
+  // overflow). Drive the offset off the bar's REAL height via a CSS var, kept in sync on resize.
+  const barEl = document.querySelector(".bar") as HTMLElement | null;
+  const syncBarH = () => { const h = barEl ? Math.round(barEl.getBoundingClientRect().height) : 40; document.documentElement.style.setProperty("--bar-h", h + "px"); };
+  syncBarH();
+  window.addEventListener("resize", syncBarH);
 
   // ============================ chrome wiring ============================
   document.addEventListener("keydown", (e) => {

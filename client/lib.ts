@@ -256,6 +256,76 @@ export function mdLite(src: string): string {
   }).join("");
 }
 
+// ── interact mode (Edit/Interact toggle, K5) ─────────────────────────────────
+// Executable <script> types — a <script> only makes a doc interactive if it's one of these
+// (or typeless). Data/template scripts (application/json, ld+json, text/template, x-tmpl…)
+// are inert payloads, not behavior.
+export const EXEC_SCRIPT_TYPES = new Set(["", "text/javascript", "application/javascript", "module", "text/ecmascript", "application/ecmascript"]);
+
+// F31: gate the Interact affordance on the doc actually containing executable JS, so the
+// toggle is only offered when toggling would DO something. True iff the raw bytes hold a
+// <script> that is an executable type AND carries real code (a `src`, or a non-trivial inline
+// body). Regex-based (no DOM) so it runs identically server-side (Bun, gates the toggle markup)
+// and client-side. Markdown notes have no <script>, so they never qualify.
+export function hasInteractiveScript(html: string): boolean {
+  const re = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html || ""))) {
+    const attrs = m[1] || "", body = m[2] || "";
+    const tm = /\btype\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(attrs);
+    const type = (tm ? (tm[2] ?? tm[3] ?? tm[4] ?? "") : "").trim().toLowerCase();
+    if (type && !EXEC_SCRIPT_TYPES.has(type)) continue;   // data/template script — inert
+    if (/\bsrc\s*=/i.test(attrs)) return true;            // external script/module
+    if (body.trim().length > 1) return true;              // non-trivial inline code
+  }
+  return false;
+}
+
+// F30: a doc "brings its own design" if it declares ANY styling — a <style> block, a linked
+// stylesheet, or an inline `style` attribute. Unstyled docs get the app's base note CSS
+// injected in interact (below) so the render stays themed+centered like edit, instead of
+// jumping to a bare white, left-aligned page. Parsed inert (<template>) — nothing runs/loads.
+export function hasOwnStyling(html: string): boolean {
+  const t = document.createElement("template"); t.innerHTML = html || "";
+  return !!t.content.querySelector("style, link[rel~='stylesheet' i], [style]");
+}
+
+// The app's base reading theme, mirrored for the sandbox iframe: the same centered 760 column,
+// font, and light/dark surface as edit mode — so toggling an UNSTYLED doc changes "JS runs",
+// not the whole look (F30). Themed via prefers-color-scheme to track the app's own theming.
+export const BASE_NOTE_CSS = `
+  html{background:#fbfbfa;color:#1c1c1e}
+  body{max-width:760px;margin:0 auto;padding:40px 32px;background:transparent;color:inherit;
+    font-family:-apple-system,BlinkMacSystemFont,"Inter",system-ui,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased}
+  img,svg,video{max-width:100%;height:auto}
+  a{color:#5a49d6}
+  @media(prefers-color-scheme:dark){html{background:#0e0e11;color:#ececef}a{color:#bcb1ff}}`;
+
+// F33: inside the opaque-origin sandbox, history.pushState/replaceState throw SecurityError
+// ('origin "null" … about:srcdoc') — repeated console noise, and pushState-routing docs half
+// -break with no explanation. Neutralize the History API (call-through, swallow on throw: keep
+// behavior where the sandbox allows it, silence where it forbids it) so such docs degrade
+// gracefully and the console stays clean. Also stub navigator.wakeLock (policy-violation
+// warning in sandbox). Injected as the FIRST <script> in <head> so it runs before the doc's
+// own (typically end-of-body) scripts.
+export const SANDBOX_SHIM = `<script>(function(){try{var h=window.history;["pushState","replaceState"].forEach(function(m){var o=h[m];if(typeof o!=="function")return;h[m]=function(){try{return o.apply(h,arguments);}catch(e){return undefined;}};});}catch(e){}try{if(navigator.wakeLock&&navigator.wakeLock.request){navigator.wakeLock.request=function(){return Promise.reject(new DOMException("wake lock unavailable in sandbox","NotAllowedError"));};}}catch(e){}})();</script>`;
+
+// Build the sandbox srcdoc from the RAW file bytes, injecting ONLY: (1) the history/wakeLock
+// shim (always — F33), and (2) the base note CSS for unstyled docs (F30). String-spliced right
+// after the opening <head> so the doc's own bytes are otherwise untouched — never DOM-reparsed
+// /reserialized, which would relocate the doc's end-of-body scripts (the exact bug this feature
+// exists to avoid, see F28). Returns the verbatim bytes plus the head injection.
+export function buildInteractSrcdoc(raw: string): string {
+  raw = raw || "";
+  let inject = SANDBOX_SHIM;
+  if (!hasOwnStyling(raw)) inject += `\n<style>${BASE_NOTE_CSS}</style>`;
+  const head = /<head\b[^>]*>/i.exec(raw);
+  if (head) { const i = head.index + head[0].length; return raw.slice(0, i) + inject + raw.slice(i); }
+  const htmlTag = /<html\b[^>]*>/i.exec(raw);
+  if (htmlTag) { const i = htmlTag.index + htmlTag[0].length; return raw.slice(0, i) + "<head>" + inject + "</head>" + raw.slice(i); }
+  return inject + raw;
+}
+
 // ---- folder tree -------------------------------------------------------------
 // Build a nested tree from each note's `rel` path (e.g. "Projects/Alpha/spec.md").
 // The server already walks subdirs and emits `rel`; this groups them for the sidebar.

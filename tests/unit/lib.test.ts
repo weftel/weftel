@@ -4,7 +4,7 @@ import { test, expect } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 if (typeof (globalThis as any).document === "undefined") GlobalRegistrator.register();
 
-import { stripActive, spliceBody, proseModelable, editableModelable, subtreeEditable, scopeCss, filterInlineStyle, escapeAttr, mdLite, buildTree, countFiles, tidySaveHtml } from "../../client/lib";
+import { stripActive, spliceBody, proseModelable, editableModelable, subtreeEditable, scopeCss, filterInlineStyle, escapeAttr, mdLite, buildTree, countFiles, tidySaveHtml, hasInteractiveScript, hasOwnStyling, buildInteractSrcdoc, BASE_NOTE_CSS } from "../../client/lib";
 
 // ───────────────────────── spliceBody — the $-corruption bug ─────────────────────────
 const TOKEN = "%%NOTE_BODY%%";
@@ -252,4 +252,56 @@ test("tidySaveHtml keeps real colspans, real column widths, and multi-block cell
 test("tidySaveHtml leaves classed/styled cell paragraphs alone", () => {
   const html = '<table><tbody><tr><td><p class="x">styled</p></td></tr></tbody></table>';
   expect(tidySaveHtml(html)).toContain('<p class="x">styled</p>');
+});
+
+// ───────────── interact mode: toggle gating (F31), base-css inject (F30), shim (F33) ─────────────
+test("hasInteractiveScript: true for a doc with a real inline <script>", () => {
+  expect(hasInteractiveScript(`<html><body><div></div><script>(function(){var x=1;})();</script></body></html>`)).toBe(true);
+});
+test("hasInteractiveScript: true for an external src script/module", () => {
+  expect(hasInteractiveScript(`<head><script src="app.js"></script></head>`)).toBe(true);
+  expect(hasInteractiveScript(`<head><script type="module" src="m.js"></script></head>`)).toBe(true);
+});
+test("hasInteractiveScript: false for a static styled doc (no script)", () => {
+  expect(hasInteractiveScript(`<head><style>.x{color:red}</style></head><body><h1>Cheatsheet</h1></body>`)).toBe(false);
+});
+test("hasInteractiveScript: false for data/template scripts (ld+json, json, template)", () => {
+  expect(hasInteractiveScript(`<script type="application/ld+json">{"@type":"Article"}</script>`)).toBe(false);
+  expect(hasInteractiveScript(`<script type="application/json">{"a":1}</script>`)).toBe(false);
+  expect(hasInteractiveScript(`<script type="text/template"><div>tpl</div></script>`)).toBe(false);
+});
+test("hasInteractiveScript: false for an empty/trivial <script>", () => {
+  expect(hasInteractiveScript(`<script></script>`)).toBe(false);
+  expect(hasInteractiveScript(`<script>  </script>`)).toBe(false);
+});
+
+test("hasOwnStyling: true for <style>, stylesheet link, or inline style", () => {
+  expect(hasOwnStyling(`<head><style>body{margin:0}</style></head>`)).toBe(true);
+  expect(hasOwnStyling(`<head><link rel="stylesheet" href="x.css"></head>`)).toBe(true);
+  expect(hasOwnStyling(`<body><div style="max-width:860px;margin:auto">x</div></body>`)).toBe(true);
+});
+test("hasOwnStyling: false for a doc with no CSS at all", () => {
+  expect(hasOwnStyling(`<html><head><meta charset="utf-8"></head><body><article><h2>D</h2><p>plain</p></article></body></html>`)).toBe(false);
+});
+
+test("buildInteractSrcdoc: always injects the history/wakeLock shim into <head> (F33)", () => {
+  const raw = `<!doctype html><html><head><title>t</title></head><body><script>history.pushState({},'','/x')</script></body></html>`;
+  const out = buildInteractSrcdoc(raw);
+  expect(out).toContain("pushState"); // shim wraps it
+  expect(out).toContain("wakeLock");
+  // shim lands inside head, before the body's own script
+  expect(out.indexOf("history")).toBeLessThan(out.indexOf("<body>"));
+});
+test("buildInteractSrcdoc: injects base note CSS only for UNSTYLED docs (F30)", () => {
+  const styled = `<html><head><style>body{background:#000}</style></head><body><script>1+1</script></body></html>`;
+  const unstyled = `<html><head><meta charset="utf-8"></head><body><script>1+1</script><p>hi</p></body></html>`;
+  expect(buildInteractSrcdoc(styled)).not.toContain(BASE_NOTE_CSS.trim().slice(0, 24));
+  expect(buildInteractSrcdoc(unstyled)).toContain("max-width:760px"); // base CSS present
+});
+test("buildInteractSrcdoc: leaves the doc's own bytes/scripts in place (no reserialize)", () => {
+  const raw = `<!doctype html><html><head><title>t</title></head><body><article><p>body bytes</p></article><script>/*EOFmarker*/(function(){})()</script></body></html>`;
+  const out = buildInteractSrcdoc(raw);
+  expect(out).toContain("/*EOFmarker*/(function(){})()"); // doc script verbatim, still at end of body
+  expect(out.indexOf("EOFmarker")).toBeGreaterThan(out.indexOf("body bytes")); // still after body content
+  expect(out).toContain("<article><p>body bytes</p></article>");
 });

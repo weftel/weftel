@@ -51,6 +51,7 @@ async function streamAI(prompt: string, model: string, onChunk: (s: string) => v
   } catch (e) { return { ok: false, error: String(e).slice(0, 200) }; }
 }
 import sanitizeHtml from "sanitize-html";
+import { hasInteractiveScript } from "./client/lib";
 
 const PORT = Number(process.env.PORT) || 4321;
 const ARG = resolve(process.argv[2] ?? "./sample.md");
@@ -192,13 +193,16 @@ function styles(): string {
   .bar .seg button:hover{color:var(--text)}
   .bar .seg button.on{background:var(--accent);color:#fff}
   .bar .chip[hidden]{display:none}
-  /* INTERACT mode: the doc's own code runs in a sandboxed iframe filling the note pane */
-  .interact-view{height:calc(100vh - 40px)}
-  .interact-view iframe{width:100%;height:100%;border:0;display:block;background:#fff}
+  /* INTERACT mode: the doc's own code runs in a sandboxed iframe filling the note pane.
+     Height is derived from the bar's REAL measured height (--bar-h, set by the client) — not a
+     magic 40px — so the sticky bar never overlaps the iframe (F34). The iframe surface uses the
+     app background (F30) so an unstyled doc reads as a themed pane, not a bare white slab. */
+  .interact-view{height:calc(100vh - var(--bar-h, 40px))}
+  .interact-view iframe{width:100%;height:100%;border:0;display:block;background:var(--bg)}
   .interact-note{position:fixed;bottom:14px;right:16px;z-index:8;font-size:11px;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:5px 10px;display:flex;align-items:center;gap:7px;box-shadow:0 4px 14px rgba(0,0,0,.1)}
   .interact-note .dot{width:7px;height:7px;border-radius:50%;background:var(--win);flex:none}
   .layout{display:flex;align-items:flex-start}
-  .sidebar{width:256px;flex:none;border-right:1px solid var(--border);height:calc(100vh - 40px);overflow:auto;padding:10px 8px;position:sticky;top:40px}
+  .sidebar{width:256px;flex:none;border-right:1px solid var(--border);height:calc(100vh - var(--bar-h, 40px));overflow:auto;padding:10px 8px;position:sticky;top:var(--bar-h, 40px)}
   .sidebar .vault{display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;font:inherit;font-size:12px;font-weight:600;color:var(--muted);background:transparent;border:none;padding:5px 8px;border-radius:7px;cursor:pointer;text-align:left}
   .sidebar .vault:hover{background:var(--accent-tint);color:var(--text)}
   .sidebar .vault .vcaret{opacity:.5;font-size:11px;flex:none}
@@ -341,11 +345,20 @@ function styles(): string {
 
 function shell(note: { file: string; format: string; content: string } | null, openError: string | null = null): string {
   const title = escHtml(note ? basename(note.file).replace(NOTE_RE, "") : "note-editor");
+  // F31: the Interact toggle is only meaningful when the doc actually has executable JS to run
+  // — a styled-but-static doc (no <script>) has nothing to interact with. Gate on the raw bytes
+  // here (single source of truth) and pass the flag to the client via __NOTE__.interactive so
+  // ⌘E and the toggle markup never drift.
+  const interactive = !!(note && note.format === "html" && hasInteractiveScript(note.content));
   // a tab's vault is the one CONTAINING its note, not the latest-opened global
-  const json = note ? JSON.stringify({ ...note, root: vaultOf(note.file) ?? ROOT }).replace(/</g, "\\u003c") : `{"root":${JSON.stringify(ROOT).replace(/</g, "\\u003c")}}`;
-  // INTERACT toggle (HTML notes only): EDIT = the JS-free ProseMirror editor; INTERACT runs
-  // the doc's OWN code in a sandboxed iframe. md notes have no JS, so no toggle for them.
-  const modeSeg = note && note.format === "html"
+  const json = note ? JSON.stringify({ ...note, interactive, root: vaultOf(note.file) ?? ROOT }).replace(/</g, "\\u003c") : `{"root":${JSON.stringify(ROOT).replace(/</g, "\\u003c")}}`;
+  // INTERACT toggle: EDIT = the JS-free ProseMirror editor; INTERACT runs the doc's OWN code in
+  // a sandboxed iframe. Shown only for docs that contain interactive JS (F31). When absent we
+  // HIDE it (simplest, default). Seam for the alternative — disable + tooltip "nothing to
+  // interact with" — kept here intentionally (taste call, see report): to switch, render the
+  // <div class="seg"> always and add `disabled title="Nothing to interact with"` on the Interact
+  // <button> + a `.seg button:disabled` style, instead of returning "".
+  const modeSeg = interactive
     ? `<div class="seg" id="modeseg" role="group" aria-label="View mode"><button data-mode="edit" class="on" title="Edit — fluid editor (⌘E)">Edit</button><button data-mode="interact" title="Interact — run this doc’s own code, sandboxed (⌘E)">Interact</button></div>`
     : "";
   const body = note
