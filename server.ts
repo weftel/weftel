@@ -103,6 +103,19 @@ function atomicWrite(p: string, content: string) {
   writeFileSync(tmp, content, "utf8");
   renameSync(tmp, p); // atomic on same fs — never leaves a half-written note
 }
+// Turn a raw fs error into an actionable, user-facing message (instead of leaking a stack
+// string into a toast). Falls back to the error's message for anything unmapped.
+function fsErrMsg(e: any): string {
+  switch (e && e.code) {
+    case "EACCES": case "EPERM": return "permission denied — check folder permissions";
+    case "ENOSPC": return "the disk is full";
+    case "ENOTDIR": return "a file already exists where a folder is needed";
+    case "EISDIR": return "that name is a folder";
+    case "ENAMETOOLONG": return "the name is too long";
+    case "EROFS": return "the folder is read-only";
+    default: return String((e && e.message) || e);
+  }
+}
 function toTrash(p: string) {
   const trash = join(vaultOf(p) ?? ROOT, ".trash"); // trash lives in the note's own vault
   if (!existsSync(trash)) mkdirSync(trash, { recursive: true });
@@ -221,6 +234,8 @@ function styles(): string {
   .sidebar .filter:focus{border-color:var(--accent-line)}
   .sidebar .new{display:flex;align-items:center;gap:7px;width:100%;text-align:left;font:inherit;font-size:13px;color:var(--muted);background:transparent;border:1px dashed var(--border-strong);border-radius:7px;padding:7px 10px;margin-bottom:8px;cursor:pointer}
   .sidebar .new:hover{color:var(--accent-ink);border-color:var(--accent-line)}
+  .sidebar .new-row{display:flex;gap:6px}
+  .sidebar .new-row .new{justify-content:center;margin-bottom:8px}
   .note-link{position:relative;display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);text-decoration:none;padding:6px 10px;border-radius:7px;white-space:nowrap;overflow:hidden;cursor:pointer}
   .note-link .nm{overflow:hidden;text-overflow:ellipsis}
   .note-link .gl{font-size:11px;color:var(--subtle);flex:none}
@@ -422,26 +437,35 @@ Bun.serve({
         const p = resolve(String(body.file || ""));
         if (!okNotePath(p)) return json({ ok: false, error: "path not allowed" }, 403);
         if (!existsSync(p)) return json({ ok: false, error: "no such note (use create)" }, 404);
-        try { atomicWrite(p, String(body.content ?? "")); return json({ ok: true }); } catch (e) { return json({ ok: false, error: String(e) }, 500); }
+        try { atomicWrite(p, String(body.content ?? "")); return json({ ok: true }); } catch (e) { return json({ ok: false, error: fsErrMsg(e) }, 500); }
       }
       if (url.pathname === "/create") {
         const p = resolve(String(body.file || ""));
         if (!okNotePath(p)) return json({ ok: false, error: "path not allowed" }, 403);
         if (existsSync(p)) return json({ ok: false, error: "a note with that name already exists" });
-        try { atomicWrite(p, String(body.content ?? "")); return json({ ok: true, path: p }); } catch (e) { return json({ ok: false, error: String(e) }, 500); }
+        // mkdir the parent so a note can be created in a brand-new (sub)folder. The parent must
+        // ITSELF be in-vault — realParent() realpaths the deepest existing ancestor, so a
+        // recursive mkdir can only ever materialize dirs UNDER an in-vault ancestor (no escape).
+        const parent = dirname(p);
+        if (!inVault(parent)) return json({ ok: false, error: "path not allowed" }, 403);
+        try { mkdirSync(parent, { recursive: true }); atomicWrite(p, String(body.content ?? "")); return json({ ok: true, path: p }); } catch (e) { return json({ ok: false, error: fsErrMsg(e) }, 500); }
       }
       if (url.pathname === "/rename") {
         const a = resolve(String(body.from || "")), b = resolve(String(body.to || ""));
         if (!okNotePath(a) || !okNotePath(b)) return json({ ok: false, error: "path not allowed" }, 403);
-        if (!existsSync(a)) return json({ ok: false, error: "missing" });
-        if (existsSync(b)) return json({ ok: false, error: "target exists" });
-        try { renameSync(a, b); return json({ ok: true, path: b }); } catch (e) { return json({ ok: false, error: String(e) }, 500); }
+        if (!existsSync(a)) return json({ ok: false, error: "the note no longer exists" });
+        if (existsSync(b)) return json({ ok: false, error: "a note with that name already exists" });
+        // Allow rename to MOVE into a (possibly new) folder — mkdir the destination parent, same
+        // in-vault guarantee as /create above.
+        const parent = dirname(b);
+        if (!inVault(parent)) return json({ ok: false, error: "path not allowed" }, 403);
+        try { mkdirSync(parent, { recursive: true }); renameSync(a, b); return json({ ok: true, path: b }); } catch (e) { return json({ ok: false, error: fsErrMsg(e) }, 500); }
       }
       if (url.pathname === "/delete") {
         const p = resolve(String(body.file || ""));
         if (!okNotePath(p)) return json({ ok: false, error: "path not allowed" }, 403);
-        if (!existsSync(p)) return json({ ok: false, error: "missing" });
-        try { toTrash(p); return json({ ok: true }); } catch (e) { return json({ ok: false, error: String(e) }, 500); }
+        if (!existsSync(p)) return json({ ok: false, error: "the note no longer exists" });
+        try { toTrash(p); return json({ ok: true }); } catch (e) { return json({ ok: false, error: fsErrMsg(e) }, 500); }
       }
       if (url.pathname === "/asset") {
         // Save a pasted image as a sidecar file: <note-dir>/assets/img-<stamp>.<ext>.
