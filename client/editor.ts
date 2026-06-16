@@ -12,6 +12,7 @@ import { Editor, Node, Mark, Extension, InputRule } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Bold from "@tiptap/extension-bold";
 import Italic from "@tiptap/extension-italic";
+import HardBreak from "@tiptap/extension-hard-break";
 import { Markdown } from "tiptap-markdown";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
@@ -27,6 +28,60 @@ import { Highlight } from "@tiptap/extension-highlight";
 import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, subtreeEditable, nativeInsertable, collectSvgTextLeaves, collectSvgTextRuns, collectHtmlTextLeaves, collectHtmlTextRuns, scopeCss, tidyInsertHtml, tidySaveHtml, mdLite, buildTree, countFiles, buildInteractSrcdoc, sanitizeRelNotePath, type TreeNode } from "./lib";
 import { DOMSerializer } from "@tiptap/pm/model";
 import { Plugin, TextSelection } from "@tiptap/pm/state";
+
+// F42: soft line breaks (a single "\n" with no blank line) must render like Obsidian's
+// default — a visible line break — not collapse onto the previous line the way strict
+// CommonMark does (it renders a softbreak as a space). We turn on markdown-it's `breaks`
+// (see Markdown.configure below) so a softbreak parses to a hardBreak node. But
+// tiptap-markdown's default hardBreak serializer writes "\\\n" (a literal backslash +
+// newline), which would inject stray backslashes into the file on every autosave — an
+// F40-class round-trip mutation, and ugly in the raw markdown the user also edits in
+// Obsidian. So we override the serializer to emit a plain newline (and keep the inline
+// "<br>" form inside tables, where a bare newline would break the row). Net: soft breaks
+// render as line breaks AND round-trip without backslash injection.
+const HardBreakMd = HardBreak.extend({
+  addStorage() {
+    return {
+      markdown: {
+        serialize(state: any, node: any, parent: any, index: number) {
+          for (let i = index + 1; i < parent.childCount; i++) {
+            if (parent.child(i).type !== node.type) { state.write(state.inTable ? "<br>" : "\n"); return; }
+          }
+        },
+        parse: {},
+      },
+    };
+  },
+});
+
+// F42 (residual): a bare, non-indented text line jammed directly under a list item — with no
+// blank line — is *lazy-continued* into that item's paragraph by CommonMark (markdown-it). In
+// the interview-prep todo, the section initials ("WT", "FS", …) sit between checkboxes that way,
+// so they got pulled INTO the preceding checked item and rendered struck-through, as if the
+// header were a completed task. Obsidian instead treats a non-indented line as TERMINATING the
+// list (it becomes its own paragraph). We match Obsidian by inserting a blank line before such a
+// breakout line, so the list ends and the bare line stands alone (flush-left, no checkbox, no
+// strikethrough). Scoped narrowly: only fires when the previous line is a list/task marker and
+// the current line is non-blank, starts at column 0, and is not itself a list/heading/blockquote/
+// table/fence marker. Fenced code blocks are skipped so their contents are never rewritten.
+const LIST_MARKER = /^(\s*)([-*+]|\d+[.)])\s/;
+function breakoutBareListLines(md: string): string {
+  const lines = md.split("\n");
+  const out: string[] = [];
+  let inFence = false; let fenceChar = "";
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const fence = line.match(/^(\s*)(`{3,}|~{3,})/);
+    if (inFence) { out.push(line); if (fence && fence[2][0] === fenceChar) inFence = false; continue; }
+    if (fence) { inFence = true; fenceChar = fence[2][0]; out.push(line); continue; }
+    const prev = i > 0 ? lines[i - 1] : "";
+    const isBareBreakout = line.trim() !== "" && /^\S/.test(line) && !LIST_MARKER.test(line)
+      && !/^#{1,6}\s/.test(line) && !/^>/.test(line) && !/^\|/.test(line);
+    if (i > 0 && LIST_MARKER.test(prev) && isBareBreakout) out.push("");
+    out.push(line);
+  }
+  return out.join("\n");
+}
 
 type Note = { file: string; format: string; content: string; root: string; interactive?: boolean };
 // FULL_PARSE (experiment): parse class/<style>-driven bespoke HTML into editable nodes —
@@ -1008,7 +1063,8 @@ if (note && mount) {
   const linkOpts = { openOnClick: false, HTMLAttributes: { target: null, rel: null } } as any;
   const extensions: any[] = [
     // FULL_PARSE swaps stock Bold/Italic for tag-preserving variants (see BoldTagged).
-    FULL_PARSE ? StarterKit.configure({ bold: false, italic: false, link: linkOpts }) : StarterKit.configure({ link: linkOpts }),
+    FULL_PARSE ? StarterKit.configure({ bold: false, italic: false, hardBreak: false, link: linkOpts }) : StarterKit.configure({ hardBreak: false, link: linkOpts }),
+    HardBreakMd, // F42: replaces StarterKit's hardBreak so softbreaks round-trip as "\n", not "\\\n"
     ...(FULL_PARSE ? [BoldTagged, ItalicTagged, PreserveAttrs] : []),
     StyledTextStyle, Color, StyledHighlight.configure({ multicolor: true }), InlineStyle,
     TaskList, TaskItem.configure({ nested: true }), TaskInputRule, MarkdownListFix,
@@ -1019,7 +1075,7 @@ if (note && mount) {
     Placeholder.configure({ placeholder: ({ node }: any) => (node.type.name === "heading" ? "Heading" : "Write, or press “/” for commands…"), showOnlyCurrent: true }),
   ];
   let content = note.content;
-  if (note.format === "md") extensions.push(Markdown.configure({ html: true, linkify: true }));
+  if (note.format === "md") { content = breakoutBareListLines(content); extensions.push(Markdown.configure({ html: true, linkify: true, breaks: true })); } // breaks:true + breakout → F42 (render single "\n" as a line break, bare lines terminate lists, Obsidian-style)
   else if (note.format === "html") { try { content = prepareHtml(note.content); } catch { htmlTemplate = null; content = note.content; } }
 
   // Paste an image → save as a sidecar file (<note-dir>/assets/) via /asset, insert a native
