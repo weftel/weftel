@@ -135,9 +135,32 @@ const sboxMd = { markdown: { serialize(state: any, node: any) {
   dom.querySelectorAll("[data-sbox]").forEach((e) => e.removeAttribute("data-sbox")); dom.removeAttribute("data-sbox");
   state.write(dom.outerHTML); state.closeBlock(node);
 } } };
+// Preserve ARBITRARY data-* attributes on styled nodes (e.g. the data-p/data-t hooks a doc's own
+// end-of-body <script> reads to drive tabs/toggles). data-* carry no executable content, so they're
+// safe on the live editable surface — and silently dropping them broke script-driven docs on save
+// (F32: the tabs no longer switched because every panel's data-p was gone). The exclusion list is
+// ONLY the editor's own structural <div> markers — those that a *different* node would re-claim on
+// reload (so echoing one back would flip a styled div into a rich/calendar/clock/callout block) or
+// that we strip ourselves (data-sbox). Generic names a doc legitimately uses as its own hooks
+// (data-type, data-id, data-src, data-state, …) are USER CONTENT and must round-trip — keeping them
+// here was the whole point. (The app's companion-keyed nodes need data-calendar/clock/callout to
+// match, so a lone data-kind/data-src/data-tz on a styled div is unambiguous user content.)
+const APP_DATA_HOOKS = new Set(["data-sbox", "data-rich-block", "data-calendar", "data-clock", "data-callout"]);
+const dataAttrs = () => ({
+  data: {
+    default: null,
+    parseHTML: (el: any) => {
+      const o: Record<string, string> = {};
+      for (const a of Array.from(el.attributes) as any[]) { const n = (a.name || "").toLowerCase(); if (n.startsWith("data-") && !APP_DATA_HOOKS.has(n)) o[a.name] = a.value; }
+      return Object.keys(o).length ? o : null;
+    },
+    renderHTML: (a: any) => a.data || {},
+  },
+});
 const sboxAttrs = () => ({
   style: { default: null, parseHTML: (el: any) => el.getAttribute("style"), renderHTML: (a: any) => (a.style ? { style: a.style } : {}) },
   class: { default: null, parseHTML: (el: any) => el.getAttribute("class"), renderHTML: (a: any) => (a.class ? { class: a.class } : {}) },
+  ...dataAttrs(),
 });
 const StyledBox = Node.create({
   name: "styledBox", group: "block", content: "block+", defining: true,
@@ -269,7 +292,10 @@ const DecoSpan = Node.create({
   renderHTML({ HTMLAttributes }: any) { return ["span", HTMLAttributes]; },
   addStorage() { return { markdown: { serialize(state: any, node: any) {
     const a = node.attrs || {};
-    state.write("<span" + (a.class ? ' class="' + escapeAttr(a.class) + '"' : "") + (a.style ? ' style="' + escapeAttr(a.style) + '"' : "") + "></span>");
+    // emit any preserved data-* too (symmetry with the HTML path; the sibling styled nodes serialize
+    // theirs via DOMSerializer) so a decorative span's hooks survive a .md round-trip as well
+    const dataStr = a.data ? Object.keys(a.data).map((k) => " " + k + '="' + escapeAttr(a.data[k]) + '"').join("") : "";
+    state.write("<span" + (a.class ? ' class="' + escapeAttr(a.class) + '"' : "") + (a.style ? ' style="' + escapeAttr(a.style) + '"' : "") + dataStr + "></span>");
   } } }; },
 });
 
@@ -631,14 +657,24 @@ function isolateRich(el: HTMLElement, doc: Document) {
 
 function prepareHtml(raw: string): string {
   const doc = new DOMParser().parseFromString(raw, "text/html");
-  // Preserve every <style>/<script> by relocating into <head> BEFORE tokenizing the body —
-  // otherwise document-level styles/scripts get wiped on save. PRESERVING a user's script is
-  // lossless (their files, often Claude-Code-authored — deleting it is the worse failure); it
-  // is SAFE in-app because the head is never injected into the live page (htmlTemplate is only
-  // a save-splice string) and rich blocks render via innerHTML, which never executes <script>.
-  // Body active content is still neutralized by stripActive for live render. Hardening against
-  // genuinely untrusted imported HTML is deferred — see the corpus 'security' subset.
-  doc.querySelectorAll("style, script").forEach((el) => doc.head.appendChild(el));
+  const container = (doc.querySelector("article, main") as HTMLElement) || doc.body;
+  // Preserve <style>/<script> across tokenizing the body (container.innerHTML = token would wipe
+  // anything inside the container). Two different rules, because POSITION matters differently:
+  //   • <style> → <head>: position-independent, so an in-container sheet is safe to hoist.
+  //   • <script> → END of <body> (NOT <head>): an author's wiring script must keep running AFTER
+  //     the DOM it touches exists. The old code dumped EVERY script into <head>, so an end-of-body
+  //     script ran before the spliced content existed — the F32 corruption that silently killed
+  //     tabs/toggles on save and rewrote the file on disk on the next autosave. We detach
+  //     in-container scripts now (so they aren't parsed as editable content) and re-attach them at
+  //     the end of <body> after tokenizing, below. Scripts ALREADY OUTSIDE the container (e.g.
+  //     already at end of <body>) are left untouched and preserved verbatim in place by htmlTemplate.
+  // Preserving a user's script is lossless (their files, often Claude-Code-authored — deleting it is
+  // the worse failure); it is SAFE in-app because the head/body template is never injected into the
+  // live page (htmlTemplate is only a save-splice string) and rich blocks render via innerHTML,
+  // which never executes <script>. Body active content is still neutralized by stripActive for live
+  // render. Hardening against genuinely untrusted imported HTML is deferred — see corpus 'security'.
+  container.querySelectorAll("style").forEach((el) => doc.head.appendChild(el));
+  const heldScripts = Array.from(container.querySelectorAll("script")); heldScripts.forEach((el) => el.remove());
   // Capture the doc's styles to inject into each rich block's SHADOW root — scoped, so
   // they render the content but NEVER leak into the editor chrome (the white-bg bug).
   // Rewrite :root → :host so a doc's custom props (e.g. --font-mono) resolve in the shadow.
@@ -647,7 +683,6 @@ function prepareHtml(raw: string): string {
   // the EDITABLE content without clobbering the chrome (live-only; the original <style> still
   // round-trips verbatim through htmlTemplate's head).
   SCOPED_NOTE_CSS = FULL_PARSE ? scopeCss(Array.from(doc.querySelectorAll("style")).map((s) => s.textContent || "").join("\n"), ".note-scope") : "";
-  const container = (doc.querySelector("article, main") as HTMLElement) || doc.body;
   const hasMarkers = !!container.querySelector("[data-rich-block],[data-calendar],[data-clock]");
   if (FULL_PARSE) {
     // Re-derive rich blocks from CONTENT, not stale markers: drop every data-rich-block wrapper
@@ -686,6 +721,7 @@ function prepareHtml(raw: string): string {
   while (raw.includes(tok)) tok = "%%NOTE_BODY_" + (++n) + "%%";
   BODY_TOKEN = tok;
   container.innerHTML = tok;
+  heldScripts.forEach((el) => doc.body.appendChild(el)); // re-attach in-container scripts at end of <body> (runs after the spliced DOM)
   htmlTemplate = "<!DOCTYPE html>\n" + doc.documentElement.outerHTML;
   return content;
 }
