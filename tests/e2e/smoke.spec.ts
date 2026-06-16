@@ -439,6 +439,37 @@ test("page frame: width-capped-but-not-self-centered doc keeps the editor column
   expect(r.w).toBeLessThanOrEqual(760); // the centered editor column stays
 });
 
+// F39: the page frame can live on the <main>/<article> the editor takes as its CONTAINER and
+// strips to the template (not on an editable child). A doc whose <main class="wrap"> caps width
+// AND centers, while its content has NO width of its OWN, used to lose that frame on edit — and a
+// scoped body{margin:0} then pinned it hard-left. The column must re-cap+center at the container's
+// width so edit mode centers like the browser.
+test("page frame: frame on the stripped container re-caps and centers the column", async ({ page }) => {
+  await openNote(page, "container-frame.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>cf</title><style>body{margin:0}.wrap{max-width:900px;margin:0 auto;padding:0 22px}.project{padding:20px 0;border-top:1px solid #ccc}</style></head><body><header class="wrap"><h1>Header</h1></header><main class="wrap"><div class="project"><h2>One</h2><p>alpha</p></div><div class="project"><h2>Two</h2><p>beta</p></div></main></body></html>\n');
+  await expect(page.locator(".doc.own-frame-cap")).toHaveCount(1);
+  const m = await page.evaluate(() => {
+    const doc = document.querySelector(".doc")!, main = document.querySelector(".layout .main")!;
+    const first = document.querySelector(".ProseMirror > *")!;
+    const dr = doc.getBoundingClientRect(), mr = main.getBoundingClientRect(), fr = first.getBoundingClientRect();
+    return { docW: Math.round(dr.width), capVar: (doc as HTMLElement).style.getPropertyValue("--frame-cap"), lGap: Math.round(fr.left - mr.left), rGap: Math.round(mr.right - fr.right) };
+  });
+  expect(m.capVar).toBe("900px");
+  expect(m.docW).toBe(900);                  // re-capped to the container's width, not the 760 column
+  expect(Math.abs(m.lGap - m.rGap)).toBeLessThanOrEqual(4); // content centered (equal margins), not pinned left
+});
+
+// F39/F18 trap, container edition: a doc whose container self-frames (max-width+margin:auto) but
+// whose content caps its OWN width (attention.html: p{max-width}) only borrows the container for
+// CENTERING — the normal centered column already gives that. It must NOT be re-capped (which would
+// un-center the already-narrow content and pin it left).
+test("page frame: container-framed but content self-capped stays in the editor column", async ({ page }) => {
+  await openNote(page, "container-capped.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>cc</title><style>body{margin:0}.page{max-width:1100px;margin:0 auto;padding:0 22px}p{max-width:680px}</style></head><body><main class="page"><p>A self-capped paragraph.</p><h2>Section</h2><p>more content here</p></main></body></html>\n');
+  const r = await page.evaluate(() => { const d = document.querySelector(".doc")!; return { cap: d.classList.contains("own-frame-cap"), own: d.classList.contains("own-frame"), w: Math.round(d.getBoundingClientRect().width) }; });
+  expect(r.cap).toBe(false);
+  expect(r.own).toBe(false);
+  expect(r.w).toBeLessThanOrEqual(760); // the centered editor column stays
+});
+
 // F14: the app's md-note code theme (purple ink) must not paint over a styled html note.
 test("fidelity: styled note's code is not repainted by the app theme", async ({ page }) => {
   await openNote(page, "codefid.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>c</title><style>code{background:#f0f0ed}</style></head><body><article><p>use <code>foo()</code> here</p></article></body></html>\n');
