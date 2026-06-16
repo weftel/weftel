@@ -24,7 +24,7 @@ import Suggestion from "@tiptap/suggestion";
 import { TextStyle } from "@tiptap/extension-text-style";
 import { Color } from "@tiptap/extension-color";
 import { Highlight } from "@tiptap/extension-highlight";
-import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, subtreeEditable, nativeInsertable, collectSvgTextLeaves, collectSvgTextRuns, collectHtmlTextLeaves, collectHtmlTextRuns, scopeCss, tidyInsertHtml, tidySaveHtml, mdLite, buildTree, countFiles, buildInteractSrcdoc, type TreeNode } from "./lib";
+import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, subtreeEditable, nativeInsertable, collectSvgTextLeaves, collectSvgTextRuns, collectHtmlTextLeaves, collectHtmlTextRuns, scopeCss, tidyInsertHtml, tidySaveHtml, mdLite, buildTree, countFiles, buildInteractSrcdoc, sanitizeRelNotePath, type TreeNode } from "./lib";
 import { DOMSerializer } from "@tiptap/pm/model";
 import { Plugin, TextSelection } from "@tiptap/pm/state";
 
@@ -1597,7 +1597,9 @@ if (note && mount) {
   // ============================ sidebar ============================
   const GLYPH: Record<string, string> = { md: "·", html: "<>", txt: "·" };
   let allNotes: any[] = [];
-  function noteTitle(f: any): string { return f.name.replace(/\.(md|markdown|html?|htm)$/i, "").replace(/[-_]+/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()); }
+  // Show the filename faithfully — strip ONLY the extension, keep dashes/underscores and
+  // the user's own casing (they named the file; don't title-case or reflow it).
+  function noteTitle(f: any): string { return f.name.replace(/\.(md|markdown|html?|htm)$/i, ""); }
 
   // folder tree helpers (buildTree/countFiles) live in lib.ts (pure, unit-tested)
   // expanded-folder state survives the full-page navigations, keyed per vault.
@@ -1645,7 +1647,10 @@ if (note && mount) {
     const filter = document.createElement("input"); filter.className = "filter"; filter.placeholder = "Filter notes…"; filter.value = filterStr;
     filter.oninput = () => renderList(filter.value);
     sb.appendChild(filter);
-    const nb = document.createElement("button"); nb.className = "new"; nb.textContent = "＋ New note"; nb.onclick = () => newNote(); sb.appendChild(nb);
+    const acts0 = document.createElement("div"); acts0.className = "new-row";
+    const nb = document.createElement("button"); nb.className = "new"; nb.textContent = "＋ New note"; nb.onclick = () => newNote();
+    const nfb = document.createElement("button"); nfb.className = "new"; nfb.textContent = "＋ New folder"; nfb.title = "Create a folder (and a first note inside it)"; nfb.onclick = () => newFolder();
+    acts0.appendChild(nb); acts0.appendChild(nfb); sb.appendChild(acts0);
     const list = document.createElement("div"); list.id = "notelist"; sb.appendChild(list);
     renderList(filterStr);
     function renderList(q: string) {
@@ -1672,7 +1677,8 @@ if (note && mount) {
           row.appendChild(car); row.appendChild(ic); row.appendChild(nm); row.appendChild(ct);
           const acts = document.createElement("span"); acts.className = "row-act";
           const nn = document.createElement("button"); nn.textContent = "＋"; nn.title = "New note in this folder"; nn.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); newNote(child.rel); };
-          acts.appendChild(nn); row.appendChild(acts);
+          const nsf = document.createElement("button"); nsf.textContent = "＋📁"; nsf.title = "New subfolder here"; nsf.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); newFolder(child.rel); };
+          acts.appendChild(nn); acts.appendChild(nsf); row.appendChild(acts);
           row.onclick = () => { if (!filtering) { toggleExpanded(child.rel); renderList(q); } };
           list.appendChild(row);
           if (!isCollapsed) renderNode(child, depth + 1);
@@ -1695,20 +1701,34 @@ if (note && mount) {
   async function loadNotes() { try { const { files } = await fetch("/list?dir=" + encodeURIComponent(ROOT)).then((r) => r.json()); allNotes = files || []; renderSidebar(); } catch { renderSidebar(); } }
   async function newNote(folderRel?: string) {
     const where = folderRel ? ` (in ${folderRel}/)` : "";
-    const name = window.prompt("New note name" + where + ":"); if (!name) return;
+    // A "/" in the name nests into subfolders — the server mkdirs them on create.
+    const name = window.prompt("New note name" + where + " — use “/” to nest, e.g. Projects/ideas:"); if (!name) return;
     const wantsHtml = /\.html?$/i.test(name.trim()); // decide ext from raw input…
-    const clean = name.replace(/\.[a-z0-9]+$/i, "").replace(/[^a-zA-Z0-9 _-]/g, "").trim(); // …then strip the ext before cleaning so the dot doesn't get eaten
-    if (!clean) { flash("invalid name", false); return; }
+    const rel = sanitizeRelNotePath(name.replace(/\.(md|markdown|html?|htm)$/i, "")); // …strip ONLY a real note ext (so "report.final" keeps ".final"), then sanitize each segment (keeps "/")
+    if (!rel) { flash("invalid name", false); return; }
     const dir = folderRel ? ROOT + "/" + folderRel : ROOT;
-    const path = dir + "/" + clean + (wantsHtml ? ".html" : ".md");
-    const r = await fetch("/create", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ file: path, content: "# " + clean + "\n\n" }) }).then((x) => x.json());
+    const path = dir + "/" + rel + (wantsHtml ? ".html" : ".md");
+    const title = rel.split("/").pop() || rel; // H1 is the note's own name, not the folder path
+    const r = await fetch("/create", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ file: path, content: "# " + title + "\n\n" }) }).then((x) => x.json());
     if (!r.ok) { flash(r.error || "couldn't create", false); return; }
     go("/?file=" + encodeURIComponent(path));
   }
+  // New folder = create a folder + a first note inside it in one step (an empty folder can't
+  // show in the list, which is built from files). Reuses newNote's prompt for the note name.
+  async function newFolder(parentRel?: string) {
+    const where = parentRel ? ` in ${parentRel}/` : "";
+    const fname = window.prompt("New folder name" + where + " (you'll name a note to put inside it):"); if (!fname) return;
+    const folder = sanitizeRelNotePath(fname); if (!folder) { flash("invalid folder name", false); return; }
+    newNote(parentRel ? parentRel + "/" + folder : folder);
+  }
   async function renameNote(f: any) {
-    const name = window.prompt("Rename note to:", noteTitle(f)); if (!name) return;
-    const clean = name.replace(/[^a-zA-Z0-9 _-]/g, "").trim(); if (!clean) { flash("invalid name", false); return; }
-    const to = f.path.replace(/[^/]+$/, "") + clean + "." + (f.path.split(".").pop());
+    const ext = "." + (f.path.split(".").pop());
+    // Default to the full vault-relative path (sans ext) so a "/" edit MOVES the note into
+    // another folder — rename and move are the same gesture.
+    const name = window.prompt("Rename or move note — edit the path, use “/” to move into a folder:", f.rel.replace(/\.(md|markdown|html?|htm)$/i, "")); if (!name) return;
+    const rel = sanitizeRelNotePath(name); if (!rel) { flash("invalid name", false); return; }
+    const to = ROOT + "/" + rel + ext;
+    if (to === f.path) return; // unchanged
     const r = await fetch("/rename", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ from: f.path, to }) }).then((x) => x.json());
     if (!r.ok) { flash(r.error || "couldn't rename", false); return; }
     if (note && f.path === note.file) go("/?file=" + encodeURIComponent(to)); else loadNotes();
@@ -1765,10 +1785,12 @@ if (!note) {
     location.href = r.first ? "/?file=" + encodeURIComponent(r.first) : "/";
   });
   document.getElementById("ob-new")?.addEventListener("click", async () => {
-    const name = window.prompt("New note name:"); if (!name) return;
-    const clean = name.replace(/[^a-zA-Z0-9 _-]/g, "").trim(); if (!clean) return;
-    const path = ROOT + "/" + clean + ".md";
-    const r = await fetch("/create", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ file: path, content: "# " + clean + "\n\n" }) }).then((x) => x.json());
+    const name = window.prompt("New note name — use “/” to nest, e.g. Projects/ideas:"); if (!name) return;
+    const wantsHtml = /\.html?$/i.test(name.trim());
+    const rel = sanitizeRelNotePath(name.replace(/\.(md|markdown|html?|htm)$/i, "")); if (!rel) return;
+    const path = ROOT + "/" + rel + (wantsHtml ? ".html" : ".md");
+    const title = rel.split("/").pop() || rel;
+    const r = await fetch("/create", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ file: path, content: "# " + title + "\n\n" }) }).then((x) => x.json());
     if (r.ok) location.href = "/?file=" + encodeURIComponent(path); else alert(r.error || "couldn't create");
   });
 }
