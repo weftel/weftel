@@ -798,6 +798,12 @@ const TaskInputRule = Extension.create({
   },
 });
 
+// In-app AI edit (⌘K) — cut for first launch (net-negative on dogfooding; see
+// notes-editor-wiki/quality-gaps.html F23). The plumbing stays behind this flag; the
+// rebuild flips it on. Single source of truth is the server const, injected into the page
+// (server.ts shell()). Off ⇒ no ⌘K keybinding, chip, slash item, or bubble button.
+const AI_EDIT_ENABLED: boolean = !!(window as any).__AI_EDIT_ENABLED;
+
 // Slash menu. Cross-references into the main scope (Ask AI → cmd+K, calendar prompt)
 // go through this hooks object, populated once the editor + helpers exist.
 const slashHooks: { askAI?: () => void; insertEmbed?: (k: string) => void } = {};
@@ -819,7 +825,7 @@ const SLASH_ITEMS: SlashItem[] = [
   { title: "Rich HTML block", group: "Embeds", aliases: "html custom design", run: (e, r) => { del(e, r).run(); slashHooks.insertEmbed?.("rich"); } },
   { title: "Calendar", group: "Embeds", aliases: "gcal google schedule", run: (e, r) => { del(e, r).run(); slashHooks.insertEmbed?.("calendar"); } },
   { title: "Clock", group: "Embeds", aliases: "time live", run: (e, r) => { del(e, r).run(); slashHooks.insertEmbed?.("clock"); } },
-  { title: "Write with AI…", group: "AI", aliases: "generate cmdk diagram ask", run: (e, r) => { del(e, r).run(); slashHooks.askAI?.(); } },
+  ...(AI_EDIT_ENABLED ? [{ title: "Write with AI…", group: "AI", aliases: "generate cmdk diagram ask", run: (e: any, r: any) => { del(e, r).run(); slashHooks.askAI?.(); } } as SlashItem] : []),
 ];
 function filterSlash(query: string): SlashItem[] {
   const q = query.trim().toLowerCase();
@@ -1439,8 +1445,7 @@ if (note && mount) {
     + '<button data-a="link" title="Link">↗</button>'
     + '<label class="cswatch" title="Text color"><input type="color" value="#7c3aed"></label>'
     + '<button data-a="hilite" title="Highlight"><span class="hl">H</span></button>'
-    + '<span class="bsep"></span>'
-    + '<button data-a="ai" class="accent">✦ AI edit</button>';
+    + (AI_EDIT_ENABLED ? '<span class="bsep"></span><button data-a="ai" class="accent">✦ AI edit</button>' : '');
   document.body.appendChild(bubble);
   const colorInput = bubble.querySelector(".cswatch input") as HTMLInputElement;
   colorInput?.addEventListener("input", () => { if (editor) { editor.chain().focus().setColor(colorInput.value).run(); markEdited(); refreshBubble(); } });
@@ -1486,7 +1491,7 @@ if (note && mount) {
     if (!editor) return;
     if (kind === "calendar") { const def = "https://calendar.google.com/calendar/embed?src=benjamingonzales121102%40gmail.com&ctz=America%2FLos_Angeles"; const url = window.prompt("Google Calendar embed URL:", def); if (url) { editor.chain().focus().insertContent({ type: "calendarBlock", attrs: { src: url } }).run(); markEdited(); } }
     else if (kind === "clock") { editor.chain().focus().insertContent({ type: "clockBlock", attrs: { tz: "local" } }).run(); markEdited(); }
-    else if (kind === "rich") { editor.chain().focus().insertContent('<div data-rich-block><div style="padding:16px;border:1px dashed var(--border-strong);border-radius:8px;text-align:center;color:var(--muted)">empty rich block — ⌘K to fill it with AI</div></div>').run(); markEdited(); }
+    else if (kind === "rich") { const hint = AI_EDIT_ENABLED ? "empty rich block — ⌘K to fill it with AI" : "empty rich block — paste or write HTML here"; editor.chain().focus().insertContent('<div data-rich-block><div style="padding:16px;border:1px dashed var(--border-strong);border-radius:8px;text-align:center;color:var(--muted)">' + hint + '</div></div>').run(); markEdited(); }
   }
 
   // ============================ edit / interact mode (resolves boundary K5) ============================
@@ -1569,14 +1574,15 @@ if (note && mount) {
     // In INTERACT mode the editor is hidden — edit/AI shortcuts would mutate it invisibly, so the
     // only keys that apply are ⌘E (above) and Escape (exit). Everything else is ignored.
     else if (interactMode) { if (e.key === "Escape") setMode("edit"); }
-    else if (mod && e.key.toLowerCase() === "k") { e.preventDefault(); openCmdk(); }
+    // ⌘K AI-edit is cut for v1 behind AI_EDIT_ENABLED (F23) — gated so it's a no-op when off.
+    else if (AI_EDIT_ENABLED && mod && e.key.toLowerCase() === "k") { e.preventDefault(); openCmdk(); }
     else if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); flushSave(); }
     else if (mod && (e.key.toLowerCase() === "p" || e.key.toLowerCase() === "o")) { e.preventDefault(); openSwitcher(); }
     else if (e.key === "Escape") { if (cmdk.classList.contains("show")) closeCmdk(); else if (switcher.classList.contains("show")) closeSwitcher(); }
   });
-  document.getElementById("askchip")?.addEventListener("click", openCmdk);
+  if (AI_EDIT_ENABLED) document.getElementById("askchip")?.addEventListener("click", openCmdk);
   // wire slash-menu cross-references now that openCmdk + insertBlock exist
-  slashHooks.askAI = () => openCmdk();
+  if (AI_EDIT_ENABLED) slashHooks.askAI = () => openCmdk();
   slashHooks.insertEmbed = (k: string) => insertBlock(k);
   document.getElementById("insertchip")?.addEventListener("click", () => {
     const k = window.prompt("Insert block: type 'calendar', 'clock', or 'rich'", "clock");
