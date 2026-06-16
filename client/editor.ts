@@ -853,6 +853,54 @@ const TaskInputRule = Extension.create({
   },
 });
 
+// F44: faithful task-list round-trip. Two defects in tiptap-markdown's default taskList
+// serialize (it just calls prosemirror-markdown's renderList):
+//   (a) TIGHT→LOOSE: MarkdownTightLists only registers the `tight` attr on bulletList/
+//       orderedList, never taskList, and the serializer state is built without a
+//       `tightLists` option (so it defaults FALSE). Net: EVERY checklist serialized loose
+//       — a blank line injected between every checkbox on save, even a tight source list.
+//   (b) DOUBLE-BLANK OSCILLATION (non-idempotence): a source that switches bullet marker
+//       between consecutive task items ("- [ ]" then "* [ ]", common in this vault) is two
+//       SEPARATE lists per CommonMark, so PM holds two adjacent taskList nodes. renderList
+//       puts flushClose(3) — a DOUBLE blank line — between adjacent same-type lists. On the
+//       next load those two "-"-marker lists, now blank-separated, MERGE into one loose
+//       list; the following save emits a single blank → save≠reload≠save.
+// Fix: a tight-by-default list renderer that (1) honours a parsed `tight` attr (mirrors
+// MarkdownTightLists' proven <p>-presence heuristic) and (2) keeps adjacent task lists
+// CONTIGUOUS (single newline, no blank gap) so they read back as the one checklist the
+// user sees — idempotent. Parse is inherited from tiptap-markdown's default taskList spec
+// (getMarkdownSpec merges our serialize over it), so the markdown-it task plugin + the
+// data-type=taskList updateDOM still run.
+function renderTightTaskList(state: any, node: any, delim: string, firstDelim: (i: number) => string) {
+  if (state.closed && state.closed.type === node.type) state.flushClose(1); // adjacent same-type list → contiguous, not a 2-blank gap
+  else if (state.inTightList) state.flushClose(1);
+  const isTight = typeof node.attrs.tight !== "undefined" ? node.attrs.tight : true;
+  const prevTight = state.inTightList;
+  state.inTightList = isTight;
+  node.forEach((child: any, _: any, i: number) => {
+    if (i && isTight) state.flushClose(1);
+    state.wrapBlock(delim, firstDelim(i), node, () => state.render(child, node, i));
+  });
+  state.inTightList = prevTight;
+}
+const TaskListMd = TaskList.extend({
+  addAttributes() {
+    return {
+      ...(this.parent?.() || {}),
+      // Same heuristic MarkdownTightLists uses for bullet/ordered lists: a list markdown-it
+      // rendered without <p> wrappers (no blank lines in source) is tight. Default tight.
+      tight: {
+        default: true,
+        parseHTML: (el: any) => el.getAttribute("data-tight") === "true" || !el.querySelector("p"),
+        renderHTML: (attrs: any) => (attrs.tight ? { "data-tight": "true" } : {}),
+      },
+    };
+  },
+  addStorage() {
+    return { markdown: { serialize(state: any, node: any) { renderTightTaskList(state, node, "  ", () => "- "); } } };
+  },
+});
+
 // In-app AI edit (⌘K) — cut for first launch (net-negative on dogfooding; see
 // notes-editor-wiki/quality-gaps.html F23). The plumbing stays behind this flag; the
 // rebuild flips it on. Single source of truth is the server const, injected into the page
@@ -1067,7 +1115,7 @@ if (note && mount) {
     HardBreakMd, // F42: replaces StarterKit's hardBreak so softbreaks round-trip as "\n", not "\\\n"
     ...(FULL_PARSE ? [BoldTagged, ItalicTagged, PreserveAttrs] : []),
     StyledTextStyle, Color, StyledHighlight.configure({ multicolor: true }), InlineStyle,
-    TaskList, TaskItem.configure({ nested: true }), TaskInputRule, MarkdownListFix,
+    TaskListMd, TaskItem.configure({ nested: true }), TaskInputRule, MarkdownListFix,
     Table.configure({ resizable: true }), TableRow, TableHeader, TableCell,
     Callout,
     StyledInlineBox, StyledBox, StyledSpan, DecoSpan, ImageNode, RichBlock, CalendarBlock, ClockBlock,
