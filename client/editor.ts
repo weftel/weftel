@@ -842,6 +842,12 @@ let htmlTemplate: string | null = null; // full original doc with %%NOTE_BODY%% 
 let BODY_TOKEN = "%%NOTE_BODY%%"; // reassigned per-load to a collision-free value (see prepareHtml)
 let RICH_STYLES = ""; // an imported doc's <style> blocks — injected into each rich block's SHADOW root (scoped, no global leak)
 let SCOPED_NOTE_CSS = ""; // FULL_PARSE: the doc's <style> rewritten to the .note-scope wrapper, injected live so classed editable content renders right (never saved)
+// F39: prepareHtml takes the doc's <article>/<main> as the editable CONTAINER and strips it to
+// htmlTemplate — so when that container is the page FRAME (e.g. <main class="wrap"> capping width
+// and centering itself), its frame is absent from the edit surface and the content falls into the
+// editor's plain column (and a scoped body{margin:0} pins it hard-left). Remember the container's
+// identity so own-frame detection can re-apply its frame to the column. (null for body-as-container.)
+let FRAME_CONTAINER: { tag: string; cls: string; style: string } | null = null;
 
 // Pure grouping wrappers — when unstyled, descend THROUGH them to isolate only the minimal
 // unmodelable subtree, instead of freezing a whole wrapper just because one svg sits deep inside.
@@ -866,6 +872,11 @@ function isolateRich(el: HTMLElement, doc: Document) {
 function prepareHtml(raw: string): string {
   const doc = new DOMParser().parseFromString(raw, "text/html");
   const container = (doc.querySelector("article, main") as HTMLElement) || doc.body;
+  // F39: record the container's identity (only when it's a real wrapper, not body) so own-frame
+  // detection can probe whether IT carried the page frame (max-width + margin:auto) the editor stripped.
+  FRAME_CONTAINER = (FULL_PARSE && container !== doc.body)
+    ? { tag: container.tagName.toLowerCase(), cls: container.getAttribute("class") || "", style: container.getAttribute("style") || "" }
+    : null;
   // Preserve <style>/<script> across tokenizing the body (container.innerHTML = token would wipe
   // anything inside the container). Two different rules, because POSITION matters differently:
   //   • <style> → <head>: position-independent, so an in-container sheet is safe to hoist.
@@ -1078,23 +1089,49 @@ if (note && mount) {
       // like attention.html cap every element (p{max-width:680px}) and center via an outer
       // grid the editor doesn't carry — dropping the column for those pins them hard-left.
       // Declared values must come from the CSSOM (computed style resolves `auto` to px).
-      const selfFraming = (el: HTMLElement): boolean => {
-        if (/auto/.test(el.style.margin + " " + el.style.marginLeft) && el.style.maxWidth) return true;
-        const sheet = (document.getElementById("note-scoped") as HTMLStyleElement | null)?.sheet;
-        if (!sheet) return false;
+      // frameInfo reads an element's DECLARED max-width / margin-auto from inline style + the
+      // scoped sheet (matchMedia-gated so a mobile @media override doesn't masquerade as the base).
+      const frameInfo = (el: HTMLElement): { hasMax: boolean; hasAuto: boolean; maxWidth: string } => {
         let hasMax = !!el.style.maxWidth, hasAuto = /auto/.test(el.style.margin + " " + el.style.marginLeft);
-        const walk = (rules: CSSRuleList) => {
-          for (const r of Array.from(rules) as any[]) {
-            // NB: a plain CSSStyleRule ALSO has .cssRules (CSS nesting) — selectorText first
-            if (r.selectorText && r.style) {
-              try { if (!el.matches(r.selectorText)) continue; } catch { continue; }
-              if (r.style.maxWidth) hasMax = true;
-              if (/auto/.test(r.style.marginLeft) || /auto/.test(r.style.margin)) hasAuto = true;
-            } else if (r.cssRules && r.cssRules.length) walk(r.cssRules); // @media etc.
-          }
-        };
-        walk(sheet.cssRules);
-        return hasMax && hasAuto;
+        let maxWidth = el.style.maxWidth || "";
+        const sheet = (document.getElementById("note-scoped") as HTMLStyleElement | null)?.sheet;
+        if (sheet) {
+          const walk = (rules: CSSRuleList) => {
+            for (const r of Array.from(rules) as any[]) {
+              // NB: a plain CSSStyleRule ALSO has .cssRules (CSS nesting) — selectorText first
+              if (r.selectorText && r.style) {
+                try { if (!el.matches(r.selectorText)) continue; } catch { continue; }
+                if (r.style.maxWidth) { hasMax = true; maxWidth = r.style.maxWidth; }
+                if (/auto/.test(r.style.marginLeft) || /auto/.test(r.style.margin)) hasAuto = true;
+              } else if (r.cssRules && r.cssRules.length) {
+                // @media: only count it if it currently applies, so a narrow-viewport override
+                // (or @print) never overwrites the base frame. @supports/others descend as-is.
+                if (r.media && r.media.mediaText) { try { if (!window.matchMedia(r.media.mediaText).matches) continue; } catch {} }
+                walk(r.cssRules);
+              }
+            }
+          };
+          walk(sheet.cssRules);
+        }
+        return { hasMax, hasAuto, maxWidth };
+      };
+      const selfFraming = (el: HTMLElement): boolean => { const f = frameInfo(el); return f.hasMax && f.hasAuto; };
+      // F39: the page frame can live on the stripped <article>/<main> CONTAINER instead of on an
+      // editable child (project-deep-dives: <main class="wrap"> caps+centers, its children don't).
+      // The container isn't in the live DOM, so probe a hidden clone INSIDE .note-scope (so the
+      // scoped descendant rules match it) and read its declared frame. Returns the max-width to
+      // re-cap the column with, or null when the container carries no frame of its own.
+      const containerFrameWidth = (): string | null => {
+        if (!FRAME_CONTAINER) return null;
+        const probe = document.createElement(FRAME_CONTAINER.tag);
+        if (FRAME_CONTAINER.cls) probe.className = FRAME_CONTAINER.cls;
+        if (FRAME_CONTAINER.style) probe.setAttribute("style", FRAME_CONTAINER.style);
+        probe.style.position = "absolute"; probe.style.visibility = "hidden"; probe.style.pointerEvents = "none"; probe.style.height = "0";
+        mount.appendChild(probe);
+        try {
+          const f = frameInfo(probe);
+          return f.hasMax && f.hasAuto && f.maxWidth && f.maxWidth !== "none" ? f.maxWidth : null;
+        } finally { probe.remove(); }
       };
       const first = mount.querySelector(".ProseMirror > *") as HTMLElement | null;
       if (first && selfFraming(first)) {
@@ -1125,6 +1162,16 @@ if (note && mount) {
         OWN_FRAME = true;
         const fc = editor!.state.doc.firstChild;
         if (fc && fc.type.name === "styledBox") setTimeout(() => editor!.chain().focus(fc.nodeSize - 2).run(), 0);
+      } else if (first && !frameInfo(first).hasMax) {
+        // F39: the frame lived on the stripped <main>/<article> container, NOT on an editable
+        // child. Two tells separate this from attention.html (the F18 trap): (1) the container
+        // itself caps width AND centers (margin:auto), and (2) the content has NO width cap of
+        // its OWN — it relied entirely on the container for sizing. attention fails (2): it caps
+        // every element (p{max-width}) and only borrows the container for centering, so it must
+        // stay in the normal centered column. When both hold, re-cap+center the column at the
+        // container's width so edit mode matches the browser instead of falling hard-left.
+        const cw = containerFrameWidth();
+        if (cw) { mount.style.setProperty("--frame-cap", cw); mount.classList.add("own-frame-cap"); }
       }
     });
   }
