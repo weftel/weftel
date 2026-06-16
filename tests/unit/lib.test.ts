@@ -429,6 +429,16 @@ test("buildInteractSrcdoc: leaves the doc's own bytes/scripts in place (no reser
 test("sanitizeRelNotePath: preserves a plain name with dashes/underscores and casing", () => {
   expect(sanitizeRelNotePath("My-Note_v2")).toBe("My-Note_v2");
 });
+test("sanitizeRelNotePath: keeps dots inside a name (dated / versioned titles)", () => {
+  expect(sanitizeRelNotePath("Meeting 2024.01")).toBe("Meeting 2024.01");
+  expect(sanitizeRelNotePath("v1.2")).toBe("v1.2");
+  expect(sanitizeRelNotePath("report.final")).toBe("report.final");
+});
+test("sanitizeRelNotePath: strips LEADING dots per segment — no hidden files, no traversal", () => {
+  expect(sanitizeRelNotePath(".ssh")).toBe("ssh");
+  expect(sanitizeRelNotePath("Projects/.git/x")).toBe("Projects/git/x");
+  expect(sanitizeRelNotePath("...hidden")).toBe("hidden");
+});
 test("sanitizeRelNotePath: keeps '/' as a folder separator (nesting)", () => {
   expect(sanitizeRelNotePath("Projects/ideas/spec")).toBe("Projects/ideas/spec");
 });

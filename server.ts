@@ -9,7 +9,7 @@
 //   bun run server.ts [file-or-folder]
 //   open http://localhost:4321/
 //
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, renameSync, mkdirSync, realpathSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, renameSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { resolve, extname, basename, dirname, sep, join } from "node:path";
 import { createHash } from "node:crypto";
 import { query } from "@anthropic-ai/claude-agent-sdk";
@@ -113,7 +113,8 @@ function fsErrMsg(e: any): string {
     case "EISDIR": return "that name is a folder";
     case "ENAMETOOLONG": return "the name is too long";
     case "EROFS": return "the folder is read-only";
-    default: return String((e && e.message) || e);
+    // Don't leak the absolute vault path (which String(e.message) embeds) — just the code.
+    default: return "couldn't complete that operation (" + ((e && e.code) || "error") + ")";
   }
 }
 function toTrash(p: string) {
@@ -448,7 +449,11 @@ Bun.serve({
         // recursive mkdir can only ever materialize dirs UNDER an in-vault ancestor (no escape).
         const parent = dirname(p);
         if (!inVault(parent)) return json({ ok: false, error: "path not allowed" }, 403);
-        try { mkdirSync(parent, { recursive: true }); atomicWrite(p, String(body.content ?? "")); return json({ ok: true, path: p }); } catch (e) { return json({ ok: false, error: fsErrMsg(e) }, 500); }
+        // mkdirSync(recursive) returns the FIRST dir it created (or undefined). If the write then
+        // fails, roll those new dirs back so a failed/abusive create can't accumulate empty dirs.
+        let made: string | undefined;
+        try { made = mkdirSync(parent, { recursive: true }); atomicWrite(p, String(body.content ?? "")); return json({ ok: true, path: p }); }
+        catch (e) { if (made) try { rmSync(made, { recursive: true, force: true }); } catch {} return json({ ok: false, error: fsErrMsg(e) }, 500); }
       }
       if (url.pathname === "/rename") {
         const a = resolve(String(body.from || "")), b = resolve(String(body.to || ""));
@@ -459,7 +464,9 @@ Bun.serve({
         // in-vault guarantee as /create above.
         const parent = dirname(b);
         if (!inVault(parent)) return json({ ok: false, error: "path not allowed" }, 403);
-        try { mkdirSync(parent, { recursive: true }); renameSync(a, b); return json({ ok: true, path: b }); } catch (e) { return json({ ok: false, error: fsErrMsg(e) }, 500); }
+        let made: string | undefined;
+        try { made = mkdirSync(parent, { recursive: true }); renameSync(a, b); return json({ ok: true, path: b }); }
+        catch (e) { if (made) try { rmSync(made, { recursive: true, force: true }); } catch {} return json({ ok: false, error: fsErrMsg(e) }, 500); }
       }
       if (url.pathname === "/delete") {
         const p = resolve(String(body.file || ""));

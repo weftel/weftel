@@ -1704,7 +1704,7 @@ if (note && mount) {
     // A "/" in the name nests into subfolders — the server mkdirs them on create.
     const name = window.prompt("New note name" + where + " — use “/” to nest, e.g. Projects/ideas:"); if (!name) return;
     const wantsHtml = /\.html?$/i.test(name.trim()); // decide ext from raw input…
-    const rel = sanitizeRelNotePath(name.replace(/\.[a-z0-9]+$/i, "")); // …strip ext first so the dot isn't eaten, then sanitize each segment (keeps "/")
+    const rel = sanitizeRelNotePath(name.replace(/\.(md|markdown|html?|htm)$/i, "")); // …strip ONLY a real note ext (so "report.final" keeps ".final"), then sanitize each segment (keeps "/")
     if (!rel) { flash("invalid name", false); return; }
     const dir = folderRel ? ROOT + "/" + folderRel : ROOT;
     const path = dir + "/" + rel + (wantsHtml ? ".html" : ".md");
@@ -1725,7 +1725,7 @@ if (note && mount) {
     const ext = "." + (f.path.split(".").pop());
     // Default to the full vault-relative path (sans ext) so a "/" edit MOVES the note into
     // another folder — rename and move are the same gesture.
-    const name = window.prompt("Rename or move note — edit the path, use “/” to move into a folder:", f.rel.replace(/\.[a-z0-9]+$/i, "")); if (!name) return;
+    const name = window.prompt("Rename or move note — edit the path, use “/” to move into a folder:", f.rel.replace(/\.(md|markdown|html?|htm)$/i, "")); if (!name) return;
     const rel = sanitizeRelNotePath(name); if (!rel) { flash("invalid name", false); return; }
     const to = ROOT + "/" + rel + ext;
     if (to === f.path) return; // unchanged
@@ -1787,7 +1787,7 @@ if (!note) {
   document.getElementById("ob-new")?.addEventListener("click", async () => {
     const name = window.prompt("New note name — use “/” to nest, e.g. Projects/ideas:"); if (!name) return;
     const wantsHtml = /\.html?$/i.test(name.trim());
-    const rel = sanitizeRelNotePath(name.replace(/\.[a-z0-9]+$/i, "")); if (!rel) return;
+    const rel = sanitizeRelNotePath(name.replace(/\.(md|markdown|html?|htm)$/i, "")); if (!rel) return;
     const path = ROOT + "/" + rel + (wantsHtml ? ".html" : ".md");
     const title = rel.split("/").pop() || rel;
     const r = await fetch("/create", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ file: path, content: "# " + title + "\n\n" }) }).then((x) => x.json());
