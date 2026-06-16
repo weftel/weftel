@@ -232,9 +232,10 @@ function styles(): string {
   .folder-row .row-act button{font:inherit;font-size:11px;color:var(--subtle);background:transparent;border:none;cursor:pointer;padding:1px 4px;border-radius:4px}
   .folder-row .row-act button:hover{color:var(--text);background:var(--surface)}
   .note-empty{font-size:12px;color:var(--subtle);padding:8px 10px;font-style:italic}
-  /* F24: the note pane fills at least the viewport below the ~40px bar, so a short/dark
-     note's own background (set on .main by F6) covers the whole pane — no app-gray strip. */
-  .main{flex:1;min-width:0;min-height:calc(100vh - 40px)}
+  /* F24: the note pane fills at least the viewport below the bar, so a short/dark
+     note's own background (set on .main by F6) covers the whole pane — no app-gray strip.
+     Bar height comes from the measured --bar-h var (F34) so it stays exact at any bar size. */
+  .main{flex:1;min-width:0;min-height:calc(100vh - var(--bar-h, 40px))}
   .doc{max-width:760px;margin:0 auto;padding:40px 32px 22vh}
   .doc.own-frame{max-width:none;padding:0 0 22vh} /* self-framing doc: its own CSS rules the page frame */
   .stale-bar{position:fixed;top:0;left:0;right:0;z-index:9999;background:#d97706;color:#fff;font-size:13.5px;font-weight:600;text-align:center;padding:8px 12px}
