@@ -1147,15 +1147,31 @@ if (note && mount) {
   };
   W.__serialize = serialize; // test seam: read the exact bytes a save would write (corpus harness)
 
-  // Clicking the empty space below/around the doc must CONTINUE the note, not blur the
-  // editor (a click there focused <body> and typing went nowhere). Caret goes to the end;
-  // in a self-framed doc the escape-trap then folds typed content into the page.
+  // Clicking the empty space around the doc must keep the caret in the editor, not blur it
+  // (a click there focused <body> and typing went nowhere). The vertical position decides
+  // WHERE: a click genuinely BELOW all content continues the note at the end (F20; in a
+  // self-framed doc the escape-trap then folds typed content into the page). A click in the
+  // SIDE gutter beside the text — Y still within content — must land on the nearest line at
+  // that Y (F38), NOT hijack the caret to doc-end. We resolve it with posAtCoords, X clamped
+  // into the text column so the point falls on the line the user aimed at.
   document.querySelector(".layout .main")?.addEventListener("mousedown", (e) => {
     if (interactMode) return; // the sandboxed preview owns the pane — don't steal focus to the editor
     const t = e.target as HTMLElement | null;
     if (!editor || !t || t.closest(".ProseMirror") || t.closest("a,button,input,select,textarea")) return;
     e.preventDefault();
-    editor.chain().focus("end").run();
+    const pm = editor.view.dom.getBoundingClientRect();
+    // The PM box carries min-height padding below the last line, so use the last child's
+    // bottom as the true content end — the discriminator for "below content" vs "beside it".
+    const last = editor.view.dom.lastElementChild as HTMLElement | null;
+    const contentBottom = last ? last.getBoundingClientRect().bottom : pm.bottom;
+    if (e.clientY > contentBottom) { editor.chain().focus("end").run(); return; } // below all content → continue the note (F20)
+    // Side gutter at a Y within content: map to the nearest line, X clamped into the column,
+    // Y clamped below the first line so a click above the top maps to the start, never the end.
+    const left = Math.min(Math.max(e.clientX, pm.left + 1), pm.right - 1);
+    const top = Math.max(e.clientY, pm.top + 1);
+    const hit = editor.view.posAtCoords({ left, top });
+    if (hit && typeof hit.pos === "number") editor.chain().focus(hit.pos).run();
+    else editor.chain().focus("end").run();
   });
 
   // -------- stale-tab guard --------
