@@ -57,6 +57,18 @@ test("shouldRequestGhost: needs at least GHOST_MIN_CONTEXT chars of real text", 
   expect(shouldRequestGhost({ ...ok(), textBefore: "a".repeat(GHOST_MIN_CONTEXT) })).toBe(true);
 });
 
+test("shouldRequestGhost: [next-edit] a pattern context fires even on an empty/short item (A→B)", () => {
+  // the "type 'A', Enter, Tab → 'B'" moment: empty new list item, but a pattern precedes it
+  expect(shouldRequestGhost({ ...ok(), blockType: "listItem", textBefore: "", hasPatternContext: true })).toBe(true);
+  expect(shouldRequestGhost({ ...ok(), blockType: "listItem", textBefore: "A", hasPatternContext: true })).toBe(true);
+  expect(shouldRequestGhost({ ...ok(), blockType: "tableCell", textBefore: "", hasPatternContext: true })).toBe(true);
+  // without a preceding pattern, the min-context rule still blocks an empty/short item
+  expect(shouldRequestGhost({ ...ok(), blockType: "listItem", textBefore: "", hasPatternContext: false })).toBe(false);
+  // pattern context does NOT override the hard gates (selection / atTextEnd / code / rich)
+  expect(shouldRequestGhost({ ...ok(), textBefore: "", hasPatternContext: true, atTextEnd: false })).toBe(false);
+  expect(shouldRequestGhost({ ...ok(), textBefore: "", hasPatternContext: true, inCodeBlock: true, blockType: null })).toBe(false);
+});
+
 // ───────────────────────── buildGhostPrompt — the server prompt ─────────────────────────
 test("buildGhostPrompt: tight, embeds the context, and asks for continuation only", () => {
   const p = buildGhostPrompt("paragraph", "The meeting agenda is");

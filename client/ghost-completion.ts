@@ -49,6 +49,32 @@ function blockTypeAt($from: any): string | null {
   return fallback;
 }
 
+// [next-edit] Is the cursor in a list/table position where a REPEATING PATTERN already precedes it,
+// so a completion is worth offering even though the current item is empty or short? This is the
+// "type 'A', Enter, Tab → 'B'" moment that the basic gate's min-context rule (≥3 chars) blocks — yet
+// the FIM model continues the pattern reliably (measured 8/8) once it sees the preceding items in the
+// prefix. True when a preceding sibling list item, or the cell to the left / directly above in a
+// table, already has text. Conservative: needs a non-empty precedent, so a fresh empty list never fires.
+function hasPatternContext($from: any): boolean {
+  for (let d = $from.depth; d >= 1; d--) {
+    const name = $from.node(d).type.name;
+    if (name === "listItem" || name === "taskItem") {
+      const list = $from.node(d - 1), idx = $from.index(d - 1);
+      for (let i = 0; i < idx; i++) if ((list.child(i).textContent || "").trim()) return true;
+      return false;
+    }
+    if (name === "tableCell" || name === "tableHeader") {
+      if (d < 2) return false;
+      const row = $from.node(d - 1), cellIdx = $from.index(d - 1);
+      const table = $from.node(d - 2), rowIdx = $from.index(d - 2);
+      if (cellIdx > 0 && (row.child(cellIdx - 1).textContent || "").trim()) return true;        // cell to the left
+      if (rowIdx > 0) { const above = table.child(rowIdx - 1); if (cellIdx < above.childCount && (above.child(cellIdx).textContent || "").trim()) return true; } // cell above (column fill-down)
+      return false;
+    }
+  }
+  return false;
+}
+
 // [AI:ghost] FIM context window: how much document text (around the cursor) to send as the
 // fill-in-the-middle prefix/suffix. Bounded so a small local model stays fast and focused; the
 // prefix is richer than the block alone (preceding paragraphs help the model continue coherently),
@@ -81,7 +107,7 @@ function readCursor(editor: Editor): CursorCtx {
   return {
     pos: sel.empty ? sel.from : -1,
     blockType, textBefore, prefix, suffix,
-    gate: { selectionEmpty: !!sel.empty, atTextEnd, inCodeBlock, inRichBlock, blockType, textBefore },
+    gate: { selectionEmpty: !!sel.empty, atTextEnd, inCodeBlock, inRichBlock, blockType, textBefore, hasPatternContext: hasPatternContext($from) },
   };
 }
 
