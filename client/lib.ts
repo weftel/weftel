@@ -566,10 +566,13 @@ export function parseClockTz(intent: string): string | null {
 
 // A CALLOUT instruction → its kind attr (info/tip/warn), so "make this a warning" recolors the
 // existing callout in place. null → unrecognized (the kinds the editor renders are info/tip/warn).
+// Guard: an AUTHORING request ("write a tip about X") is content, not a kind change — bow out so it
+// routes to generation instead of silently recoloring the callout.
 export function parseCalloutKind(intent: string): "info" | "tip" | "warn" | null {
   const t = (intent || "").toLowerCase();
+  if (/\b(write|add|create|insert|list|draft|generate|compose|fill)\b/.test(t) || REWRITE_VERBS.test(t)) return null;
   if (/\b(warn|warning|caution|danger|alert|stop|error|important)\b/.test(t)) return "warn";
-  if (/\b(tip|success|good|positive|hint|pro[- ]?tip|do\b)\b/.test(t)) return "tip";
+  if (/\b(tip|success|good|positive|hint|pro[- ]?tip)\b/.test(t)) return "tip";
   if (/\b(info|information|note|neutral|fyi)\b/.test(t)) return "info";
   return null;
 }
@@ -606,4 +609,36 @@ export function cleanProseResult(s: string): string {
   t = t.replace(/^\s*(sure[,.! ]+|certainly[,.! ]+|here(?:'s| is| are)[^\n:]{0,60}:\s*)/i, "");
   if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("“") && t.endsWith("”"))) t = t.slice(1, -1);
   return t.trim();
+}
+
+// [AI:cmdk] Route a ⌘K instruction, given a lightweight CONTEXT — the primary target kind plus
+// whether the caret/selection sits IN OR ON a table or callout. This is the brittle bit a hands-on
+// dogfood caught: a text selection (or cell-selection) inside a table classified as "prose", so
+// "add row" never reached parseTableIntent and fell through to the model (which then timed out).
+// The fix, kept pure + unit-tested: a NATIVE-BLOCK instruction wins whenever we're in/on that block,
+// regardless of whether a text range is selected — so it stays deterministic and never duplicates a
+// block. Everything else keeps the selection-first behavior (format marks, then model generation).
+export type CmdkRoute =
+  | { kind: "table"; op: TableOp }
+  | { kind: "callout"; calloutKind: "info" | "tip" | "warn" }
+  | { kind: "clock"; tz: string }
+  | { kind: "calendar"; src: string }
+  | { kind: "format"; op: FormatOp }
+  | { kind: "ai"; mode: "rich" | "prose" | "author" }
+  | { kind: "hint"; target: "clock" | "calendar" | "callout" | "table" };
+export function routeCmdkIntent(ctx: { kind: string; inTable?: boolean; inCallout?: boolean }, intent: string): CmdkRoute {
+  // 1. In/on a native block → its structural/attr op takes priority (no model call, can't duplicate).
+  if (ctx.inTable) { const op = parseTableIntent(intent); if (op) return { kind: "table", op }; }
+  if (ctx.inCallout) { const k = parseCalloutKind(intent); if (k) return { kind: "callout", calloutKind: k }; }
+  // 2. Node-selected dynamic atoms (clock / calendar): attr edit, or a hint if unrecognized.
+  if (ctx.kind === "clock") { const tz = parseClockTz(intent); return tz ? { kind: "clock", tz } : { kind: "hint", target: "clock" }; }
+  if (ctx.kind === "calendar") { const src = (intent.match(/https?:\/\/\S+/) || [])[0]; return src ? { kind: "calendar", src } : { kind: "hint", target: "calendar" }; }
+  // 3. A callout/table as the PRIMARY target with no matching native instruction → hint, NOT
+  //    generation (generation beside an existing block is the duplication failure we're avoiding).
+  if (ctx.kind === "callout") { const k = parseCalloutKind(intent); return k ? { kind: "callout", calloutKind: k } : { kind: "hint", target: "callout" }; }
+  if (ctx.kind === "table") return { kind: "hint", target: "table" };
+  // 4. Prose selection: a formatting command → real marks; anything else → model rewrite.
+  if (ctx.kind === "prose") { const op = parseFormatIntent(intent); return op ? { kind: "format", op } : { kind: "ai", mode: "prose" }; }
+  // 5. Rich block → model (pure HTML); bare caret → model author.
+  return { kind: "ai", mode: ctx.kind === "rich" ? "rich" : "author" };
 }

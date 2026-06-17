@@ -25,7 +25,7 @@ import Suggestion from "@tiptap/suggestion";
 import { TextStyle } from "@tiptap/extension-text-style";
 import { Color } from "@tiptap/extension-color";
 import { Highlight } from "@tiptap/extension-highlight";
-import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, subtreeEditable, nativeInsertable, collectSvgTextLeaves, collectSvgTextRuns, collectHtmlTextLeaves, collectHtmlTextRuns, scopeCss, tidyInsertHtml, tidySaveHtml, mdLite, buildTree, countFiles, buildInteractSrcdoc, sanitizeRelNotePath, parseFormatIntent, parseClockTz, parseCalloutKind, parseTableIntent, type FormatOp, type TableOp, type TreeNode } from "./lib"; // [AI:cmdk] intent recognizers
+import { stripActive, escapeAttr, spliceBody, GENERIC_INLINE_PROPS, filterInlineStyle, proseModelable, editableModelable, subtreeEditable, nativeInsertable, collectSvgTextLeaves, collectSvgTextRuns, collectHtmlTextLeaves, collectHtmlTextRuns, scopeCss, tidyInsertHtml, tidySaveHtml, mdLite, buildTree, countFiles, buildInteractSrcdoc, sanitizeRelNotePath, routeCmdkIntent, type FormatOp, type TableOp, type TreeNode } from "./lib"; // [AI:cmdk] intent router
 import { DOMSerializer } from "@tiptap/pm/model";
 import { Plugin, TextSelection } from "@tiptap/pm/state";
 
@@ -1501,28 +1501,37 @@ if (note && mount) {
   function openCmdk() {
     if (!editor) return;
     const sel: any = editor.state.selection;
+    // [AI:cmdk] Block CONTEXT, computed for EVERY selection shape (cursor in a cell, a cell-selection,
+    // a text range, a node-selection): does the caret/selection sit in or on a table / callout? A
+    // hands-on dogfood found that a text selection inside a table was classified "prose", so "add
+    // row" fell through to the model. These flags let routeCmdkIntent prioritize the native op.
+    const tblAnc = enclosing(["table"]);                     // $from-based → works for any selection type
+    const coAnc = enclosing(["callout"]);
+    const isCellSel = !!sel.$anchorCell;                     // prosemirror-tables CellSelection (cells dragged)
     let tgt: any = null;
     if (sel.node) {                                          // a block node is selected (atom) — target it directly
       const n = sel.node.type.name;
       if (n === "richBlock") tgt = { kind: "rich", nodeType: n, pos: sel.from, html: sel.node.attrs.html };
       else if (n === "clockBlock") tgt = { kind: "clock", nodeType: n, pos: sel.from };
       else if (n === "calendarBlock") tgt = { kind: "calendar", nodeType: n, pos: sel.from };
-      else if (n === "callout") tgt = { kind: "callout", nodeType: n, pos: sel.from };
+      else if (n === "callout") tgt = { kind: "callout", nodeType: n, pos: sel.from, calloutPos: sel.from };
+      else if (n === "table") tgt = { kind: "table", tableAnchor: sel.from + 1 };
     }
     if (!tgt) {
-      const text = sel.empty ? "" : editor.state.doc.textBetween(sel.from, sel.to, " ");
-      if (text) tgt = { kind: "prose", from: sel.from, to: sel.to, text };  // selection is PRIMARY
+      if (isCellSel) tgt = { kind: "table" };                // cells selected → structural target
       else {
-        const tbl = enclosing(["table"]); const co = enclosing(["callout"]); // cursor inside a content block?
-        if (tbl) tgt = { kind: "table", anchor: tbl.anchor };
-        else if (co) tgt = { kind: "callout", nodeType: "callout", pos: co.pos };
-        else tgt = { kind: "author", from: sel.from };       // bare caret → author new content
+        const text = sel.empty ? "" : editor.state.doc.textBetween(sel.from, sel.to, " ");
+        if (text) tgt = { kind: "prose", from: sel.from, to: sel.to, text };  // a text range is PRIMARY
+        else tgt = { kind: "author", from: sel.from };       // bare caret → author (in-cell / in-callout too)
       }
     }
+    // attach block context so a native instruction routes deterministically regardless of primary kind
+    if (tblAnc) { tgt.inTable = true; if (tgt.tableAnchor == null) tgt.tableAnchor = tblAnc.anchor; }
+    if (coAnc) { tgt.inCallout = true; if (tgt.calloutPos == null) tgt.calloutPos = coAnc.pos; }
     cmdkTarget = tgt;
     cmdkHint.textContent = tgt.kind === "prose"
       ? "“" + tgt.text.slice(0, 52) + (tgt.text.length > 52 ? "…" : "") + "” — format, rewrite, or transform"
-      : (CMDK_HINT[tgt.kind] || "");
+      : tgt.inTable ? CMDK_HINT.table : tgt.inCallout ? CMDK_HINT.callout : (CMDK_HINT[tgt.kind] || "");
     let left = 60, top = 130;
     const s = window.getSelection();
     if (s && s.rangeCount && String(s)) { const r = s.getRangeAt(0).getBoundingClientRect(); if (r.width || r.height) { left = r.left; top = r.bottom + window.scrollY + 8; } }
@@ -1552,18 +1561,19 @@ if (note && mount) {
   }
   // Patch a native block's attrs IN PLACE (re-validating the captured position) — never inserts a
   // second block (the old ⌘K's failure). Returns false + a hint if the node moved/changed.
-  function setNodeAttrs(t: any, patch: any): boolean {
-    if (typeof t.pos !== "number") return false;
-    const node = editor!.state.doc.nodeAt(t.pos);
-    if (!node || node.type.name !== t.nodeType) { cmdkHint.textContent = "block moved — reopen ⌘K"; return false; }
-    const pos = t.pos, attrs = { ...node.attrs, ...patch };
+  function setNodeAttrsAt(pos: number | undefined, nodeType: string, patch: any): boolean {
+    if (typeof pos !== "number") return false;
+    const node = editor!.state.doc.nodeAt(pos);
+    if (!node || node.type.name !== nodeType) { cmdkHint.textContent = "block moved — reopen ⌘K"; return false; }
+    const attrs = { ...node.attrs, ...patch };
     editor!.chain().command(({ tr }: any) => { tr.setNodeMarkup(pos, undefined, attrs); return true; }).run(); // undoable
     return true;
   }
-  // Run a structural TipTap table command on the table the cursor was in.
-  function runTableOp(t: any, op: TableOp) {
+  // Run a structural TipTap table command on the table the cursor was in — restore the caret into
+  // the table first (the cmdk input had focus) so the command resolves the right cell.
+  function runTableOp(anchor: number | undefined, op: TableOp) {
     const chain: any = editor!.chain().focus();
-    if (typeof t.anchor === "number") chain.setTextSelection(t.anchor);
+    if (typeof anchor === "number") chain.setTextSelection(anchor);
     chain[op]().run();
   }
 
@@ -1602,37 +1612,28 @@ if (note && mount) {
     if (e.key !== "Enter" || !cmdkTarget || !cmdkInput.value.trim() || !editor) return;
     const intent = cmdkInput.value.trim(); const t = cmdkTarget;
 
-    // 1) Deterministic, in-app ops — handled WITHOUT the model so they can't duplicate a block or
-    //    emit a literal markdown mark. Unrecognized instructions on a native block show a hint
-    //    (we do NOT fall through to generation for those — generation is what used to duplicate them).
-    if (t.kind === "prose") {
-      const fmt = parseFormatIntent(intent);
-      if (fmt) { applyFormat(t, fmt); markEdited(); closeCmdk(); flash("formatted"); return; }
-    } else if (t.kind === "clock") {
-      const tz = parseClockTz(intent);
-      if (tz) { if (setNodeAttrs(t, { tz })) { markEdited(); closeCmdk(); flash("clock → " + tz); } return; }
-      cmdkHint.textContent = "name a zone — “PT”, “UTC”, “Tokyo”…"; return;
-    } else if (t.kind === "calendar") {
-      const url = (intent.match(/https?:\/\/\S+/) || [])[0];
-      if (url) { if (setNodeAttrs(t, { src: url })) { markEdited(); closeCmdk(); flash("calendar updated"); } return; }
-      cmdkHint.textContent = "paste a Google Calendar embed URL"; return;
-    } else if (t.kind === "callout") {
-      const kind = parseCalloutKind(intent);
-      if (kind) { if (setNodeAttrs(t, { kind })) { markEdited(); closeCmdk(); flash("callout → " + kind); } return; }
-      cmdkHint.textContent = "try “make it a warning / tip / info”"; return;
-    } else if (t.kind === "table") {
-      const op = parseTableIntent(intent);
-      if (op) { runTableOp(t, op); markEdited(); closeCmdk(); flash("table updated"); return; }
-      cmdkHint.textContent = "try “add a row”, “delete column”, “toggle header”"; return;
-    }
+    // 1) Deterministic, in-app ops — routed WITHOUT the model so they can't duplicate a block or
+    //    emit a literal markdown mark. A native-block instruction wins whenever the caret/selection
+    //    is in or on that block (routeCmdkIntent), so "add row" with text selected in a cell adds a
+    //    row — it no longer falls through to generation. Unrecognized native instructions → a hint
+    //    (never generation, which is what used to duplicate the block).
+    const TABLE_HINT = "try “add a row”, “delete column”, “toggle header”";
+    const HINT_FOR: Record<string, string> = { clock: "name a zone — “PT”, “UTC”, “Tokyo”…", calendar: "paste a Google Calendar embed URL", callout: "try “make it a warning / tip / info”", table: TABLE_HINT };
+    const route = routeCmdkIntent({ kind: t.kind, inTable: t.inTable, inCallout: t.inCallout }, intent);
+    if (route.kind === "table") { runTableOp(t.tableAnchor, route.op); markEdited(); closeCmdk(); flash("table updated"); return; }
+    if (route.kind === "callout") { if (setNodeAttrsAt(t.calloutPos, "callout", { kind: route.calloutKind })) { markEdited(); closeCmdk(); flash("callout → " + route.calloutKind); } return; }
+    if (route.kind === "clock") { if (setNodeAttrsAt(t.pos, "clockBlock", { tz: route.tz })) { markEdited(); closeCmdk(); flash("clock → " + route.tz); } return; }
+    if (route.kind === "calendar") { if (setNodeAttrsAt(t.pos, "calendarBlock", { src: route.src })) { markEdited(); closeCmdk(); flash("calendar updated"); } return; }
+    if (route.kind === "format") { applyFormat(t, route.op); markEdited(); closeCmdk(); flash("formatted"); return; }
+    if (route.kind === "hint") { cmdkHint.textContent = HINT_FOR[route.target]; return; }
 
     // 2) Generative path — only rich / author / prose-rewrite reach the model. Stream the result.
+    const mode = route.mode;
     cmdkInput.disabled = true; cmdkHint.textContent = "thinking with your Claude…";
-    const mode = t.kind === "rich" ? "rich" : t.kind === "author" ? "author" : "prose";
     const prompt = buildCmdkPrompt(t, mode, intent);
     try {
       const res = await fetch("/rewrite", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt, mode }) });
-      const reader = res.body!.getReader(); const dec = new TextDecoder(); let buf = ""; let preview = ""; let r: any = null;
+      const reader = res.body!.getReader(); const dec = new TextDecoder(); let buf = ""; let preview = ""; let r: any = null; let gotChunk = false; let serverErr = "";
       while (true) {
         const { value, done } = await reader.read(); if (done) break;
         buf += dec.decode(value, { stream: true });
@@ -1641,12 +1642,21 @@ if (note && mount) {
           const line = buf.slice(0, i); buf = buf.slice(i + 2);
           if (!line.startsWith("data: ")) continue;
           const obj = JSON.parse(line.slice(6));
-          if (obj.chunk) { preview += obj.chunk; cmdkHint.textContent = preview.replace(/\s+/g, " ").trim().slice(-90) || "…"; }
+          if (obj.chunk) { gotChunk = true; preview += obj.chunk; cmdkHint.textContent = preview.replace(/\s+/g, " ").trim().slice(-90) || "…"; }
           else if (obj.done) r = obj.done;
-          else if (obj.error) { cmdkInput.disabled = false; cmdkHint.textContent = "failed: " + obj.error; return; }
+          else if (obj.error) { serverErr = obj.error; }
         }
       }
-      if (!r || !r.ok || !r.text) { cmdkInput.disabled = false; cmdkHint.textContent = "failed: " + ((r && r.error) || "empty"); return; }
+      // Honest failure UX: tell a reported error / a cut-off stream / a truly-empty result apart
+      // (the bare "failed: empty" masked a 10s idleTimeout drop on cold model starts).
+      if (!r || !r.ok || !r.text) {
+        cmdkInput.disabled = false;
+        cmdkHint.textContent = serverErr ? "failed: " + serverErr
+          : !r && gotChunk ? "response was cut off — try again"
+          : !r ? "no response (timed out?) — try again"
+          : "AI returned nothing — try again";
+        return;
+      }
       // [AI:cmdk] diff-gate goes here — the rendered diff-approve gate (separate track) wraps the
       // applyAiResult call below: surface `r` as a proposed diff, await accept/reject, and commit
       // ONLY on accept. applyAiResult is the single commit chokepoint, so the gate has one seam.

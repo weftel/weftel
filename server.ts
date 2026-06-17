@@ -427,6 +427,12 @@ function json(data: unknown, status = 200) { return Response.json(data as any, {
 
 Bun.serve({
   port: PORT,
+  // [AI:cmdk] Bun's default idleTimeout is 10s — it KILLED streaming /rewrite responses on a cold
+  // model start (first token > 10s with no bytes yet), surfacing to the user as a bare "failed:
+  // empty". Raise it to Bun's max (255s) so slow/cold model streams (and /ghost later) survive; once
+  // tokens flow, each chunk resets the idle clock, so steady streaming never trips it. Fast routes
+  // (save/list) are unaffected. (0 would fully disable it; a finite cap still reaps dead sockets.)
+  idleTimeout: 255,
   async fetch(req) {
     const url = new URL(req.url);
     if (url.pathname === "/editor.js") return new Response(EDITOR_JS, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" } });

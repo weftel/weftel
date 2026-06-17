@@ -4,7 +4,7 @@ import { test, expect } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 if (typeof (globalThis as any).document === "undefined") GlobalRegistrator.register();
 
-import { stripActive, spliceBody, proseModelable, editableModelable, subtreeEditable, scopeCss, filterInlineStyle, escapeAttr, mdLite, buildTree, countFiles, sanitizeRelNotePath, tidySaveHtml, hasInteractiveScript, hasOwnStyling, buildInteractSrcdoc, BASE_NOTE_CSS, isSvgTextLeaf, collectSvgTextLeaves, svgDirectTextRuns, collectSvgTextRuns, isHtmlTextLeaf, collectHtmlTextLeaves, htmlDirectTextRuns, collectHtmlTextRuns, inForeignObject, parseFormatIntent, parseClockTz, parseCalloutKind, parseTableIntent, stripCodeFence, cleanProseResult } from "../../client/lib";
+import { stripActive, spliceBody, proseModelable, editableModelable, subtreeEditable, scopeCss, filterInlineStyle, escapeAttr, mdLite, buildTree, countFiles, sanitizeRelNotePath, tidySaveHtml, hasInteractiveScript, hasOwnStyling, buildInteractSrcdoc, BASE_NOTE_CSS, isSvgTextLeaf, collectSvgTextLeaves, svgDirectTextRuns, collectSvgTextRuns, isHtmlTextLeaf, collectHtmlTextLeaves, htmlDirectTextRuns, collectHtmlTextRuns, inForeignObject, parseFormatIntent, parseClockTz, parseCalloutKind, parseTableIntent, stripCodeFence, cleanProseResult, routeCmdkIntent } from "../../client/lib";
 
 // ───────────────────────── spliceBody — the $-corruption bug ─────────────────────────
 const TOKEN = "%%NOTE_BODY%%";
@@ -532,4 +532,42 @@ test("cleanProseResult: de-narrates + unwraps quotes (produce the artifact, not 
   expect(cleanProseResult('"The cat sat."')).toBe("The cat sat.");
   expect(cleanProseResult("Sure, done. The cat sat.")).toBe("done. The cat sat."); // only the lead-in token is stripped
   expect(cleanProseResult("```\nThe cat sat.\n```")).toBe("The cat sat.");
+});
+
+// ───────────── routeCmdkIntent — the routing-bug regression (dogfood F-found) ─────────────
+// The bug: a text selection (or cell-selection) INSIDE a table classified as "prose", so a table
+// instruction never reached parseTableIntent and fell through to the model. The router must put a
+// native-block instruction first whenever the caret/selection is in/on that block.
+
+test("routeCmdkIntent: 'add row' with a TEXT SELECTION in a table → table op, NOT the model (the bug)", () => {
+  expect(routeCmdkIntent({ kind: "prose", inTable: true }, "add row")).toEqual({ kind: "table", op: "addRowAfter" });
+  expect(routeCmdkIntent({ kind: "prose", inTable: true }, "add a row")).toEqual({ kind: "table", op: "addRowAfter" });
+  // cell-selection context (primary kind table) routes the same
+  expect(routeCmdkIntent({ kind: "table", inTable: true }, "delete column")).toEqual({ kind: "table", op: "deleteColumn" });
+});
+
+test("routeCmdkIntent: in-table but a non-table instruction still does the right thing", () => {
+  // a format command on selected cell text → real marks, not a table op
+  expect(routeCmdkIntent({ kind: "prose", inTable: true }, "bold this")).toEqual({ kind: "format", op: { op: "bold" } });
+  // a genuine rewrite on selected cell text → the model (prose), not a spurious table op
+  expect(routeCmdkIntent({ kind: "prose", inTable: true }, "rephrase this")).toEqual({ kind: "ai", mode: "prose" });
+  // bare caret in a cell + a non-table instruction → author (write into the cell)
+  expect(routeCmdkIntent({ kind: "author", inTable: true }, "write a haiku")).toEqual({ kind: "ai", mode: "author" });
+});
+
+test("routeCmdkIntent: callout kind change wins in-callout; authoring does not mis-fire", () => {
+  expect(routeCmdkIntent({ kind: "prose", inCallout: true }, "make it a warning")).toEqual({ kind: "callout", calloutKind: "warn" });
+  // "write a tip about X" is authoring, not a kind change → model author, callout NOT recolored
+  expect(routeCmdkIntent({ kind: "author", inCallout: true }, "write a tip about deploys")).toEqual({ kind: "ai", mode: "author" });
+});
+
+test("routeCmdkIntent: node-selected atoms + plain prose/rich/author route as before", () => {
+  expect(routeCmdkIntent({ kind: "clock" }, "change to PT")).toEqual({ kind: "clock", tz: "America/Los_Angeles" });
+  expect(routeCmdkIntent({ kind: "clock" }, "make it spin")).toEqual({ kind: "hint", target: "clock" });
+  expect(routeCmdkIntent({ kind: "calendar" }, "https://cal.example/x")).toEqual({ kind: "calendar", src: "https://cal.example/x" });
+  expect(routeCmdkIntent({ kind: "callout" }, "rewrite the text")).toEqual({ kind: "hint", target: "callout" });
+  expect(routeCmdkIntent({ kind: "prose" }, "bold this")).toEqual({ kind: "format", op: { op: "bold" } });
+  expect(routeCmdkIntent({ kind: "prose" }, "make it more concise")).toEqual({ kind: "ai", mode: "prose" });
+  expect(routeCmdkIntent({ kind: "rich" }, "make the grid 6x6")).toEqual({ kind: "ai", mode: "rich" });
+  expect(routeCmdkIntent({ kind: "author" }, "a table of fruits")).toEqual({ kind: "ai", mode: "author" });
 });
