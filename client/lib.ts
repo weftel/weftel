@@ -518,12 +518,16 @@ export function shouldRequestGhost(ctx: {
   inRichBlock: boolean;      // out of scope — frozen / class-styled rich block
   blockType: string | null;  // mapped TipTap node name, or null if none of the supported kinds
   textBefore: string;        // the block text up to the cursor
+  hasPatternContext?: boolean; // [next-edit] a repeating list/table pattern precedes the cursor
 }): boolean {
   if (!ctx.selectionEmpty) return false;
   if (ctx.inCodeBlock || ctx.inRichBlock) return false;
   if (!ctx.atTextEnd) return false;
   if (!ctx.blockType || !GHOST_BLOCK_TYPES.has(ctx.blockType)) return false;
-  if (ctx.textBefore.trim().length < GHOST_MIN_CONTEXT) return false;
+  // [next-edit] Normally we need a few chars of current-block text to continue. But in a list/table
+  // where a pattern already precedes the cursor, fire even on an empty/short item — that's the
+  // "type 'A', Enter, Tab → 'B'" moment, and the FIM model continues the sequence from the prefix.
+  if (!ctx.hasPatternContext && ctx.textBefore.trim().length < GHOST_MIN_CONTEXT) return false;
   return true;
 }
 
