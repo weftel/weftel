@@ -557,7 +557,7 @@ Bun.serve({
         const blockType = String(body.blockType || "paragraph");
         const context = String(body.context || "").slice(0, 4000); // bound the prompt; ghosts use local context only
         if (!context.trim()) return json({ ok: false, error: "no context" }, 400);
-        const model = "haiku"; // fast; SINGLE call-site — swap to a faster/local model here later
+        const { model } = modelInfo(); // [AI:model-layer] config-driven (PROVIDER/MODEL env) — set PROVIDER=ollama MODEL=qwen2.5-coder:1.5b for fast local Tab; "haiku" by default
         const r = await streamAI(buildGhostPrompt(blockType, context), model, () => {});
         if (!r.ok) return json({ ok: false, error: r.error }, 502);
         return json({ ok: true, text: cleanGhostCompletion(r.out) });
