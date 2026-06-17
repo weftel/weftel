@@ -17,8 +17,9 @@ export default defineConfig({
     timeout: 20_000,
     reuseExistingServer: false,
     // AI calls record/replay through this dir; AI_OFFLINE=1 (in CI) errors on a miss.
-    // [AI:cmdk] forward AI_EDIT_ENABLED so the orchestrator can turn ⌘K on for a run with one env
-    // var (server gates the /rewrite route + client UI on it): `AI_EDIT_ENABLED=1 bun run e2e`.
-    env: { PORT: String(PORT), AI_CACHE: "tests/e2e/.ai-cache", AI_OFFLINE: process.env.AI_OFFLINE || "", AI_EDIT_ENABLED: process.env.AI_EDIT_ENABLED || "" },
+    // [AI:integration] forward all AI feature flags so one run can exercise the whole stack: ⌘K +
+    // diff-gate (AI_EDIT_ENABLED), Tab ghost (GHOST_TEXT_ENABLED), gate on/off (DIFF_GATE), and the
+    // provider/model (PROVIDER/MODEL). e.g. `AI_EDIT_ENABLED=1 GHOST_TEXT_ENABLED=1 bun run e2e`.
+    env: { PORT: String(PORT), AI_CACHE: "tests/e2e/.ai-cache", AI_OFFLINE: process.env.AI_OFFLINE || "", AI_EDIT_ENABLED: process.env.AI_EDIT_ENABLED || "", GHOST_TEXT_ENABLED: process.env.GHOST_TEXT_ENABLED || "", DIFF_GATE: process.env.DIFF_GATE || "", PROVIDER: process.env.PROVIDER || "", MODEL: process.env.MODEL || "" },
   },
 });
