@@ -585,3 +585,159 @@ export function joinGhost(textBefore: string, completion: string): string {
 export function ghostTabAction(ghostVisible: boolean): "accept" | "fallthrough" {
   return ghostVisible ? "accept" : "fallthrough";
 }
+
+// ── ⌘K intent routing (rebuild) ───────────────────────────────────────────────
+// [AI:cmdk] The old ⌘K sent EVERY instruction to the model, which then (1) emitted literal
+// markdown into prose ("**bold**" as text, not a real mark) and (2) "edited" a native block by
+// generating a fresh one BESIDE it. The fix is a deterministic client-side router that handles
+// the surgical cases WITHOUT a model call: a formatting verb on a text selection becomes a real
+// editor mark; a native-block instruction becomes an ATTR/STRUCTURE change on that exact node.
+// Only genuine generation (rewrite prose, author content, rebuild an HTML block) reaches the AI.
+// These recognizers are pure + unit-tested; editor.ts maps their output to TipTap commands.
+
+// Content-generation verbs — if present, the instruction is a REWRITE/GENERATE task, never a
+// one-word format command, so the format recognizer bows out and lets the AI path take it.
+const REWRITE_VERBS = /\b(rewrite|rephrase|paraphrase|summar|shorten|expand|elaborat|translat|explain|describe|continue|simplif|proofread|correct|draft|generate|compose|reword)\b/;
+// Named colors → a concrete value (so "make it red" sets a real color mark). Hex passes through.
+const NAMED_COLORS: Record<string, string> = {
+  red: "#e5484d", orange: "#f76808", amber: "#ffb224", yellow: "#fde047", gold: "#f5d90a",
+  green: "#30a46c", teal: "#12a594", cyan: "#05a2c2", blue: "#3b82f6", indigo: "#3e63dd",
+  violet: "#7c3aed", purple: "#8e4ec6", magenta: "#c2298a", pink: "#e93d82",
+  gray: "#8b8d98", grey: "#8b8d98", black: "#1c1c1e", white: "#ffffff",
+};
+function colorFrom(s: string): string | null {
+  const hex = s.match(/#[0-9a-f]{3,8}\b/i);
+  if (hex) return hex[0];
+  for (const name in NAMED_COLORS) if (new RegExp("\\b" + name + "\\b").test(s)) return NAMED_COLORS[name];
+  return null;
+}
+
+// A FORMATTING instruction on selected text → a real editor mark, applied client-side (never
+// inserted as literal markdown). Returns null when the instruction isn't a short format command
+// (it then falls through to the AI prose-rewrite path). Marks supported: the ones the editor
+// actually has (bold/italic/strike/code/highlight/color + clear) — no underline (no extension).
+export type FormatOp =
+  | { op: "bold" | "italic" | "strike" | "code" | "clear" }
+  | { op: "highlight"; color?: string }
+  | { op: "color"; color: string };
+export function parseFormatIntent(intent: string): FormatOp | null {
+  const raw = (intent || "").trim().toLowerCase();
+  if (!raw) return null;
+  if (REWRITE_VERBS.test(raw)) return null;                 // a content op, not a format command
+  if (raw.split(/\s+/).length > 6) return null;             // a sentence → a rewrite, not "bold this"
+  const has = (re: RegExp) => re.test(raw);
+  if (has(/\bbold|embolden|\bstrong\b/)) return { op: "bold" };
+  if (has(/\bitalic|italici[sz]e|\bemphasi[sz]e\b/)) return { op: "italic" };
+  if (has(/\bstrike|strikethrough\b/) || (has(/\bcross\b/) && has(/\bout\b/))) return { op: "strike" };
+  if (has(/\b(inline )?code\b|monospace|\bmono\b/)) return { op: "code" };
+  if (has(/\bhighlight|\bmarker\b/)) { const c = colorFrom(raw); return c ? { op: "highlight", color: c } : { op: "highlight" }; }
+  if (has(/\b(clear|remove|reset|strip)\b/) && has(/\b(format|formatting|style|styling|marks?)\b/)) return { op: "clear" };
+  const c = colorFrom(raw);
+  if (c && (has(/\bcolou?r\b/) || raw.split(/\s+/).length <= 3)) return { op: "color", color: c };
+  return null;
+}
+
+// A CLOCK instruction → an IANA timezone for the node's `tz` attr (so "change clock to PT" edits
+// the existing block, never spawns a second one). Common abbreviations + a few city names; a raw
+// IANA zone typed directly ("America/Sao_Paulo") is accepted too. Longest alias match wins so
+// "pacific" isn't shadowed by an incidental "pt". null → unrecognized (editor.ts shows a hint).
+const TZ_ALIASES: Record<string, string> = {
+  pt: "America/Los_Angeles", pst: "America/Los_Angeles", pdt: "America/Los_Angeles", pacific: "America/Los_Angeles", la: "America/Los_Angeles",
+  mt: "America/Denver", mst: "America/Denver", mdt: "America/Denver", mountain: "America/Denver", denver: "America/Denver",
+  ct: "America/Chicago", cst: "America/Chicago", cdt: "America/Chicago", central: "America/Chicago", chicago: "America/Chicago",
+  et: "America/New_York", est: "America/New_York", edt: "America/New_York", eastern: "America/New_York", nyc: "America/New_York", "new york": "America/New_York",
+  utc: "UTC", gmt: "UTC", zulu: "UTC", z: "UTC",
+  london: "Europe/London", uk: "Europe/London", paris: "Europe/Paris", berlin: "Europe/Berlin", cet: "Europe/Paris",
+  tokyo: "Asia/Tokyo", japan: "Asia/Tokyo", jst: "Asia/Tokyo",
+  india: "Asia/Kolkata", ist: "Asia/Kolkata", delhi: "Asia/Kolkata",
+  sydney: "Australia/Sydney", aest: "Australia/Sydney",
+  local: "local",
+};
+export function parseClockTz(intent: string): string | null {
+  const t = (intent || "").toLowerCase();
+  let best: string | null = null, bestLen = 0;
+  for (const k in TZ_ALIASES) {
+    if (new RegExp("\\b" + k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b").test(t) && k.length > bestLen) { best = TZ_ALIASES[k]; bestLen = k.length; }
+  }
+  if (!best) { const iana = (intent || "").match(/\b[A-Z][A-Za-z]+\/[A-Za-z_]+\b/); if (iana) best = iana[0]; }
+  return best;
+}
+
+// A CALLOUT instruction → its kind attr (info/tip/warn), so "make this a warning" recolors the
+// existing callout in place. null → unrecognized (the kinds the editor renders are info/tip/warn).
+// Guard: an AUTHORING request ("write a tip about X") is content, not a kind change — bow out so it
+// routes to generation instead of silently recoloring the callout.
+export function parseCalloutKind(intent: string): "info" | "tip" | "warn" | null {
+  const t = (intent || "").toLowerCase();
+  if (/\b(write|add|create|insert|list|draft|generate|compose|fill)\b/.test(t) || REWRITE_VERBS.test(t)) return null;
+  if (/\b(warn|warning|caution|danger|alert|stop|error|important)\b/.test(t)) return "warn";
+  if (/\b(tip|success|good|positive|hint|pro[- ]?tip)\b/.test(t)) return "tip";
+  if (/\b(info|information|note|neutral|fyi)\b/.test(t)) return "info";
+  return null;
+}
+
+// A TABLE instruction → a structural TipTap table command name, applied to the table the cursor
+// is in (so the edit targets THAT table, never a duplicate). null → unrecognized (cell *content*
+// is edited by normal typing; this is only the add/remove-row/column structure).
+export type TableOp = "addRowAfter" | "addRowBefore" | "addColumnAfter" | "addColumnBefore" | "deleteRow" | "deleteColumn" | "deleteTable" | "toggleHeaderRow";
+export function parseTableIntent(intent: string): TableOp | null {
+  const t = (intent || "").toLowerCase();
+  if (/\b(delete|remove|drop)\b.*\btable\b/.test(t)) return "deleteTable";
+  if (/\b(toggle|add|remove)?\s*header\b/.test(t)) return "toggleHeaderRow";
+  const isRow = /\brow\b/.test(t), isCol = /\bcolumn|\bcol\b/.test(t);
+  const del = /\b(delete|remove|drop)\b/.test(t);
+  const before = /\b(above|before|left|top)\b/.test(t);
+  if (del && isRow) return "deleteRow";
+  if (del && isCol) return "deleteColumn";
+  if (/\b(add|new|insert)\b/.test(t) && isRow) return before ? "addRowBefore" : "addRowAfter";
+  if (/\b(add|new|insert)\b/.test(t) && isCol) return before ? "addColumnBefore" : "addColumnAfter";
+  return null;
+}
+
+// [AI:cmdk] Output-format hygiene shared by server (post-AI) and client. Strip a ```lang fence
+// the model sometimes wraps output in despite the "no code fences" rule (criterion 4: produce the
+// artifact, not a presentation of it). Pure string op — safe under Bun (no DOM).
+export function stripCodeFence(s: string): string {
+  const m = (s || "").trim().match(/^```[a-zA-Z0-9]*\n([\s\S]*?)\n?```$/);
+  return (m ? m[1] : (s || "")).trim();
+}
+// Clean a PROSE result: de-fence, drop a leading "Sure," / "Here's …:" narration lead-in, and
+// unwrap a wholly-quoted block — so a stray conversational reply still lands as the bare artifact.
+export function cleanProseResult(s: string): string {
+  let t = stripCodeFence(s);
+  t = t.replace(/^\s*(sure[,.! ]+|certainly[,.! ]+|here(?:'s| is| are)[^\n:]{0,60}:\s*)/i, "");
+  if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("“") && t.endsWith("”"))) t = t.slice(1, -1);
+  return t.trim();
+}
+
+// [AI:cmdk] Route a ⌘K instruction, given a lightweight CONTEXT — the primary target kind plus
+// whether the caret/selection sits IN OR ON a table or callout. This is the brittle bit a hands-on
+// dogfood caught: a text selection (or cell-selection) inside a table classified as "prose", so
+// "add row" never reached parseTableIntent and fell through to the model (which then timed out).
+// The fix, kept pure + unit-tested: a NATIVE-BLOCK instruction wins whenever we're in/on that block,
+// regardless of whether a text range is selected — so it stays deterministic and never duplicates a
+// block. Everything else keeps the selection-first behavior (format marks, then model generation).
+export type CmdkRoute =
+  | { kind: "table"; op: TableOp }
+  | { kind: "callout"; calloutKind: "info" | "tip" | "warn" }
+  | { kind: "clock"; tz: string }
+  | { kind: "calendar"; src: string }
+  | { kind: "format"; op: FormatOp }
+  | { kind: "ai"; mode: "rich" | "prose" | "author" }
+  | { kind: "hint"; target: "clock" | "calendar" | "callout" | "table" };
+export function routeCmdkIntent(ctx: { kind: string; inTable?: boolean; inCallout?: boolean }, intent: string): CmdkRoute {
+  // 1. In/on a native block → its structural/attr op takes priority (no model call, can't duplicate).
+  if (ctx.inTable) { const op = parseTableIntent(intent); if (op) return { kind: "table", op }; }
+  if (ctx.inCallout) { const k = parseCalloutKind(intent); if (k) return { kind: "callout", calloutKind: k }; }
+  // 2. Node-selected dynamic atoms (clock / calendar): attr edit, or a hint if unrecognized.
+  if (ctx.kind === "clock") { const tz = parseClockTz(intent); return tz ? { kind: "clock", tz } : { kind: "hint", target: "clock" }; }
+  if (ctx.kind === "calendar") { const src = (intent.match(/https?:\/\/\S+/) || [])[0]; return src ? { kind: "calendar", src } : { kind: "hint", target: "calendar" }; }
+  // 3. A callout/table as the PRIMARY target with no matching native instruction → hint, NOT
+  //    generation (generation beside an existing block is the duplication failure we're avoiding).
+  if (ctx.kind === "callout") { const k = parseCalloutKind(intent); return k ? { kind: "callout", calloutKind: k } : { kind: "hint", target: "callout" }; }
+  if (ctx.kind === "table") return { kind: "hint", target: "table" };
+  // 4. Prose selection: a formatting command → real marks; anything else → model rewrite.
+  if (ctx.kind === "prose") { const op = parseFormatIntent(intent); return op ? { kind: "format", op } : { kind: "ai", mode: "prose" }; }
+  // 5. Rich block → model (pure HTML); bare caret → model author.
+  return { kind: "ai", mode: ctx.kind === "rich" ? "rich" : "author" };
+}
