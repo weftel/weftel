@@ -30,6 +30,7 @@ import { DOMSerializer } from "@tiptap/pm/model";
 import { diffApprove } from "./diff-viewer"; // [AI:diff-gate]
 import { Plugin, TextSelection } from "@tiptap/pm/state";
 import { mountGhostCompletion } from "./ghost-completion"; // [AI:ghost] Tab ghost-text controller
+import { commandsFor, FILE_COMMANDS, type Entry, type CmdCtx } from "./commands"; // [fm-sidebar] file/folder command registry — the context menu is built from this
 
 // F42: soft line breaks (a single "\n" with no blank line) must render like Obsidian's
 // default — a visible line break — not collapse onto the previous line the way strict
@@ -1912,6 +1913,17 @@ if (note && mount) {
   // ============================ sidebar ============================
   const GLYPH: Record<string, string> = { md: "·", html: "<>", txt: "·" };
   let allNotes: any[] = [];
+  // [fm-sidebar / Track C] new sidebar state. allDirs is the /list `dirs` array (added by the
+  // server at integration → seeds empty folders); empty until then. trashCache lazy-loads from
+  // /trash. curFilter + rerenderList let the menu / star / sort handlers re-render just the list
+  // (preserving the filter input + focus) instead of rebuilding the whole sidebar chrome.
+  let allDirs: string[] = [];
+  let curMenu: HTMLElement | null = null;
+  let dragEntry: Entry | null = null;
+  let trashCache: any[] | null = null, trashLoading = false, trashErr = "";
+  let curFilter = "";
+  let rerenderList: (q?: string) => void = () => {};
+  injectSidebarStyles();
   // Show the filename faithfully — strip ONLY the extension, keep dashes/underscores and
   // the user's own casing (they named the file; don't title-case or reflow it).
   function noteTitle(f: any): string { return f.name.replace(/\.(md|markdown|html?|htm)$/i, ""); }
@@ -1951,69 +1963,407 @@ if (note && mount) {
     go(r.first ? "/?file=" + encodeURIComponent(r.first) : "/");
   }
 
-  function renderSidebar(filterStr = "") {
-    const sb = document.getElementById("sidebar"); if (!sb) return;
-    const dir = ROOT;
-    sb.innerHTML = "";
-    const head = document.createElement("button"); head.className = "vault"; head.title = "Switch vault — open another folder";
-    head.innerHTML = '<span>📁 <span class="vname"></span></span><span class="vcaret">⌄</span>';
-    (head.querySelector(".vname") as HTMLElement).textContent = dir.split("/").pop() || dir;
-    head.onclick = openVault; sb.appendChild(head);
-    const filter = document.createElement("input"); filter.className = "filter"; filter.placeholder = "Filter notes…"; filter.value = filterStr;
-    filter.oninput = () => renderList(filter.value);
-    sb.appendChild(filter);
-    const acts0 = document.createElement("div"); acts0.className = "new-row";
-    const nb = document.createElement("button"); nb.className = "new"; nb.textContent = "＋ New note"; nb.onclick = () => newNote();
-    const nfb = document.createElement("button"); nfb.className = "new"; nfb.textContent = "＋ New folder"; nfb.title = "Create a folder (and a first note inside it)"; nfb.onclick = () => newFolder();
-    acts0.appendChild(nb); acts0.appendChild(nfb); sb.appendChild(acts0);
-    const list = document.createElement("div"); list.id = "notelist"; sb.appendChild(list);
-    renderList(filterStr);
-    function renderList(q: string) {
-      const ql = q.toLowerCase();
-      list.innerHTML = "";
-      const filtered = allNotes.filter((f) => !ql || f.rel.toLowerCase().includes(ql) || noteTitle(f).toLowerCase().includes(ql));
-      if (!filtered.length) { const e = document.createElement("div"); e.className = "note-empty"; e.textContent = ql ? "No matching notes" : "No notes yet"; list.appendChild(e); return; }
-      const tree = buildTree(filtered);
-      const filtering = !!ql; // while filtering, force-expand so every match is visible
-      const expanded = loadExpanded();
-      const pinned = activeAncestors(); // ancestors of the open note: always expanded
-      renderNode(tree, 0);
-
-      // dirs first (alpha), then files (by title); indentation by depth
-      function renderNode(node: TreeNode, depth: number) {
-        [...node.dirs.keys()].sort((a, b) => a.localeCompare(b)).forEach((seg) => {
-          const child = node.dirs.get(seg)!;
-          const isCollapsed = !filtering && !expanded.has(child.rel) && !pinned.has(child.rel);
-          const row = document.createElement("div"); row.className = "folder-row"; row.style.paddingLeft = (10 + depth * 13) + "px"; row.title = child.rel;
-          const car = document.createElement("span"); car.className = "fcaret"; car.textContent = isCollapsed ? "▶" : "▼";
-          const ic = document.createElement("span"); ic.className = "ficon"; ic.textContent = isCollapsed ? "📁" : "📂";
-          const nm = document.createElement("span"); nm.className = "fname"; nm.textContent = seg;
-          const ct = document.createElement("span"); ct.className = "fcount"; ct.textContent = String(countFiles(child));
-          row.appendChild(car); row.appendChild(ic); row.appendChild(nm); row.appendChild(ct);
-          const acts = document.createElement("span"); acts.className = "row-act";
-          const nn = document.createElement("button"); nn.textContent = "＋"; nn.title = "New note in this folder"; nn.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); newNote(child.rel); };
-          const nsf = document.createElement("button"); nsf.textContent = "＋📁"; nsf.title = "New subfolder here"; nsf.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); newFolder(child.rel); };
-          acts.appendChild(nn); acts.appendChild(nsf); row.appendChild(acts);
-          row.onclick = () => { if (!filtering) { toggleExpanded(child.rel); renderList(q); } };
-          list.appendChild(row);
-          if (!isCollapsed) renderNode(child, depth + 1);
-        });
-        node.files.sort((a, b) => noteTitle(a).localeCompare(noteTitle(b))).forEach((f) => {
-          const a = document.createElement("a"); a.className = "note-link" + (note && f.path === note.file ? " active" : ""); a.style.paddingLeft = (10 + depth * 13) + "px";
-          const gl = document.createElement("span"); gl.className = "gl"; gl.textContent = GLYPH[f.fmt] || "·";
-          const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = noteTitle(f); nm.title = f.rel;
-          a.appendChild(gl); a.appendChild(nm);
-          const acts = document.createElement("span"); acts.className = "row-act";
-          const rn = document.createElement("button"); rn.textContent = "rename"; rn.title = "rename"; rn.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); renameNote(f); };
-          const dl = document.createElement("button"); dl.textContent = "✕"; dl.title = "delete"; dl.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); deleteNote(f); };
-          acts.appendChild(rn); acts.appendChild(dl); a.appendChild(acts);
-          a.onclick = (ev) => { ev.preventDefault(); go("/?file=" + encodeURIComponent(f.path)); };
-          list.appendChild(a);
-        });
+  // ── [fm-sidebar / Track C] explorer + sections helpers ───────────────────────
+  // CSS for the new sidebar is injected from the client (no server.ts edits): one <style> tag.
+  function injectSidebarStyles() {
+    if (document.getElementById("fm-sidebar-styles")) return;
+    const s = document.createElement("style"); s.id = "fm-sidebar-styles";
+    s.textContent = `
+  .fm-toolbar{display:flex;align-items:center;gap:4px;margin:6px 0 8px}
+  .fm-tool{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:26px;padding:0 7px;font:inherit;font-size:13px;color:var(--muted);background:transparent;border:1px solid var(--border);border-radius:7px;cursor:pointer}
+  .fm-tool:hover{color:var(--accent-ink);border-color:var(--accent-line);background:var(--accent-tint)}
+  .fm-tb-spacer{flex:1}
+  .fm-sort{font:inherit;font-size:11.5px;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:0 4px;height:26px;cursor:pointer;max-width:118px}
+  .fm-sort:hover{color:var(--text);border-color:var(--border-strong)}
+  .fm-section{margin-bottom:2px}
+  .fm-section-head{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:7px;cursor:pointer;user-select:none;font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+  .fm-section-head:hover{background:var(--accent-tint);color:var(--text)}
+  .fm-sec-caret{font-size:8px;width:9px;flex:none;color:var(--subtle)}
+  .fm-sec-icon{font-size:11px;flex:none}
+  .fm-sec-title{flex:1;overflow:hidden;text-overflow:ellipsis}
+  .fm-sec-count{font-size:10px;color:var(--subtle);font-weight:600}
+  .fm-section.collapsed .fm-section-body{display:none}
+  .fm-section-body{padding-bottom:4px}
+  .fm-empty{font-size:11.5px;color:var(--subtle);padding:5px 12px;font-style:italic}
+  .fm-chip{flex:none;font-size:8.5px;font-weight:700;letter-spacing:.04em;line-height:1.45;padding:1px 4px;border-radius:3px;color:#fff}
+  .fm-chip.md{background:#2f6bd4}
+  .fm-chip.html{background:#7c4dd6}
+  .fm-chip.txt{background:#52525e}
+  .fm-reltime{margin-left:auto;font-size:10px;color:var(--subtle);flex:none;padding-left:6px}
+  .note-link:hover .fm-reltime{display:none}
+  .note-link .row-act .fm-star,.folder-row .row-act .fm-star{font-size:12px;line-height:1}
+  .fm-star.on{color:var(--accent-ink)}
+  .fm-kebab{font-size:14px;font-weight:700;line-height:1}
+  .fm-menu{position:fixed;z-index:80;min-width:188px;max-width:264px;background:var(--surface);border:1px solid var(--border-strong);border-radius:9px;box-shadow:0 12px 40px rgba(0,0,0,.34);padding:5px}
+  .fm-menu-item{display:block;width:100%;text-align:left;font:inherit;font-size:13px;color:var(--text);background:transparent;border:none;border-radius:6px;padding:6px 10px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .fm-menu-item:hover{background:var(--accent-tint)}
+  .fm-menu-item.danger{color:var(--risk)}
+  .fm-menu-item.danger:hover{background:rgba(214,51,108,.14)}
+  .fm-menu-sep{height:1px;background:var(--border);margin:5px 8px}
+  .fm-menu-fieldlabel{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);padding:5px 10px 3px}
+  .fm-menu-field{padding:2px}
+  .fm-rename-input{width:100%;min-width:120px;font:inherit;font-size:13px;color:var(--text);background:var(--bg);border:1px solid var(--accent-line);border-radius:6px;padding:4px 7px;outline:none}
+  .fm-drop-target{outline:2px solid var(--accent);outline-offset:-2px;background:var(--accent-tint)!important;border-radius:7px}
+  .fm-trash-entry{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);padding:5px 10px;border-radius:7px}
+  .fm-trash-entry:hover{background:var(--accent-tint)}
+  .fm-trash-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .fm-trash-restore{font:inherit;font-size:11px;color:var(--accent-ink);background:transparent;border:1px solid var(--border);border-radius:5px;padding:1px 7px;cursor:pointer;flex:none}
+  .fm-trash-restore:hover{border-color:var(--accent-line);background:var(--accent-tint)}`;
+    document.head.appendChild(s);
+  }
+  // MD/HTML/TXT chip label (replaces the faint glyph) + relative-time label for Recent.
+  function chipLabel(fmt: string): string { return fmt === "html" ? "HTML" : fmt === "md" ? "MD" : "TXT"; }
+  function relTime(ms?: number): string {
+    if (!ms) return "";
+    const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+    if (s < 45) return "just now";
+    const m = Math.floor(s / 60); if (m < 60) return m + "m";
+    const h = Math.floor(m / 60); if (h < 24) return h + "h";
+    const d = Math.floor(h / 24); if (d < 7) return d + "d";
+    const w = Math.floor(d / 7); if (w < 5) return w + "w";
+    const mo = Math.floor(d / 30); if (mo < 12) return mo + "mo";
+    return Math.floor(d / 365) + "y";
+  }
+  // favorites (starred rel-paths), sort choice, and section-collapse — all persisted per-vault.
+  function favKey() { return "tree-favorites:" + ROOT; }
+  function loadFavorites(): Set<string> { try { return new Set(JSON.parse(localStorage.getItem(favKey()) || "[]")); } catch { return new Set(); } }
+  function toggleFavorite(rel: string) { const s = loadFavorites(); s.has(rel) ? s.delete(rel) : s.add(rel); try { localStorage.setItem(favKey(), JSON.stringify([...s])); } catch {} }
+  function sortKey() { return "tree-sort:" + ROOT; }
+  function loadSort(): string { try { return localStorage.getItem(sortKey()) || "name"; } catch { return "name"; } }
+  function saveSort(v: string) { try { localStorage.setItem(sortKey(), v); } catch {} }
+  function sectionsKey() { return "tree-sections:" + ROOT; }
+  function loadCollapsedSections(): Set<string> { try { const r = localStorage.getItem(sectionsKey()); if (r != null) return new Set(JSON.parse(r)); } catch {} return new Set(["trash"]); /* Trash starts collapsed (it lazy-loads) */ }
+  function toggleSection(id: string) { const s = loadCollapsedSections(); s.has(id) ? s.delete(id) : s.add(id); try { localStorage.setItem(sectionsKey(), JSON.stringify([...s])); } catch {} }
+  // Seed empty dirs (from /list `dirs`) into a tree so folders with no files still render.
+  function seedDirs(tree: TreeNode, dirs: string[]) {
+    for (const rel of dirs || []) {
+      const parts = String(rel || "").split("/").filter(Boolean);
+      let cur: TreeNode = tree;
+      for (let i = 0; i < parts.length; i++) {
+        const seg = parts[i];
+        let child = cur.dirs.get(seg);
+        if (!child) { child = { rel: parts.slice(0, i + 1).join("/"), dirs: new Map(), files: [] }; cur.dirs.set(seg, child); }
+        cur = child;
       }
     }
   }
-  async function loadNotes() { try { const { files } = await fetch("/list?dir=" + encodeURIComponent(ROOT)).then((r) => r.json()); allNotes = files || []; renderSidebar(); } catch { renderSidebar(); } }
+  // ── command registry → context menu. The menu is BUILT from commandsFor(kind); we never
+  //    hardcode the action list. Each click drives cmd.run() through a CmdCtx. ────────────────
+  function entryForFile(f: any): Entry { return { path: f.path, rel: f.rel, name: noteTitle(f), kind: "file", fmt: f.fmt, mtime: f.mtime }; }
+  function entryForFolder(node: TreeNode): Entry { return { path: ROOT + "/" + node.rel, rel: node.rel, name: node.rel.split("/").pop() || node.rel, kind: "folder" }; }
+  function trashEntry(e: any): Entry { return { path: e.path || e.trashPath || "", rel: e.rel || e.origRel || e.origName || e.name || "", name: e.origName || e.name || e.rel || "(unnamed)", kind: "trash" }; }
+  function ctxFor(entry: Entry): CmdCtx { return { entry, vaultRoot: ROOT, refresh: loadNotes, navigate: (p: string) => go("/?file=" + encodeURIComponent(p)) }; }
+  function closeMenu() {
+    if (!curMenu) return;
+    curMenu.remove(); curMenu = null;
+    document.removeEventListener("mousedown", onMenuOutside, true);
+    document.removeEventListener("keydown", onMenuKey, true);
+  }
+  function onMenuOutside(e: MouseEvent) { if (curMenu && !curMenu.contains(e.target as Node)) closeMenu(); }
+  function onMenuKey(e: KeyboardEvent) { if (e.key === "Escape") { e.preventDefault(); closeMenu(); } }
+  function positionMenu(menu: HTMLElement, x: number, y: number) {
+    menu.style.left = "0px"; menu.style.top = "0px";
+    const r = menu.getBoundingClientRect();
+    menu.style.left = Math.max(6, Math.min(x, window.innerWidth - r.width - 6)) + "px";
+    menu.style.top = Math.max(6, Math.min(y, window.innerHeight - r.height - 6)) + "px";
+  }
+  function menuItemEl(label: string, danger: boolean, onClick: () => void): HTMLElement {
+    const b = document.createElement("button"); b.className = "fm-menu-item" + (danger ? " danger" : ""); b.textContent = label;
+    b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); onClick(); };
+    return b;
+  }
+  function menuSep(): HTMLElement { const d = document.createElement("div"); d.className = "fm-menu-sep"; return d; }
+  // Build menu items grouped by command.group (open/edit/meta/danger) with separators; the
+  // client-only ★ favorites toggle leads for files (it isn't a file command).
+  function buildMenu(menu: HTMLElement, entry: Entry) {
+    menu.innerHTML = "";
+    if (entry.kind === "file") {
+      const fav = loadFavorites().has(entry.rel);
+      menu.appendChild(menuItemEl(fav ? "★ Remove from favorites" : "☆ Add to favorites", false, () => { toggleFavorite(entry.rel); closeMenu(); rerenderList(curFilter); }));
+      menu.appendChild(menuSep());
+    }
+    const cmds = commandsFor(entry.kind);
+    let first = true;
+    for (const g of ["open", "edit", "meta", "danger"]) {
+      const grp = cmds.filter((c) => c.group === g);
+      if (!grp.length) continue;
+      if (!first) menu.appendChild(menuSep());
+      first = false;
+      for (const c of grp) menu.appendChild(menuItemEl(c.title, !!c.danger, () => onMenuCmd(c, entry, menu)));
+    }
+  }
+  function onMenuCmd(cmd: any, entry: Entry, menu: HTMLElement) {
+    if (cmd.needsArg === "newName") { menuField(menu, cmd.title, cmd.id === "rename" ? entry.name : "", (v) => { closeMenu(); runCmd(cmd, entry, { newName: v }); }); return; }
+    if (cmd.needsArg === "moveTarget") { folderPicker(menu, entry); return; }
+    closeMenu(); runCmd(cmd, entry, undefined);
+  }
+  // Inline text field inside the menu (reuses the inline-rename input) for "newName" commands.
+  function menuField(menu: HTMLElement, label: string, initial: string, onCommit: (v: string) => void) {
+    menu.innerHTML = "";
+    const lab = document.createElement("div"); lab.className = "fm-menu-fieldlabel"; lab.textContent = label;
+    const wrap = document.createElement("div"); wrap.className = "fm-menu-field";
+    const inp = document.createElement("input"); inp.className = "fm-rename-input"; inp.value = initial;
+    wrap.appendChild(inp); menu.appendChild(lab); menu.appendChild(wrap);
+    inp.focus(); inp.select();
+    inp.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); const v = inp.value.trim(); if (v) onCommit(v); else closeMenu(); } };
+  }
+  // Simple folder picker for "moveTarget" commands: every folder from /list `dirs`, plus root.
+  function folderPicker(menu: HTMLElement, entry: Entry) {
+    menu.innerHTML = "";
+    const lab = document.createElement("div"); lab.className = "fm-menu-fieldlabel"; lab.textContent = "Move to…"; menu.appendChild(lab);
+    const parent = entry.rel.split("/").slice(0, -1).join("/");
+    const targets = ["", ...(allDirs || [])].filter((d) => d !== entry.rel && d !== parent && !(entry.kind === "folder" && d.startsWith(entry.rel + "/")));
+    if (!targets.length) targets.push("");
+    for (const d of targets) {
+      const toDir = d ? ROOT + "/" + d : ROOT;
+      menu.appendChild(menuItemEl("📁 " + (d || "／ vault root"), false, () => { closeMenu(); doMove(entry, toDir); }));
+    }
+  }
+  function openMenu(x: number, y: number, entry: Entry) {
+    closeMenu();
+    const menu = document.createElement("div"); menu.className = "fm-menu";
+    buildMenu(menu, entry);
+    document.body.appendChild(menu); curMenu = menu;
+    positionMenu(menu, x, y);
+    // Attach synchronously: the opening mousedown/contextmenu already fired BEFORE this handler
+    // runs, so onMenuOutside won't catch it — and Esc closes the menu without a setTimeout race.
+    document.addEventListener("mousedown", onMenuOutside, true);
+    document.addEventListener("keydown", onMenuKey, true);
+  }
+  // Run a registry command, then refresh: navigate if the active note moved, else reload the list.
+  async function runCmd(cmd: any, entry: Entry, arg: any) {
+    let res: any; try { res = await cmd.run(ctxFor(entry), arg); } catch (e: any) { res = { ok: false, error: String((e && e.message) || e) }; }
+    if (res && res.ok) {
+      if (cmd.id === "restore" || cmd.id === "delete") trashCache = null; // trash changed → relazy-load
+      if (res.path && note && entry.path === note.file) go("/?file=" + encodeURIComponent(res.path));
+      else loadNotes();
+    } else {
+      flash((res && res.error) || (cmd.title + " failed"), false);
+      rerenderList(curFilter);
+    }
+  }
+  async function doMove(src: Entry | null, toDir: string) {
+    if (!src) return;
+    const cmd = FILE_COMMANDS.find((c) => c.id === "move"); if (cmd) await runCmd(cmd, src, { toDir });
+  }
+  function runRename(entry: Entry, newName: string) {
+    const cmd = FILE_COMMANDS.find((c) => c.id === "rename"); if (cmd) runCmd(cmd, entry, { newName });
+  }
+  // Inline rename: swap a row's name label for an <input>; Enter commits via the rename command,
+  // Esc / blur cancels. Used by double-click and by the menu's Rename command.
+  function startRowRename(nameEl: HTMLElement, entry: Entry) {
+    const cur = entry.name;
+    const inp = document.createElement("input"); inp.className = "fm-rename-input"; inp.value = cur;
+    const parent = nameEl.parentElement; if (!parent) return;
+    parent.replaceChild(inp, nameEl);
+    inp.focus(); inp.select();
+    let done = false;
+    const finish = (commit: boolean) => { if (done) return; done = true; const v = inp.value.trim(); if (commit && v && v !== cur) runRename(entry, v); else rerenderList(curFilter); };
+    inp.onmousedown = (e) => e.stopPropagation();
+    inp.onclick = (e) => e.stopPropagation();
+    inp.ondblclick = (e) => e.stopPropagation();
+    inp.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); finish(true); } else if (e.key === "Escape") { e.preventDefault(); finish(false); } };
+    inp.onblur = () => finish(false);
+  }
+  // Lazy-load Trash (GET /trash?dir=ROOT). The endpoint lands at integration; until then a
+  // miss/404 shows an "unavailable" note rather than erroring.
+  async function loadTrash() {
+    trashLoading = true;
+    try {
+      const r = await fetch("/trash?dir=" + encodeURIComponent(ROOT));
+      if (!r.ok) throw new Error("status " + r.status);
+      const j = await r.json();
+      trashCache = Array.isArray(j) ? j : (j.entries || j.files || []);
+      trashErr = "";
+    } catch {
+      trashCache = []; trashErr = "Trash unavailable (needs /trash endpoint)";
+    } finally { trashLoading = false; rerenderList(curFilter); }
+  }
+
+  function renderSidebar(filterStr = "") {
+    const sb = document.getElementById("sidebar"); if (!sb) return;
+    sb.innerHTML = "";
+    // vault header (also a drop target → moving onto it moves the dragged item to the vault root)
+    const head = document.createElement("button"); head.className = "vault"; head.title = "Switch vault — open another folder";
+    head.innerHTML = '<span>📁 <span class="vname"></span></span><span class="vcaret">⌄</span>';
+    (head.querySelector(".vname") as HTMLElement).textContent = ROOT.split("/").pop() || ROOT;
+    head.onclick = openVault;
+    head.ondragover = (ev) => { if (dragEntry) { ev.preventDefault(); head.classList.add("fm-drop-target"); } };
+    head.ondragleave = () => head.classList.remove("fm-drop-target");
+    head.ondrop = (ev) => { ev.preventDefault(); head.classList.remove("fm-drop-target"); const d = dragEntry; dragEntry = null; doMove(d, ROOT); };
+    sb.appendChild(head);
+    const filter = document.createElement("input"); filter.className = "filter"; filter.placeholder = "Filter notes…"; filter.value = filterStr;
+    filter.oninput = () => renderList(filter.value);
+    sb.appendChild(filter);
+    // compact header toolbar replaces the two big dashed New buttons: new-note, new-folder, sort, collapse-all
+    const tb = document.createElement("div"); tb.className = "fm-toolbar";
+    const tBtn = (txt: string, title: string, fn: () => void) => { const b = document.createElement("button"); b.className = "fm-tool"; b.textContent = txt; b.title = title; b.onclick = fn; return b; };
+    tb.appendChild(tBtn("＋", "New note", () => newNote()));
+    tb.appendChild(tBtn("📁＋", "New folder", () => newFolder()));
+    const spacer = document.createElement("span"); spacer.className = "fm-tb-spacer"; tb.appendChild(spacer);
+    const sortSel = document.createElement("select"); sortSel.className = "fm-sort"; sortSel.title = "Sort the Notebook tree";
+    ([["name", "Name A–Z"], ["mtime", "Recently modified"], ["created", "Created"]] as const).forEach(([v, l]) => { const o = document.createElement("option"); o.value = v; o.textContent = l; sortSel.appendChild(o); });
+    sortSel.value = loadSort();
+    sortSel.onchange = () => { saveSort(sortSel.value); rerenderList(curFilter); };
+    tb.appendChild(sortSel);
+    tb.appendChild(tBtn("⊟", "Collapse all folders", () => { try { localStorage.setItem(expandKey(), "[]"); } catch {} rerenderList(curFilter); }));
+    sb.appendChild(tb);
+    const list = document.createElement("div"); list.id = "notelist"; sb.appendChild(list);
+    rerenderList = renderList;
+    renderList(filterStr);
+
+    // ---- sort comparator (Notebook + Favorites; Recent always sorts by mtime) ----
+    function noteCmp(a: any, b: any): number {
+      const m = loadSort();
+      if (m === "mtime") return ((b.mtime || 0) - (a.mtime || 0)) || noteTitle(a).localeCompare(noteTitle(b));
+      if (m === "created") return (((b.created ?? b.birthtime ?? 0) - (a.created ?? a.birthtime ?? 0))) || noteTitle(a).localeCompare(noteTitle(b));
+      return noteTitle(a).localeCompare(noteTitle(b));
+    }
+    // ---- a single note row (reused by Favorites / Recent / Notebook) ----
+    function noteRow(f: any, depth: number, opts: { reltime?: boolean } = {}): HTMLElement {
+      const a = document.createElement("a"); a.className = "note-link" + (note && f.path === note.file ? " active" : ""); a.style.paddingLeft = (10 + depth * 13) + "px";
+      a.draggable = true;
+      const entry = entryForFile(f);
+      const chip = document.createElement("span"); chip.className = "fm-chip " + (f.fmt || "txt"); chip.textContent = chipLabel(f.fmt);
+      const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = noteTitle(f); nm.title = f.rel;
+      a.appendChild(chip); a.appendChild(nm);
+      if (opts.reltime && f.mtime) { const rt = document.createElement("span"); rt.className = "fm-reltime"; rt.textContent = relTime(f.mtime); a.appendChild(rt); }
+      const acts = document.createElement("span"); acts.className = "row-act";
+      const isFav = loadFavorites().has(f.rel);
+      const star = document.createElement("button"); star.className = "fm-star" + (isFav ? " on" : ""); star.textContent = isFav ? "★" : "☆"; star.title = isFav ? "Unstar" : "Add to favorites";
+      star.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); toggleFavorite(f.rel); rerenderList(curFilter); };
+      const keb = document.createElement("button"); keb.className = "fm-kebab"; keb.textContent = "⋯"; keb.title = "Actions";
+      keb.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); openMenu((ev as MouseEvent).clientX, (ev as MouseEvent).clientY, entry); };
+      acts.appendChild(star); acts.appendChild(keb); a.appendChild(acts);
+      // Clicking the row (chip / indent) opens instantly; clicking the NAME debounces ~200ms so a
+      // double-click can rename in place instead of navigating away on the first click.
+      a.onclick = (ev) => { ev.preventDefault(); go("/?file=" + encodeURIComponent(f.path)); };
+      let nmTimer: any = null;
+      nm.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); if (nmTimer) return; nmTimer = setTimeout(() => { nmTimer = null; go("/?file=" + encodeURIComponent(f.path)); }, 200); };
+      nm.ondblclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); if (nmTimer) { clearTimeout(nmTimer); nmTimer = null; } startRowRename(nm, entry); };
+      a.oncontextmenu = (ev) => { ev.preventDefault(); openMenu(ev.clientX, ev.clientY, entry); };
+      a.ondragstart = (ev) => { dragEntry = entry; if (ev.dataTransfer) { ev.dataTransfer.effectAllowed = "move"; try { ev.dataTransfer.setData("text/plain", f.path); } catch {} } };
+      a.ondragend = () => { dragEntry = null; document.querySelectorAll(".fm-drop-target").forEach((x) => x.classList.remove("fm-drop-target")); };
+      return a;
+    }
+    // ---- a folder row (drag source + drop target) ----
+    function folderRow(child: TreeNode, seg: string, depth: number, isOpen: boolean, forceExpand: boolean): HTMLElement {
+      const row = document.createElement("div"); row.className = "folder-row"; row.style.paddingLeft = (10 + depth * 13) + "px"; row.title = child.rel;
+      row.draggable = true;
+      const entry = entryForFolder(child);
+      const car = document.createElement("span"); car.className = "fcaret"; car.textContent = isOpen ? "▼" : "▶";
+      const ic = document.createElement("span"); ic.className = "ficon"; ic.textContent = isOpen ? "📂" : "📁";
+      const nm = document.createElement("span"); nm.className = "fname"; nm.textContent = seg;
+      const ct = document.createElement("span"); ct.className = "fcount"; ct.textContent = String(countFiles(child));
+      row.appendChild(car); row.appendChild(ic); row.appendChild(nm); row.appendChild(ct);
+      const acts = document.createElement("span"); acts.className = "row-act";
+      const nn = document.createElement("button"); nn.textContent = "＋"; nn.title = "New note in this folder"; nn.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); newNote(child.rel); };
+      const keb = document.createElement("button"); keb.className = "fm-kebab"; keb.textContent = "⋯"; keb.title = "Actions"; keb.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); openMenu((ev as MouseEvent).clientX, (ev as MouseEvent).clientY, entry); };
+      acts.appendChild(nn); acts.appendChild(keb); row.appendChild(acts);
+      row.onclick = () => { if (!forceExpand) { toggleExpanded(child.rel); rerenderList(curFilter); } };
+      row.oncontextmenu = (ev) => { ev.preventDefault(); openMenu(ev.clientX, ev.clientY, entry); };
+      nm.ondblclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); startRowRename(nm, entry); };
+      row.ondragstart = (ev) => { ev.stopPropagation(); dragEntry = entry; if (ev.dataTransfer) { ev.dataTransfer.effectAllowed = "move"; try { ev.dataTransfer.setData("text/plain", entry.path); } catch {} } };
+      row.ondragend = () => { dragEntry = null; document.querySelectorAll(".fm-drop-target").forEach((x) => x.classList.remove("fm-drop-target")); };
+      row.ondragover = (ev) => { if (dragEntry && dragEntry.path !== entry.path) { ev.preventDefault(); row.classList.add("fm-drop-target"); } };
+      row.ondragleave = () => row.classList.remove("fm-drop-target");
+      row.ondrop = (ev) => { ev.preventDefault(); row.classList.remove("fm-drop-target"); const d = dragEntry; dragEntry = null; doMove(d, entry.path); };
+      return row;
+    }
+    // ---- the Notebook tree (dirs alpha, files by sort choice; indentation by depth) ----
+    function renderTree(tree: TreeNode, forceExpand: boolean, into: HTMLElement) {
+      const expanded = loadExpanded();
+      const pinned = activeAncestors(); // ancestors of the open note: always expanded
+      (function walk(node: TreeNode, depth: number) {
+        [...node.dirs.keys()].sort((a, b) => a.localeCompare(b)).forEach((seg) => {
+          const child = node.dirs.get(seg)!;
+          const isOpen = forceExpand || expanded.has(child.rel) || pinned.has(child.rel);
+          into.appendChild(folderRow(child, seg, depth, isOpen, forceExpand));
+          if (isOpen) walk(child, depth + 1);
+        });
+        [...node.files].sort(noteCmp).forEach((f) => into.appendChild(noteRow(f, depth)));
+      })(tree, 0);
+    }
+    function emptyInto(el: HTMLElement, msg: string) { const e = document.createElement("div"); e.className = "fm-empty"; e.textContent = msg; el.appendChild(e); }
+    function makeSection(id: string, icon: string, title: string): { body: HTMLElement; count: HTMLElement; collapsed: boolean } {
+      const collapsed = loadCollapsedSections().has(id);
+      const sec = document.createElement("div"); sec.className = "fm-section" + (collapsed ? " collapsed" : ""); sec.setAttribute("data-section", id);
+      const hd = document.createElement("div"); hd.className = "fm-section-head";
+      const car = document.createElement("span"); car.className = "fm-sec-caret"; car.textContent = collapsed ? "▶" : "▼";
+      const ic = document.createElement("span"); ic.className = "fm-sec-icon"; ic.textContent = icon;
+      const ti = document.createElement("span"); ti.className = "fm-sec-title"; ti.textContent = title;
+      const ct = document.createElement("span"); ct.className = "fm-sec-count";
+      hd.appendChild(car); hd.appendChild(ic); hd.appendChild(ti); hd.appendChild(ct);
+      hd.onclick = () => { toggleSection(id); rerenderList(curFilter); };
+      sec.appendChild(hd);
+      const body = document.createElement("div"); body.className = "fm-section-body"; sec.appendChild(body);
+      list.appendChild(sec);
+      return { body, count: ct, collapsed };
+    }
+
+    function renderList(q: string) {
+      curFilter = q; rerenderList = renderList;
+      const ql = q.toLowerCase().trim();
+      list.innerHTML = "";
+      // While filtering: a single force-expanded tree of matches (keeps "filter force-expands folders").
+      if (ql) {
+        const filtered = allNotes.filter((f) => f.rel.toLowerCase().includes(ql) || noteTitle(f).toLowerCase().includes(ql));
+        if (!filtered.length) { emptyInto(list, "No matching notes"); return; }
+        renderTree(buildTree(filtered), true, list);
+        return;
+      }
+      // Sections top→bottom: Favorites, Recent, Notebook, Trash.
+      // ★ Favorites — starred notes (persisted in localStorage).
+      {
+        const favs = loadFavorites();
+        const favNotes = allNotes.filter((f) => favs.has(f.rel)).sort(noteCmp);
+        const { body, count, collapsed } = makeSection("favorites", "★", "Favorites");
+        count.textContent = favNotes.length ? String(favNotes.length) : "";
+        if (!collapsed) { if (favNotes.length) favNotes.forEach((f) => body.appendChild(noteRow(f, 0))); else emptyInto(body, "Star a note to pin it here"); }
+      }
+      // 🕐 Recent — top 5 by mtime (falls back to alpha when mtime is unknown).
+      {
+        const hasM = allNotes.some((f) => f.mtime);
+        const recent = [...allNotes].sort((a, b) => hasM ? ((b.mtime || 0) - (a.mtime || 0)) : noteTitle(a).localeCompare(noteTitle(b))).slice(0, 5);
+        const { body, count, collapsed } = makeSection("recent", "🕐", "Recent");
+        count.textContent = recent.length ? String(recent.length) : "";
+        if (!collapsed) { if (recent.length) recent.forEach((f) => body.appendChild(noteRow(f, 0, { reltime: hasM }))); else emptyInto(body, "No notes yet"); }
+      }
+      // 📁 Notebook — the full tree, with empty folders seeded from /list `dirs`.
+      {
+        const { body, count, collapsed } = makeSection("notebook", "📁", "Notebook");
+        count.textContent = allNotes.length ? String(allNotes.length) : "";
+        if (!collapsed) {
+          const tree = buildTree(allNotes); seedDirs(tree, allDirs);
+          if (tree.dirs.size || tree.files.length) renderTree(tree, false, body); else emptyInto(body, "No notes yet");
+        }
+      }
+      // 🗑 Trash — lazy-loaded; each entry shows origName + a Restore action (registry command).
+      {
+        const { body, count, collapsed } = makeSection("trash", "🗑", "Trash");
+        if (!collapsed) {
+          if (trashCache === null) { if (!trashLoading) loadTrash(); emptyInto(body, "Loading trash…"); }
+          else if (trashErr) emptyInto(body, trashErr);
+          else {
+            count.textContent = trashCache.length ? String(trashCache.length) : "";
+            if (!trashCache.length) emptyInto(body, "Trash is empty");
+            else {
+              const rc = FILE_COMMANDS.find((c) => c.id === "restore");
+              trashCache.forEach((e) => {
+                const entry = trashEntry(e);
+                const row = document.createElement("div"); row.className = "fm-trash-entry";
+                const nm = document.createElement("span"); nm.className = "fm-trash-name"; nm.textContent = entry.name; nm.title = entry.rel;
+                const rb = document.createElement("button"); rb.className = "fm-trash-restore"; rb.textContent = "Restore";
+                rb.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); if (rc) runCmd(rc, entry, undefined); };
+                row.appendChild(nm); row.appendChild(rb); body.appendChild(row);
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+  async function loadNotes() { try { const r = await fetch("/list?dir=" + encodeURIComponent(ROOT)).then((x) => x.json()); allNotes = r.files || []; allDirs = r.dirs || []; renderSidebar(); } catch { renderSidebar(); } }
   async function newNote(folderRel?: string) {
     const where = folderRel ? ` (in ${folderRel}/)` : "";
     // A "/" in the name nests into subfolders — the server mkdirs them on create.
@@ -2036,24 +2386,8 @@ if (note && mount) {
     const folder = sanitizeRelNotePath(fname); if (!folder) { flash("invalid folder name", false); return; }
     newNote(parentRel ? parentRel + "/" + folder : folder);
   }
-  async function renameNote(f: any) {
-    const ext = "." + (f.path.split(".").pop());
-    // Default to the full vault-relative path (sans ext) so a "/" edit MOVES the note into
-    // another folder — rename and move are the same gesture.
-    const name = window.prompt("Rename or move note — edit the path, use “/” to move into a folder:", f.rel.replace(/\.(md|markdown|html?|htm)$/i, "")); if (!name) return;
-    const rel = sanitizeRelNotePath(name); if (!rel) { flash("invalid name", false); return; }
-    const to = ROOT + "/" + rel + ext;
-    if (to === f.path) return; // unchanged
-    const r = await fetch("/rename", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ from: f.path, to }) }).then((x) => x.json());
-    if (!r.ok) { flash(r.error || "couldn't rename", false); return; }
-    if (note && f.path === note.file) go("/?file=" + encodeURIComponent(to)); else loadNotes();
-  }
-  async function deleteNote(f: any) {
-    if (!window.confirm("Move “" + noteTitle(f) + "” to trash?")) return;
-    const r = await fetch("/delete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ file: f.path }) }).then((x) => x.json());
-    if (!r.ok) { flash(r.error || "couldn't delete", false); return; }
-    if (note && f.path === note.file) { const other = allNotes.find((x) => x.path !== f.path); go(other ? "/?file=" + encodeURIComponent(other.path) : "/"); } else loadNotes();
-  }
+  // (rename + delete moved to the command registry — context menu / inline rename drive them
+  //  through commandsFor(kind) now; see runCmd / startRowRename above.)
   loadNotes();
 
   // ============================ quick switcher ============================
