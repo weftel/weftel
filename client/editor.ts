@@ -1985,10 +1985,10 @@ if (note && mount) {
   .fm-section.collapsed .fm-section-body{display:none}
   .fm-section-body{padding-bottom:4px}
   .fm-empty{font-size:11.5px;color:var(--subtle);padding:5px 12px;font-style:italic}
-  .fm-chip{flex:none;font-size:8.5px;font-weight:700;letter-spacing:.04em;line-height:1.45;padding:1px 4px;border-radius:3px;color:#fff}
-  .fm-chip.md{background:#2f6bd4}
-  .fm-chip.html{background:#7c4dd6}
-  .fm-chip.txt{background:#52525e}
+  .fm-chip{flex:none;font-family:ui-monospace,Menlo,monospace;font-size:10px;font-weight:500;letter-spacing:0;line-height:1.4;color:#8a8a98;min-width:34px}
+  .fm-chip.md{color:#7ea9dd}
+  .fm-chip.html{color:#b78fe0}
+  .fm-chip.txt{color:#8a8a98}
   .fm-reltime{margin-left:auto;font-size:10px;color:var(--subtle);flex:none;padding-left:6px}
   .note-link:hover .fm-reltime{display:none}
   .note-link .row-act .fm-star,.folder-row .row-act .fm-star{font-size:12px;line-height:1}
@@ -2012,7 +2012,7 @@ if (note && mount) {
     document.head.appendChild(s);
   }
   // MD/HTML/TXT chip label (replaces the faint glyph) + relative-time label for Recent.
-  function chipLabel(fmt: string): string { return fmt === "html" ? "HTML" : fmt === "md" ? "MD" : "TXT"; }
+  function chipLabel(fmt: string): string { return fmt === "html" ? ".html" : fmt === "md" ? ".md" : ".txt"; }
   function relTime(ms?: number): string {
     if (!ms) return "";
     const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
@@ -2173,7 +2173,7 @@ if (note && mount) {
       const r = await fetch("/trash?dir=" + encodeURIComponent(ROOT));
       if (!r.ok) throw new Error("status " + r.status);
       const j = await r.json();
-      trashCache = Array.isArray(j) ? j : (j.entries || j.files || []);
+      trashCache = Array.isArray(j) ? j : (j.items || j.entries || j.files || []);
       trashErr = "";
     } catch {
       trashCache = []; trashErr = "Trash unavailable (needs /trash endpoint)";
@@ -2270,7 +2270,18 @@ if (note && mount) {
       row.ondrop = (ev) => { ev.preventDefault(); row.classList.remove("fm-drop-target"); const d = dragEntry; dragEntry = null; doMove(d, entry.path); };
       return row;
     }
-    // ---- the Notebook tree (dirs alpha, files by sort choice; indentation by depth) ----
+    // Indent-guide rails: one subtle vertical line per ancestor level so nesting reads at a glance
+    // (incl. "all of this is under Notebook" — every top-level row gets the depth-0 rail). Drawn as
+    // fixed-position 1px backgrounds in the row's left gutter; content is indented past them. Applied
+    // only to the tree, not the flat Favorites/Recent lists.
+    function applyTreeRow(el: HTMLElement, depth: number) {
+      const PAD = 14, STEP = 16; // base indent + per-level step (inlined to avoid a TDZ on early render)
+      el.style.paddingLeft = (PAD + depth * STEP) + "px";
+      const imgs: string[] = [], poss: string[] = [], sizes: string[] = [];
+      for (let k = 0; k <= depth; k++) { imgs.push("linear-gradient(#2a2a33,#2a2a33)"); poss.push((7 + k * STEP) + "px 0"); sizes.push("1px 100%"); }
+      el.style.backgroundImage = imgs.join(","); el.style.backgroundPosition = poss.join(","); el.style.backgroundSize = sizes.join(","); el.style.backgroundRepeat = "no-repeat";
+    }
+    // ---- the Notebook tree (dirs alpha, files by sort choice; indentation + guides by depth) ----
     function renderTree(tree: TreeNode, forceExpand: boolean, into: HTMLElement) {
       const expanded = loadExpanded();
       const pinned = activeAncestors(); // ancestors of the open note: always expanded
@@ -2278,10 +2289,10 @@ if (note && mount) {
         [...node.dirs.keys()].sort((a, b) => a.localeCompare(b)).forEach((seg) => {
           const child = node.dirs.get(seg)!;
           const isOpen = forceExpand || expanded.has(child.rel) || pinned.has(child.rel);
-          into.appendChild(folderRow(child, seg, depth, isOpen, forceExpand));
+          const fr = folderRow(child, seg, depth, isOpen, forceExpand); applyTreeRow(fr, depth); into.appendChild(fr);
           if (isOpen) walk(child, depth + 1);
         });
-        [...node.files].sort(noteCmp).forEach((f) => into.appendChild(noteRow(f, depth)));
+        [...node.files].sort(noteCmp).forEach((f) => { const nr = noteRow(f, depth); applyTreeRow(nr, depth); into.appendChild(nr); });
       })(tree, 0);
     }
     function emptyInto(el: HTMLElement, msg: string) { const e = document.createElement("div"); e.className = "fm-empty"; e.textContent = msg; el.appendChild(e); }

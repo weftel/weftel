@@ -66,10 +66,10 @@ test("a section collapses + the body hides when its header is clicked", async ({
   await expect(nb.locator(".fm-section-body")).toBeHidden();
 });
 
-test("MD/HTML type chips render with correct text", async ({ page }) => {
+test("type chips render the literal extension", async ({ page }) => {
   await openSidebar(page);
-  await expect(page.locator(`${NOTEBOOK} .fm-chip.md`).first()).toHaveText("MD");
-  await expect(page.locator(`${NOTEBOOK} .fm-chip.html`).first()).toHaveText("HTML");
+  await expect(page.locator(`${NOTEBOOK} .fm-chip.md`).first()).toHaveText(".md");
+  await expect(page.locator(`${NOTEBOOK} .fm-chip.html`).first()).toHaveText(".html");
 });
 
 test("type chips clear WCAG 4.5:1 on the dark sidebar", async ({ page }) => {
@@ -178,11 +178,21 @@ test("dragging a note over a folder shows a drop indicator (client-only)", async
   await expect(page.locator(".folder-row.fm-drop-target")).toHaveCount(1);
 });
 
-test("Trash shows an 'unavailable' note when the endpoint is missing", async ({ page }) => {
-  // No /trash route mocked → the real server 404s (endpoint lands at integration).
+test("Trash: a real deleted note appears in the live Trash section and restores (end-to-end)", async ({ page }) => {
+  // Exercises all three tracks together: real /create + /delete (→ .trash), the sidebar's real
+  // loadTrash (GET /trash), and the registry `restore` command (→ /restore). /list is mocked by
+  // openSidebar; /trash is left REAL (no opts.trash). page.request bypasses the page.route mocks.
+  const listed = await (await page.request.get("/list?dir=" + encodeURIComponent(VAULT))).json();
+  const root = listed.root as string; // authoritative server root (may differ from VAULT at boot)
+  const file = root + "/trashme.md";
+  expect((await (await page.request.post("/create", { data: { file, content: "bye" } })).json()).ok).toBeTruthy();
+  expect((await (await page.request.post("/delete", { data: { file } })).json()).ok).toBeTruthy();
   await openSidebar(page);
-  await sectionHead(page, "trash").click(); // Trash starts collapsed; expanding lazy-loads it
-  await expect(page.locator('.fm-section[data-section="trash"] .fm-empty')).toContainText("unavailable");
+  await sectionHead(page, "trash").click(); // expand → lazy-loads the real /trash
+  const entry = page.locator(".fm-trash-entry", { hasText: "trashme" });
+  await expect(entry).toBeVisible();
+  await entry.locator(".fm-trash-restore").click(); // registry restore → /restore, then re-fetches trash
+  await expect(page.locator(".fm-trash-entry", { hasText: "trashme" })).toHaveCount(0);
 });
 
 test("Trash lists entries with a Restore action when /trash responds", async ({ page }) => {
