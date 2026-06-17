@@ -12,7 +12,10 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, renameSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { resolve, extname, basename, dirname, sep, join } from "node:path";
 import { createHash } from "node:crypto";
-import { query } from "@anthropic-ai/claude-agent-sdk";
+// [AI:model-layer] The raw model call now lives behind a provider seam (server/providers.ts).
+// streamAI() below delegates to the selected provider (CloudProvider by default, which wraps
+// the Agent SDK exactly as before) instead of calling query() directly here.
+import { getProvider, modelInfo } from "./server/providers";
 
 // In-app AI edit (⌘K) — cut for first launch. It was net-negative on dogfooding (harmed
 // notes more than it helped; 2026-06-15 generation regression) — see
@@ -22,7 +25,10 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 // TRUTH: this const gates the /rewrite route AND is injected into the client (shell()), so
 // front and back never drift. The rebuild also needs a real quality eval before flipping —
 // today's e2e tests replay a cached response and don't catch live-quality regressions.
-const AI_EDIT_ENABLED = false;
+// [AI:model-layer] env-gated so the provider seam can be exercised end-to-end without a code
+// edit (AI_EDIT_ENABLED=1). DEFAULT IS UNCHANGED: unset/anything-else → false, so a normal
+// launch still ships with ⌘K off exactly as before.
+const AI_EDIT_ENABLED = process.env.AI_EDIT_ENABLED === "1";
 
 // Output-format contract — the quality fix. Passed as the SDK systemPrompt so every AI
 // edit obeys it regardless of the per-mode instruction.
@@ -42,23 +48,23 @@ const AI_OFFLINE = process.env.AI_OFFLINE === "1";
 function aiKey(model: string, prompt: string) { return createHash("sha256").update(model + "\n" + SYSTEM + "\n" + prompt).digest("hex").slice(0, 40); }
 function aiCacheGet(key: string): string | null { if (!AI_CACHE) return null; try { return readFileSync(join(AI_CACHE, key + ".txt"), "utf8"); } catch { return null; } }
 function aiCacheSet(key: string, val: string) { if (!AI_CACHE) return; try { mkdirSync(AI_CACHE, { recursive: true }); writeFileSync(join(AI_CACHE, key + ".txt"), val); } catch {} }
-// Stream a one-shot completion via the Agent SDK (subscription auth, no tools). onChunk
-// receives each text delta; returns the full text. Honors the AI_CACHE (record/replay).
+// Stream a one-shot completion through the SELECTED provider (CloudProvider by default —
+// subscription auth, no tools). onChunk receives each raw text delta; returns the full
+// trimmed text. Honors the AI_CACHE (record/replay) and AI_OFFLINE exactly as before.
+// [AI:model-layer] The cache wrapper (key/get/AI_OFFLINE/set/trim) is unchanged — only the
+// raw model call is delegated to getProvider().stream(). The provider streams RAW deltas and
+// returns UNTRIMMED text; we trim here for the cache + return value, preserving byte-identical
+// legacy behavior. With PROVIDER unset the provider is CloudProvider and the key is identical.
 async function streamAI(prompt: string, model: string, onChunk: (s: string) => void): Promise<{ ok: true; out: string } | { ok: false; error: string }> {
   const key = aiKey(model, prompt);
   const cached = aiCacheGet(key);
   if (cached != null) { onChunk(cached); return { ok: true, out: cached }; }
   if (AI_OFFLINE) return { ok: false, error: "ai cache miss (AI_OFFLINE)" };
-  try {
-    let text = "";
-    for await (const m of query({ prompt, options: { model, systemPrompt: SYSTEM, allowedTools: [], maxTurns: 1 } } as any)) {
-      if (m.type === "assistant") for (const b of (m as any).message.content) { if (b.type === "text") { text += b.text; onChunk(b.text); } }
-      if (m.type === "result" && (m as any).is_error) return { ok: false, error: String((m as any).subtype || "ai error") };
-    }
-    text = text.trim();
-    aiCacheSet(key, text);
-    return { ok: true, out: text };
-  } catch (e) { return { ok: false, error: String(e).slice(0, 200) }; }
+  const r = await getProvider().stream(prompt, { system: SYSTEM, model }, onChunk); // [AI:model-layer]
+  if (!r.ok) return r;
+  const out = r.out.trim();
+  aiCacheSet(key, out);
+  return { ok: true, out };
 }
 import sanitizeHtml from "sanitize-html";
 import { hasInteractiveScript } from "./client/lib";
@@ -517,7 +523,7 @@ Bun.serve({
         if (!AI_EDIT_ENABLED) return json({ ok: false, error: "ai edit disabled" }, 404);
         const mode = String(body.mode || "");
         const prompt = String(body.prompt || "");
-        const model = "haiku"; // fast; the system prompt now carries the structure/quality
+        const { model } = modelInfo(); // [AI:model-layer] config-driven (PROVIDER/MODEL env); "haiku" by default, so the cache key is unchanged
         const stream = new ReadableStream({
           async start(controller) {
             const enc = new TextEncoder();
@@ -540,6 +546,9 @@ Bun.serve({
     // Stale-tab guard: a tab opened before a server restart keeps RUNNING (and saving
     // with) old code, silently. The client compares this on focus and asks for a reload.
     if (url.pathname === "/version") return json({ v: BUILD_ID });
+
+    // [AI:model-layer] which provider + model the ⌘K /rewrite call will use right now.
+    if (url.pathname === "/api/model") return json(modelInfo());
 
     // Preflight for in-doc note links: lets the client explain a dead link in place
     // instead of navigating to a welcome screen.
