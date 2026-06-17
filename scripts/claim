@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+"""claim — bug-bash ticket coordination for the qa-board GitHub Issues.
+
+Why this exists: GitHub has no atomic compare-and-swap, and when many agents run
+as the same account, the assignee field can't tell a double-claim apart. This uses
+GitHub comment IDs (a monotonic, server-assigned sequence) as a distributed lock:
+each agent posts a "claim" comment, then the smallest comment ID wins. Every racing
+agent recomputes the same winner on re-read, so exactly one agent owns each issue.
+
+Usage:
+  claim next [--label sev:bug] [--dry]   pick + claim the next unassigned open issue
+  claim <N>                              claim a specific issue
+  claim drop <N>                         release a claim (unassign, back to Active)
+  claim board                            show who's working on what
+
+Set AGENT_ID to identify each worker, e.g.  AGENT_ID=svg-agent claim next
+(falls back to a generated id). Exit 0 = you own it; non-zero = taken/none/error.
+"""
+import os, re, sys, json, time, random, subprocess
+
+REPO        = "Benzales/note-editor-spike"
+OWNER       = "Benzales"
+PROJECT     = "1"
+PROJECT_ID  = "PVT_kwHOBWiRRs4Ba9ti"
+STAGE_FIELD = "PVTSSF_lAHOBWiRRs4Ba9tizhVxkXw"
+STAGE_OPT   = {"Backlog": "64dc18c2", "Active": "a6102bcf",
+               "In-progress": "df0db960", "Done": "d2050a1f"}
+QA_LABEL    = "qa-board"
+MARK        = "\U0001f512 claim:"           # "🔒 claim:"
+
+def gh(args, check=False):
+    r = subprocess.run(["gh"] + args, capture_output=True, text=True)
+    if check and r.returncode != 0:
+        sys.exit(f"gh {' '.join(args)} failed: {r.stderr.strip()}")
+    return r
+
+def gh_json(args):
+    r = gh(args)
+    try:
+        return json.loads(r.stdout or "null")
+    except Exception:
+        return None
+
+def agent_id():
+    return os.environ.get("AGENT_ID") or f"agent-{os.getpid()}-{random.randint(1000,9999)}"
+
+def comment_db_id(url):
+    m = re.search(r"issuecomment-(\d+)", url or "")
+    return int(m.group(1)) if m else None
+
+def claim_comments(issue):
+    """Return [(db_id, agent_id, comment_url), ...] for claim comments, sorted by db_id."""
+    out = []
+    for c in (issue.get("comments") or []):
+        body = (c.get("body") or "").strip()
+        if body.startswith(MARK):
+            cid = comment_db_id(c.get("url"))
+            who = body[len(MARK):].strip().split()[0] if body[len(MARK):].strip() else "?"
+            if cid is not None:
+                out.append((cid, who, c.get("url")))
+    return sorted(out)
+
+# ---- project board ----
+def item_id_for(n):
+    data = gh_json(["project", "item-list", PROJECT, "--owner", OWNER, "--format", "json", "-L", "300"])
+    for it in (data or {}).get("items", []):
+        if it.get("content", {}).get("number") == n:
+            return it["id"]
+    return None
+
+def move(n, stage):
+    iid = item_id_for(n)
+    if not iid:  # not on the board yet (e.g. a finding filed mid-bash) — add it
+        gh(["project", "item-add", PROJECT, "--owner", OWNER, "--url",
+            f"https://github.com/{REPO}/issues/{n}"])
+        iid = item_id_for(n)
+    if not iid:
+        print(f"  ! couldn't place #{n} on the board (claim still valid)", file=sys.stderr)
+        return False
+    r = gh(["project", "item-edit", "--id", iid, "--project-id", PROJECT_ID,
+            "--field-id", STAGE_FIELD, "--single-select-option-id", STAGE_OPT[stage]])
+    if r.returncode != 0:
+        print(f"  ! board move to {stage} failed (claim still valid): {r.stderr.strip()}", file=sys.stderr)
+        return False
+    return True
+
+# ---- core ----
+def view(n):
+    return gh_json(["issue", "view", str(n), "-R", REPO,
+                    "--json", "number,title,state,labels,assignees,comments"])
+
+def claim(n):
+    me = agent_id()
+    iss = view(n)
+    if not iss:
+        print(f"#{n}: not found", file=sys.stderr); return 3
+    if iss["state"] != "OPEN":
+        print(f"#{n}: not open ({iss['state']})", file=sys.stderr); return 3
+    if QA_LABEL not in [l["name"] for l in iss.get("labels", [])]:
+        print(f"#{n}: not a {QA_LABEL} issue", file=sys.stderr); return 3
+
+    # 1. post our claim, 2. assign (coarse taken-flag)
+    r = gh(["issue", "comment", str(n), "-R", REPO, "--body", f"{MARK} {me}"])
+    my_url = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else ""
+    my_cid = comment_db_id(my_url)
+    if my_cid is None:
+        print(f"#{n}: couldn't post claim comment: {r.stderr.strip()}", file=sys.stderr); return 4
+    gh(["issue", "edit", str(n), "-R", REPO, "--add-assignee", "@me"])
+
+    # 3. re-read and resolve: smallest claim-comment id wins
+    claims = claim_comments(view(n))
+    winner = claims[0] if claims else (my_cid, me, my_url)
+    if winner[0] == my_cid:
+        move(n, "In-progress")
+        print(f"CLAIMED #{n} as {me} — {iss['title']}")
+        return 0
+    # someone beat us: clean up our comment so the issue stays tidy
+    if my_url:
+        gh(["api", "-X", "DELETE", f"/repos/{REPO}/issues/comments/{my_cid}"])
+    print(f"#{n}: already claimed by {winner[1]} — yielding", file=sys.stderr)
+    return 2
+
+def claim_next(label=None, dry=False):
+    q = f"is:open label:{QA_LABEL} -label:status:deferred no:assignee"
+    if label:
+        q += f" label:{label}"
+    rows = gh_json(["issue", "list", "-R", REPO, "--search", q,
+                    "--json", "number,title", "-L", "30"]) or []
+    rows.sort(key=lambda r: r["number"])
+    if not rows:
+        print("no free issues in the queue", file=sys.stderr); return 1
+    if dry:
+        print(f"would claim #{rows[0]['number']} — {rows[0]['title']} "
+              f"({len(rows)} free)")
+        return 0
+    for r in rows:                       # walk candidates; retry if one was just taken
+        rc = claim(r["number"])
+        if rc == 0:
+            return 0
+        if rc in (3, 4):                 # not-claimable / error — skip to next
+            continue
+    print("no free issue could be claimed (all contended)", file=sys.stderr); return 1
+
+def drop(n):
+    me = agent_id()
+    iss = view(n)
+    if not iss:
+        print(f"#{n}: not found", file=sys.stderr); return 3
+    for cid, who, url in claim_comments(iss):
+        if who == me:
+            gh(["api", "-X", "DELETE", f"/repos/{REPO}/issues/comments/{cid}"])
+    gh(["issue", "edit", str(n), "-R", REPO, "--remove-assignee", "@me"])
+    move(n, "Active")
+    print(f"DROPPED #{n} (released by {me})")
+    return 0
+
+def board():
+    rows = gh_json(["issue", "list", "-R", REPO,
+                    "--search", f"is:open label:{QA_LABEL} assignee:{OWNER}",
+                    "--json", "number,title", "-L", "100"]) or []
+    free = gh_json(["issue", "list", "-R", REPO,
+                    "--search", f"is:open label:{QA_LABEL} -label:status:deferred no:assignee",
+                    "--json", "number", "-L", "100"]) or []
+    print(f"in progress / claimed: {len(rows)}    free in queue: {len(free)}")
+    for r in rows:
+        cs = claim_comments(view(r["number"]))
+        who = cs[0][1] if cs else "(assigned, no claim marker)"
+        print(f"  #{r['number']:>3}  {who:<16}  {r['title'][:60]}")
+    return 0
+
+def main():
+    a = sys.argv[1:]
+    if not a:
+        print(__doc__); return 1
+    cmd = a[0]
+    if cmd == "next":
+        label = a[a.index("--label")+1] if "--label" in a else None
+        return claim_next(label, dry="--dry" in a)
+    if cmd == "drop" and len(a) > 1:
+        return drop(int(a[1]))
+    if cmd == "board":
+        return board()
+    if cmd.isdigit():
+        return claim(int(cmd))
+    print(__doc__); return 1
+
+if __name__ == "__main__":
+    sys.exit(main())

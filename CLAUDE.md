@@ -10,8 +10,9 @@ Writes are race-free because GitHub serializes them server-side — **never coor
 
 ### Pulling work
 
-- **See the active queue:** `gh issue list --search 'label:qa-board -label:status:deferred no:assignee' --state open`
-- **Claim + branch:** `gh issue develop <N> --checkout` — work in a dedicated git worktree so parallel agents don't collide on the working tree.
+- **See the active queue:** `gh issue list --search 'label:qa-board -label:status:deferred no:assignee' --state open` (or `scripts/claim board` for who's already working on what)
+- **Claim a ticket (race-safe):** `AGENT_ID=<your-name> scripts/claim next` — atomically claims the next free issue and moves its board card to In-progress, printing the number. Variants: `scripts/claim <N>` (a specific issue), `scripts/claim drop <N>` (release it), `scripts/claim board` (status). The helper uses GitHub comment IDs as a lock, so it's safe even when every agent runs as the same account — **use it instead of a bare `gh issue edit --add-assignee` during bug bashes.**
+- **Branch:** `gh issue develop <N> --checkout` — work in a dedicated git worktree so parallel agents don't collide on the working tree.
 - **Report progress:** `gh issue comment <N> --body "..."`
 - **Finish:** put `Fixes #<N>` in the PR body so the issue auto-closes on merge.
 - **New finding:** `gh issue create --label qa-board --label sev:<x> --title "[area] ..." --body "...repro..."` — do not reopen the old HTML board.
