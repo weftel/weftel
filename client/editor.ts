@@ -85,6 +85,33 @@ function breakoutBareListLines(md: string): string {
   return out.join("\n");
 }
 
+// A rich block round-trips as `<div data-rich-block>…HTML…</div>`. Model-generated SVGs/HTML put
+// BLANK LINES between element groups — and CommonMark (markdown-it) ENDS an HTML block at the first
+// blank line. So on reload everything after that blank line spills OUT of the wrapper (e.g. an SVG's
+// children get orphaned into <p>, the diagram renders empty — silent content loss). Strip blank
+// lines *inside* each rich-block region so the wrapper stays one contiguous HTML block; whitespace
+// between HTML/SVG elements is insignificant, so the rendered result is unchanged. Depth-counts
+// <div>/</div> so nested <div>s inside the block don't end the region early. (Load-side fix so
+// existing files with blank-line diagrams recover, not just new saves.)
+const stripBlankLines = (s: string): string => s.replace(/(\n[ \t]*){2,}/g, "\n");
+function joinRichBlockBlankLines(md: string): string {
+  if (md.indexOf("data-rich-block") < 0) return md;
+  const lines = md.split("\n");
+  const out: string[] = [];
+  let depth = 0;
+  const count = (s: string, re: RegExp) => (s.match(re) || []).length;
+  for (const line of lines) {
+    if (depth === 0) {
+      out.push(line);
+      if (/<div[^>]*data-rich-block/.test(line)) depth = count(line, /<div\b/gi) - count(line, /<\/div>/gi);
+      continue;
+    }
+    depth += count(line, /<div\b/gi) - count(line, /<\/div>/gi);
+    if (line.trim() !== "") out.push(line); // drop the blank line that would terminate the HTML block
+  }
+  return out.join("\n");
+}
+
 type Note = { file: string; format: string; content: string; root: string; interactive?: boolean };
 // FULL_PARSE (experiment): parse class/<style>-driven bespoke HTML into editable nodes —
 // preserving classes and scoping the doc's <style> into the live editor — instead of
@@ -436,7 +463,7 @@ const ImageNode = Node.create({
   },
 });
 
-const richMd = { markdown: { serialize(state: any, node: any) { state.write("<div data-rich-block>" + (node.attrs.html || "") + "</div>"); state.closeBlock(node); } } };
+const richMd = { markdown: { serialize(state: any, node: any) { state.write("<div data-rich-block>" + stripBlankLines(node.attrs.html || "") + "</div>"); state.closeBlock(node); } } };
 
 const RichBlock = Node.create({
   name: "richBlock", group: "block", atom: true, selectable: true, draggable: true,
@@ -1152,7 +1179,7 @@ if (note && mount) {
   // still parse to link marks and stay clickable). Trade-off: bare URLs are no longer clickable —
   // fidelity wins (F40-class zero-mutation invariant). Could be re-added later as a display-only
   // decoration that never touches the document model.
-  if (note.format === "md") { content = breakoutBareListLines(content); extensions.push(Markdown.configure({ html: true, linkify: false, breaks: true })); } // breaks:true + breakout → F42 (render single "\n" as a line break, bare lines terminate lists, Obsidian-style)
+  if (note.format === "md") { content = joinRichBlockBlankLines(breakoutBareListLines(content)); extensions.push(Markdown.configure({ html: true, linkify: false, breaks: true })); } // breaks:true + breakout → F42; joinRichBlockBlankLines → SVG/HTML rich blocks survive reload (blank lines no longer split the HTML block)
   else if (note.format === "html") { try { content = prepareHtml(note.content); } catch { htmlTemplate = null; content = note.content; } }
 
   // Paste an image → save as a sidecar file (<note-dir>/assets/) via /asset, insert a native
