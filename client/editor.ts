@@ -645,7 +645,10 @@ const RichBlock = Node.create({
 
       const render = (html: string) => {
         closeOverlay(); closeActiveLeaf();
-        shadow.innerHTML = RICH_STYLES || ""; // styles first (scoped, never leak / never saved)
+        // [AI:cmdk] base fallback first (caps an unstyled AI SVG to the column — never enlarges, so
+        // a small icon keeps its size); the doc's own <style> (RICH_STYLES) is injected AFTER, so an
+        // imported design still wins. None of this is ever serialized (styles live in the shadow only).
+        shadow.innerHTML = "<style>svg{max-width:100%;height:auto}</style>" + (RICH_STYLES || "");
         const tpl = document.createElement("template"); tpl.innerHTML = html || "";
         contentNodes = Array.from(tpl.content.childNodes);
         contentNodes.forEach((n) => shadow.appendChild(n)); // move content in after the styles — identical DOM to before

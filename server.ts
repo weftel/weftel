@@ -40,7 +40,7 @@ ALWAYS
 - Respect the note's theme: never hardcode text or background colors unless explicitly asked; let colors inherit.
 
 OUTPUT FORMAT — the instruction names the target; obey its rule exactly:
-- HTML block target -> output PURE HTML only, inline styles only. NEVER markdown: no **bold**, no _italic_, no \`code\`, no |---| pipe tables, no backslash-newline. Prefer the simplest native element (a plain <table>, <ul>, <p>) over heavy wrappers unless asked for something visual; use inline SVG only for a genuine diagram or chart.
+- HTML block target -> output PURE HTML only, inline styles only. NEVER markdown: no **bold**, no _italic_, no \`code\`, no |---| pipe tables, no backslash-newline. Prefer the simplest native element (a plain <table>, <ul>, <p>) over heavy wrappers unless asked for something visual; use inline SVG only for a genuine diagram or chart. Every <svg> MUST carry a viewBox AND width="100%" (so it sizes to the note, not a clipped 300x150 default), and any gradient/clip MUST be defined inside its proper wrapper (<linearGradient>/<radialGradient>/<clipPath>) — never bare <stop>s.
 - Text (prose) target -> output PLAIN TEXT only: the rewritten words, no markup of any kind (the app owns bold / italic / color / headings). Do not wrap the result in quotes.`;
 
 // AI record/replay cache — for deterministic e2e tests. AI_CACHE=<dir>: hash model+system+
@@ -69,8 +69,8 @@ async function streamAI(prompt: string, model: string, onChunk: (s: string) => v
     return { ok: true, out: text };
   } catch (e) { return { ok: false, error: String(e).slice(0, 200) }; }
 }
-import sanitizeHtml from "sanitize-html";
 import { hasInteractiveScript, stripCodeFence, cleanProseResult } from "./client/lib"; // [AI:cmdk] shared output-format hygiene
+import { safeRichHtml } from "./safe-html"; // [AI:cmdk] sanitize that preserves camelCase SVG (extracted for unit tests)
 
 const PORT = Number(process.env.PORT) || 4321;
 const ARG = resolve(process.argv[2] ?? "./sample.md");
@@ -133,35 +133,7 @@ function toTrash(p: string) {
   let i = 0; while (existsSync(dest)) dest = join(trash, `${basename(p)}.${Date.now()}.${++i}`);
   renameSync(p, dest); // never clobber an existing trash entry
 }
-// Calibrated sanitize for AI (Model B) rich-HTML output: keep the design
-// (classes, inline styles, SVG) but strip the real execution vectors
-// (script/iframe/object, on* handlers, javascript: URLs).
-const SVG_ATTRS = ["viewBox","preserveAspectRatio","xmlns","xmlns:xlink","d","fill","fill-opacity","fill-rule","stroke","stroke-width","stroke-linecap","stroke-linejoin","stroke-dasharray","x","y","x1","y1","x2","y2","cx","cy","r","rx","ry","width","height","points","transform","offset","stop-color","stop-opacity","gradientUnits","gradientTransform","text-anchor","dominant-baseline","font-size","font-family","font-weight","opacity","marker-end","marker-start","clip-path","mask"];
-function safeRichHtml(html: string): string {
-  return sanitizeHtml(html, {
-    allowedTags: [
-      "div","span","p","section","article","header","footer","main","aside","nav",
-      "h1","h2","h3","h4","h5","h6","ul","ol","li","dl","dt","dd",
-      "table","thead","tbody","tfoot","tr","td","th","caption","colgroup","col",
-      "figure","figcaption","img","picture","blockquote","pre","code","kbd","samp","var",
-      "strong","em","b","i","u","s","sub","sup","mark","small","hr","br","wbr",
-      "details","summary","time","abbr","cite","q","label","meter","progress",
-      "svg","g","path","circle","ellipse","rect","line","polyline","polygon","text","tspan",
-      "defs","linearGradient","radialGradient","stop","clipPath","use","symbol","marker","pattern","mask","title","desc",
-    ],
-    allowedAttributes: {
-      "*": ["class", "id", "style", "title", "role", "data-*", "aria-*"],
-      a: ["href", "target", "rel"],
-      img: ["src", "alt", "width", "height", "loading"],
-      svg: SVG_ATTRS, g: SVG_ATTRS, path: SVG_ATTRS, circle: SVG_ATTRS, ellipse: SVG_ATTRS,
-      rect: SVG_ATTRS, line: SVG_ATTRS, polyline: SVG_ATTRS, polygon: SVG_ATTRS, text: SVG_ATTRS,
-      tspan: SVG_ATTRS, stop: SVG_ATTRS, linearGradient: SVG_ATTRS, radialGradient: SVG_ATTRS,
-      use: SVG_ATTRS, clipPath: SVG_ATTRS, marker: SVG_ATTRS, pattern: SVG_ATTRS, mask: SVG_ATTRS,
-    },
-    allowedSchemes: ["http", "https", "data", "mailto"],
-    allowVulnerableTags: false,
-  });
-}
+// [AI:cmdk] safeRichHtml + SVG_ATTRS moved to ./safe-html.ts (unit-testable; preserves camelCase SVG).
 
 // ---- client bundle ----
 async function bundleClient(): Promise<string> {
