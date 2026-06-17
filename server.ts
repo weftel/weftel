@@ -25,7 +25,10 @@ import { getProvider, modelInfo } from "./server/providers";
 // TRUTH: this const gates the /rewrite route AND is injected into the client (shell()), so
 // front and back never drift. The rebuild also needs a real quality eval before flipping —
 // today's e2e tests replay a cached response and don't catch live-quality regressions.
-const AI_EDIT_ENABLED = false;
+// [AI:model-layer] env-gated so the provider seam can be exercised end-to-end without a code
+// edit (AI_EDIT_ENABLED=1). DEFAULT IS UNCHANGED: unset/anything-else → false, so a normal
+// launch still ships with ⌘K off exactly as before.
+const AI_EDIT_ENABLED = process.env.AI_EDIT_ENABLED === "1";
 
 // Output-format contract — the quality fix. Passed as the SDK systemPrompt so every AI
 // edit obeys it regardless of the per-mode instruction.
