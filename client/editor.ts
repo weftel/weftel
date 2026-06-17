@@ -1613,6 +1613,41 @@ if (note && mount) {
       return "TARGET: the cursor position in the note. Produce new content to insert. Prose → plain text; a table / list / diagram / card → pure HTML.\n\nInstruction: " + intent + "\n\nNote so far (context only — do not repeat it):\n" + docContext().slice(0, 6000);
     return "TARGET: the selected text shown between « ». Rewrite ONLY that text to satisfy the instruction. Output plain text only — no markup.\n\nInstruction: " + intent + "\n\nSelected text:\n«" + t.text + "»\n\nSurrounding note (context only):\n" + docContext().slice(0, 4000);
   }
+  // Refine prompt — revise the CURRENT proposed content per a follow-up instruction (the diff-gate's
+  // follow-up input). Same output contract as buildCmdkPrompt, but the base is the proposal itself,
+  // not the target's original content, so iterations compound ("now make the ocean bigger").
+  function buildRefinePrompt(mode: string, current: string, followup: string): string {
+    if (mode === "prose")
+      return "TARGET: the text shown between « ». Revise ONLY that text to satisfy the instruction. Output plain text only — no markup.\n\nInstruction: " + followup + "\n\nCurrent text:\n«" + current + "»";
+    // rich + author both produce HTML; the current proposal IS that HTML.
+    return "TARGET: an HTML block you just produced. Revise its HTML to satisfy the instruction. Output pure HTML only.\n\nInstruction: " + followup + "\n\nCurrent HTML:\n" + current;
+  }
+  // Run one /rewrite round: POST the prompt, drain the SSE stream, return the server's `done` payload
+  // (or a human-readable error). onChunk streams the partial preview (fills the ⌘K hint live).
+  // Extracted so the diff-gate's follow-up refine reuses the exact same model path.
+  async function runRewrite(prompt: string, mode: string, onChunk?: (preview: string) => void): Promise<{ ok: boolean; r?: any; error?: string }> {
+    try {
+      const res = await fetch("/rewrite", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt, mode }) });
+      const reader = res.body!.getReader(); const dec = new TextDecoder();
+      let buf = ""; let preview = ""; let r: any = null; let gotChunk = false; let serverErr = "";
+      while (true) {
+        const { value, done } = await reader.read(); if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i: number;
+        while ((i = buf.indexOf("\n\n")) >= 0) {
+          const line = buf.slice(0, i); buf = buf.slice(i + 2);
+          if (!line.startsWith("data: ")) continue;
+          const obj = JSON.parse(line.slice(6));
+          if (obj.chunk) { gotChunk = true; preview += obj.chunk; onChunk?.(preview); }
+          else if (obj.done) r = obj.done;
+          else if (obj.error) serverErr = obj.error;
+        }
+      }
+      if (!r || !r.ok || !r.text)
+        return { ok: false, error: serverErr ? "failed: " + serverErr : (!r && gotChunk) ? "response was cut off — try again" : !r ? "no response (timed out?) — try again" : "AI returned nothing — try again" };
+      return { ok: true, r };
+    } catch { return { ok: false, error: "failed — try again" }; }
+  }
   // Commit a model RESULT to its target — the SINGLE place a generated result mutates the doc, so
   // the diff-gate (separate track) has exactly one call to intercept. Returns false (cmdk stays
   // open, with a hint) when it can't apply.
@@ -1658,42 +1693,27 @@ if (note && mount) {
     // 2) Generative path — only rich / author / prose-rewrite reach the model. Stream the result.
     const mode = route.mode;
     cmdkInput.disabled = true; cmdkHint.textContent = "thinking with your Claude…";
-    const prompt = buildCmdkPrompt(t, mode, intent);
+    // Honest failure UX (cut-off vs timeout vs empty) lives inside runRewrite.error now.
+    const out = await runRewrite(buildCmdkPrompt(t, mode, intent), mode, (p) => { cmdkHint.textContent = p.replace(/\s+/g, " ").trim().slice(-90) || "…"; });
+    if (!out.ok || !out.r) { cmdkInput.disabled = false; cmdkHint.textContent = out.error || "failed — try again"; return; }
+    const r: any = out.r;
     try {
-      const res = await fetch("/rewrite", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt, mode }) });
-      const reader = res.body!.getReader(); const dec = new TextDecoder(); let buf = ""; let preview = ""; let r: any = null; let gotChunk = false; let serverErr = "";
-      while (true) {
-        const { value, done } = await reader.read(); if (done) break;
-        buf += dec.decode(value, { stream: true });
-        let i: number;
-        while ((i = buf.indexOf("\n\n")) >= 0) {
-          const line = buf.slice(0, i); buf = buf.slice(i + 2);
-          if (!line.startsWith("data: ")) continue;
-          const obj = JSON.parse(line.slice(6));
-          if (obj.chunk) { gotChunk = true; preview += obj.chunk; cmdkHint.textContent = preview.replace(/\s+/g, " ").trim().slice(-90) || "…"; }
-          else if (obj.done) r = obj.done;
-          else if (obj.error) { serverErr = obj.error; }
-        }
-      }
-      // Honest failure UX: tell a reported error / a cut-off stream / a truly-empty result apart
-      // (the bare "failed: empty" masked a 10s idleTimeout drop on cold model starts).
-      if (!r || !r.ok || !r.text) {
-        cmdkInput.disabled = false;
-        cmdkHint.textContent = serverErr ? "failed: " + serverErr
-          : !r && gotChunk ? "response was cut off — try again"
-          : !r ? "no response (timed out?) — try again"
-          : "AI returned nothing — try again";
-        return;
-      }
       // [AI:cmdk+diff-gate] Human-approval gate (decision #4) — wired into ⌘K at the SINGLE commit
       // chokepoint. When DIFF_GATE_ENABLED, the computed edit is shown as a RENDERED visual diff and
       // only what's accepted is inserted (r.text becomes the approved whole/per-hunk HTML); rejecting
-      // aborts before any mutation. No-op when the flag is off. `before` is the target's prior content
-      // (rich → inner HTML; prose → selected text; author → empty). RICH_STYLES gives the preview the
-      // doc's real CSS. Deterministic native ops never reach here — they don't call applyAiResult.
+      // aborts before any mutation. The gate's follow-up input refines the proposal in place via
+      // onRefine — re-running the model on the CURRENT proposal so edits compound. `before` is the
+      // target's prior content (rich → inner HTML; prose → selected text; author → empty). RICH_STYLES
+      // gives the preview the doc's real CSS. Deterministic native ops never reach here.
       if (DIFF_GATE_ENABLED) {
         const before = mode === "rich" ? t.html : mode === "author" ? "" : (t.text || "");
-        const gate = await diffApprove(before, r.text, mode as any, mode === "rich" ? { css: RICH_STYLES } : {});
+        const gate = await diffApprove(before, r.text, mode as any, {
+          ...(mode === "rich" ? { css: RICH_STYLES } : {}),
+          onRefine: async (instruction: string, current: string) => {
+            const ref = await runRewrite(buildRefinePrompt(mode, current, instruction), mode);
+            return ref.ok && ref.r ? { ok: true, text: ref.r.text } : { ok: false, error: ref.error };
+          },
+        });
         if (!gate.accepted) { cmdkInput.disabled = false; cmdkHint.textContent = "change discarded"; return; }
         if (gate.html != null) r.text = gate.html;
       }

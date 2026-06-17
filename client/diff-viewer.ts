@@ -40,6 +40,11 @@ export interface DiffApproveOpts {
   css?: string;
   // Overridable labels (the caller knows whether this is a rewrite, an insertion, …).
   title?: string;
+  // Follow-up refine: when provided, the gate shows an input where the user can refine the
+  // proposed change ("make the ocean bigger") without leaving the gate. The gate hands back the
+  // CURRENT proposal + the instruction; the caller re-runs the model and returns the new proposed
+  // content. The gate then re-diffs against the original and re-renders in place. Omit ⇒ no input.
+  onRefine?: (instruction: string, currentProposal: string) => Promise<{ ok: boolean; text?: string; error?: string }>;
 }
 
 // ───────────────────────── PURE: block split (inert template) ─────────────────────────
@@ -161,7 +166,13 @@ export function diffApprove(
   injectStyle();
 
   return new Promise<DiffApproveResult>((resolve) => {
-    const accept: boolean[] = hunks.map(() => true); // default: accept every proposed change
+    // Mutable so a follow-up refine can swap the proposal in place: re-diff against the SAME
+    // original (so we always show the net change vs the doc), re-render, reset per-hunk decisions.
+    let proposal = newClean;
+    let curHunks = hunks;
+    let curChangeIdxs = changeIdxs;
+    let accept: boolean[] = curHunks.map(() => true); // default: accept every proposed change
+    const canRefine = typeof opts.onRefine === "function";
 
     const root = document.createElement("div");
     root.className = "dgate-root";
@@ -178,6 +189,13 @@ export function diffApprove(
           '</span>' +
         '</div>' +
         '<div class="dgate-body"></div>' +
+        (canRefine
+          ? '<div class="dgate-refine">' +
+              '<input class="dgate-refine-input" type="text" autocomplete="off" ' +
+                'placeholder="Refine this change — e.g. “make the ocean bigger”, then ↵" />' +
+              '<span class="dgate-refine-status"></span>' +
+            '</div>'
+          : '') +
         '<div class="dgate-foot">' +
           '<button class="dgate-btn dgate-reject" type="button">Reject all <kbd>Esc</kbd></button>' +
           '<span class="dgate-spacer"></span>' +
@@ -190,67 +208,109 @@ export function diffApprove(
     (root.querySelector(".dgate-title") as HTMLElement).textContent = titleLabel;
     const body = root.querySelector(".dgate-body") as HTMLElement;
     const applyBtn = root.querySelector(".dgate-apply") as HTMLButtonElement;
+    const refineInput = root.querySelector(".dgate-refine-input") as HTMLInputElement | null;
+    const refineStatus = root.querySelector(".dgate-refine-status") as HTMLElement | null;
 
-    // Render each hunk. "same" context renders dimmed; changes carry their colored frame and a
-    // per-hunk toggle that flips its decision. Content goes into a shadow root so the preview's
-    // own CSS (inline styles, classes + opts.css) is encapsulated and cannot leak to the chrome.
-    hunks.forEach((h, idx) => {
-      if (h.kind === "same") {
-        if (!h.blocks.join("").trim()) return;
-        const ctx = document.createElement("div"); ctx.className = "dgate-hunk dgate-ctx";
-        ctx.appendChild(preview(h.blocks.join(""), opts.css));
-        body.appendChild(ctx);
+    // (Re)render every hunk from the current diff. "same" context renders dimmed; changes carry
+    // their colored frame and a per-hunk toggle that flips its decision. Content goes into a shadow
+    // root so the preview's own CSS (inline styles, classes + opts.css) can't leak to the chrome.
+    const renderHunks = () => {
+      body.innerHTML = "";
+      if (!curChangeIdxs.length) {
+        const note = document.createElement("div");
+        note.className = "dgate-empty";
+        note.textContent = "No differences from the original.";
+        body.appendChild(note);
         return;
       }
-      const hunk = document.createElement("div");
-      hunk.className = "dgate-hunk dgate-" + h.kind;
-      // toggle reflects accept[idx]; clicking flips it and restyles the hunk.
-      const toggle = document.createElement("button");
-      toggle.type = "button"; toggle.className = "dgate-toggle";
-      const paint = () => {
-        hunk.classList.toggle("dgate-rejected", !accept[idx]);
-        toggle.textContent = accept[idx] ? "✓ keep" : "✕ skip";
-        toggle.setAttribute("aria-pressed", String(accept[idx]));
-      };
-      toggle.addEventListener("click", () => { accept[idx] = !accept[idx]; paint(); });
+      curHunks.forEach((h, idx) => {
+        if (h.kind === "same") {
+          if (!h.blocks.join("").trim()) return;
+          const ctx = document.createElement("div"); ctx.className = "dgate-hunk dgate-ctx";
+          ctx.appendChild(preview(h.blocks.join(""), opts.css));
+          body.appendChild(ctx);
+          return;
+        }
+        const hunk = document.createElement("div");
+        hunk.className = "dgate-hunk dgate-" + h.kind;
+        // toggle reflects accept[idx]; clicking flips it and restyles the hunk.
+        const toggle = document.createElement("button");
+        toggle.type = "button"; toggle.className = "dgate-toggle";
+        const paint = () => {
+          hunk.classList.toggle("dgate-rejected", !accept[idx]);
+          toggle.textContent = accept[idx] ? "✓ keep" : "✕ skip";
+          toggle.setAttribute("aria-pressed", String(accept[idx]));
+        };
+        toggle.addEventListener("click", () => { accept[idx] = !accept[idx]; paint(); });
 
-      if (h.kind === "add") {
-        hunk.appendChild(tag("added", "dgate-pill-add"));
-        hunk.appendChild(preview(h.blocks.join(""), opts.css));
-      } else if (h.kind === "del") {
-        hunk.appendChild(tag("removed", "dgate-pill-del"));
-        hunk.appendChild(preview(h.blocks.join(""), opts.css));
-      } else {
-        hunk.appendChild(tag("changed", "dgate-pill-chg"));
-        const before = preview(h.oldBlocks.join(""), opts.css); before.classList.add("dgate-before");
-        const after = preview(h.newBlocks.join(""), opts.css); after.classList.add("dgate-after");
-        hunk.appendChild(before); hunk.appendChild(after);
-      }
-      hunk.appendChild(toggle);
-      paint();
-      body.appendChild(hunk);
-    });
+        if (h.kind === "add") {
+          hunk.appendChild(tag("added", "dgate-pill-add"));
+          hunk.appendChild(preview(h.blocks.join(""), opts.css));
+        } else if (h.kind === "del") {
+          hunk.appendChild(tag("removed", "dgate-pill-del"));
+          hunk.appendChild(preview(h.blocks.join(""), opts.css));
+        } else {
+          hunk.appendChild(tag("changed", "dgate-pill-chg"));
+          const before = preview(h.oldBlocks.join(""), opts.css); before.classList.add("dgate-before");
+          const after = preview(h.newBlocks.join(""), opts.css); after.classList.add("dgate-after");
+          hunk.appendChild(before); hunk.appendChild(after);
+        }
+        hunk.appendChild(toggle);
+        paint();
+        body.appendChild(hunk);
+      });
+    };
+    renderHunks();
 
     // ── resolution + teardown ──
     let done = false;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Enter") { e.preventDefault(); finish({ accepted: true, html: newClean }); }
-      else if (e.key === "Escape") { e.preventDefault(); finish({ accepted: false }); }
-    };
+    let refining = false;
     const finish = (r: DiffApproveResult) => {
       if (done) return; done = true;
       document.removeEventListener("keydown", onKey, true);
       root.remove();
       resolve(r);
     };
-    root.querySelector(".dgate-accept")!.addEventListener("click", () => finish({ accepted: true, html: newClean }));
+    const acceptAll = () => finish({ accepted: true, html: proposal });
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Enter") {
+        // Enter inside the refine input submits the refine; anywhere else accepts.
+        if (refineInput && document.activeElement === refineInput) { e.preventDefault(); submitRefine(); return; }
+        e.preventDefault(); acceptAll();
+      } else if (e.key === "Escape") { e.preventDefault(); finish({ accepted: false }); }
+    };
+
+    // Follow-up refine: hand the CURRENT proposal + instruction to the caller (which re-runs the
+    // model), then re-diff against the original and re-render in place. Disabled while in flight.
+    const submitRefine = async () => {
+      if (!refineInput || !opts.onRefine || refining) return;
+      const instruction = refineInput.value.trim();
+      if (!instruction) return;
+      refining = true; refineInput.disabled = true;
+      if (refineStatus) refineStatus.textContent = "refining…";
+      let out: { ok: boolean; text?: string; error?: string };
+      try { out = await opts.onRefine(instruction, proposal); }
+      catch { out = { ok: false, error: "refine failed — try again" }; }
+      if (done) return; // gate was closed mid-flight
+      refining = false; refineInput.disabled = false;
+      if (!out.ok || !out.text) { if (refineStatus) refineStatus.textContent = out.error || "couldn’t refine — try again"; refineInput.focus(); return; }
+      proposal = stripActive(out.text);
+      curHunks = diffBlocks(splitBlocks(oldClean), splitBlocks(proposal));
+      curChangeIdxs = curHunks.map((h, i) => (h.kind === "same" ? -1 : i)).filter((i) => i >= 0);
+      accept = curHunks.map(() => true);
+      renderHunks();
+      refineInput.value = ""; if (refineStatus) refineStatus.textContent = "";
+      refineInput.focus();
+    };
+
+    root.querySelector(".dgate-accept")!.addEventListener("click", acceptAll);
     root.querySelector(".dgate-reject")!.addEventListener("click", () => finish({ accepted: false }));
     applyBtn.addEventListener("click", () => {
-      const anyAccepted = changeIdxs.some((i) => accept[i]);
+      const anyAccepted = curChangeIdxs.some((i) => accept[i]);
       // Composing with every change accepted is exactly "accept all" — hand back the verbatim
       // proposed HTML so the result is byte-identical to the no-gate path in that case.
-      const allAccepted = changeIdxs.every((i) => accept[i]);
-      finish({ accepted: anyAccepted, html: allAccepted ? newClean : composeAccepted(hunks, accept) });
+      const allAccepted = curChangeIdxs.length > 0 && curChangeIdxs.every((i) => accept[i]);
+      finish({ accepted: anyAccepted, html: allAccepted ? proposal : composeAccepted(curHunks, accept) });
     });
     // Click on the backdrop (outside the panel) rejects — same as Esc.
     root.addEventListener("mousedown", (e) => { if (e.target === root) finish({ accepted: false }); });
@@ -275,7 +335,11 @@ function preview(html: string, css?: string): HTMLElement {
   const shadow = host.attachShadow({ mode: "open" });
   // Reset FIRST so the doc's own styles (appended next) always win over our default font.
   const reset = document.createElement("style");
-  reset.textContent = "*{box-sizing:border-box}:host{font-family:-apple-system,BlinkMacSystemFont,'Inter',system-ui,sans-serif;color:#1c1c1e;line-height:1.55}img,svg,video{max-width:100%;height:auto}";
+  // Default text color must follow the OS scheme: the gate chrome flips to light text in dark
+  // mode (see @media block below), and the hunk backgrounds go dark — but that outer media query
+  // can't reach into this shadow root, so it'd leave content near-black on a dark hunk. Re-declare
+  // it here. The doc's own colors (appended after) still win; this only sets the default.
+  reset.textContent = "*{box-sizing:border-box}:host{font-family:-apple-system,BlinkMacSystemFont,'Inter',system-ui,sans-serif;color:#1c1c1e;line-height:1.55}@media(prefers-color-scheme:dark){:host{color:#ececef}}img,svg,video{max-width:100%;height:auto}";
   shadow.appendChild(reset);
   // opts.css may be either style-tag MARKUP (the editor's RICH_STYLES, which is what the
   // RichBlock nodeView injects verbatim) or raw CSS text — handle both.
@@ -331,6 +395,13 @@ function injectStyle(): void {
   .dgate-primary{background:#5a49d6;border-color:#5a49d6;color:#fff}
   .dgate-primary:hover{background:#4c3dc4}
   .dgate-btn kbd{font:inherit;font-size:11px;opacity:.75;border:1px solid currentColor;border-radius:4px;padding:0 4px;line-height:1.4}
+  .dgate-empty{padding:18px;color:#6b6b76;font-size:13px;text-align:center}
+  .dgate-refine{display:flex;align-items:center;gap:10px;padding:10px 18px;border-top:1px solid #ececef}
+  .dgate-refine-input{flex:1;font:inherit;font-size:13px;border:1px solid #d4d4da;border-radius:9px;
+    padding:8px 12px;background:#fff;color:#1c1c1e;outline:none}
+  .dgate-refine-input:focus{border-color:#5a49d6;box-shadow:0 0 0 3px rgba(90,73,214,.16)}
+  .dgate-refine-input:disabled{opacity:.6}
+  .dgate-refine-status{font-size:12px;color:#6b6b76;white-space:nowrap}
   @media(prefers-color-scheme:dark){
     .dgate-panel{background:#1a1a1f;color:#ececef}
     .dgate-head,.dgate-foot{border-color:#2c2c33}
@@ -342,6 +413,10 @@ function injectStyle(): void {
     .dgate-btn:hover{background:#303039}
     .dgate-toggle{background:#26262c;border-color:#3a3a42;color:#cfcfd6}
     .dgate-primary{background:#6d5ce0;border-color:#6d5ce0;color:#fff}
+    .dgate-refine{border-color:#2c2c33}
+    .dgate-refine-input{background:#26262c;border-color:#3a3a42;color:#ececef}
+    .dgate-refine-status{color:#a0a0aa}
+    .dgate-empty{color:#a0a0aa}
   }`;
   document.head.appendChild(st);
 }
