@@ -2343,9 +2343,12 @@ if (note && mount) {
         count.textContent = recent.length ? String(recent.length) : "";
         if (!collapsed) { if (recent.length) recent.forEach((f) => body.appendChild(noteRow(f, 0, { reltime: hasM }))); else emptyInto(body, "No notes yet"); }
       }
-      // 📁 Notebook — the full tree, with empty folders seeded from /list `dirs`.
+      // 📁 Vault tree — the full tree, with empty folders seeded from /list `dirs`.
+      // Title tracks the opened folder's basename (matches the .vname header); falls back to
+      // "Notebook" when there's no vault root. Section id stays "notebook" (collapse-state key + tests).
       {
-        const { body, count, collapsed } = makeSection("notebook", "📁", "Notebook");
+        const vaultName = ROOT.split("/").pop() || "Notebook";
+        const { body, count, collapsed } = makeSection("notebook", "📁", vaultName);
         count.textContent = allNotes.length ? String(allNotes.length) : "";
         if (!collapsed) {
           const tree = buildTree(allNotes); seedDirs(tree, allDirs);

@@ -52,8 +52,13 @@ const sectionHead = (page: Page, id: string) => page.locator(`.fm-section[data-s
 
 test("sections render top→bottom: Favorites, Recent, Notebook, Trash", async ({ page }) => {
   await openSidebar(page);
-  const titles = await page.locator(".fm-section-head .fm-sec-title").allTextContents();
-  expect(titles).toEqual(["Favorites", "Recent", "Notebook", "Trash"]);
+  // Section order is the contract; the third section's title now tracks the opened vault
+  // basename (matches the .vname header), so assert identity by data-section, not the label.
+  const ids = await page.locator(".fm-section").evaluateAll((els) => els.map((e) => e.getAttribute("data-section")));
+  expect(ids).toEqual(["favorites", "recent", "notebook", "trash"]);
+  // The notebook section title mirrors the vault header rather than a literal "Notebook".
+  const vaultName = (await page.locator(".vault .vname").textContent())!.trim();
+  await expect(page.locator(`${NOTEBOOK} .fm-sec-title`)).toHaveText(vaultName);
 });
 
 test("a section collapses + the body hides when its header is clicked", async ({ page }) => {
