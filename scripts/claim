@@ -22,9 +22,10 @@ REPO        = "Benzales/note-editor-spike"
 OWNER       = "Benzales"
 PROJECT     = "1"
 PROJECT_ID  = "PVT_kwHOBWiRRs4Ba9ti"
-STAGE_FIELD = "PVTSSF_lAHOBWiRRs4Ba9tizhVxkXw"
-STAGE_OPT   = {"Backlog": "64dc18c2", "Active": "a6102bcf",
-               "In-progress": "df0db960", "Done": "d2050a1f"}
+# built-in Status field — GitHub's "issue closed -> Done" workflow targets this one
+STATUS_FIELD = "PVTSSF_lAHOBWiRRs4Ba9tizhVxkXE"
+STATUS_OPT   = {"Backlog": "bf47e233", "Active": "e6f3079c",
+                "In-progress": "bcf1c833", "Done": "491997e2"}
 QA_LABEL    = "qa-board"
 MARK        = "\U0001f512 claim:"           # "🔒 claim:"
 
@@ -78,7 +79,7 @@ def move(n, stage):
         print(f"  ! couldn't place #{n} on the board (claim still valid)", file=sys.stderr)
         return False
     r = gh(["project", "item-edit", "--id", iid, "--project-id", PROJECT_ID,
-            "--field-id", STAGE_FIELD, "--single-select-option-id", STAGE_OPT[stage]])
+            "--field-id", STATUS_FIELD, "--single-select-option-id", STATUS_OPT[stage]])
     if r.returncode != 0:
         print(f"  ! board move to {stage} failed (claim still valid): {r.stderr.strip()}", file=sys.stderr)
         return False

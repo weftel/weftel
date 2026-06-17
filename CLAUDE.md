@@ -4,7 +4,7 @@ Guidance for Claude Code agents working in this repo (the local-first notes edit
 
 ## The quality board lives in GitHub Issues
 
-The launch-readiness QA board is **GitHub Issues in this repo** (`Benzales/note-editor-spike`), migrated 2026-06-17 from the wiki's `quality-gaps.html` — a single HTML file that hit file-write races once multiple agents wrote to it. Issues carry `sev:{bug,gap,polish,known,sweep}` + `status:{open,fixed,deferred,accepted,clean}` + a `qa-board` label. Board view: https://github.com/users/Benzales/projects/1 (set the layout to **Board**, group by **Stage**).
+The launch-readiness QA board is **GitHub Issues in this repo** (`Benzales/note-editor-spike`), migrated 2026-06-17 from the wiki's `quality-gaps.html` — a single HTML file that hit file-write races once multiple agents wrote to it. Issues carry `sev:{bug,gap,polish,known,sweep}` + `status:{open,fixed,deferred,accepted,clean}` + a `qa-board` label. Board view: https://github.com/users/Benzales/projects/1 (Board layout, grouped by the built-in **Status** field — Backlog / Active / In-progress / Done). Closed issues auto-move to Done via the project's "issue closed → Done" workflow.
 
 Writes are race-free because GitHub serializes them server-side — **never coordinate work by hand-editing a shared board file.**
 
