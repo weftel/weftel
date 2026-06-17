@@ -4,7 +4,7 @@ import { test, expect } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 if (typeof (globalThis as any).document === "undefined") GlobalRegistrator.register();
 
-import { stripActive, spliceBody, proseModelable, editableModelable, subtreeEditable, scopeCss, filterInlineStyle, escapeAttr, mdLite, buildTree, countFiles, sanitizeRelNotePath, tidySaveHtml, hasInteractiveScript, hasOwnStyling, buildInteractSrcdoc, BASE_NOTE_CSS, isSvgTextLeaf, collectSvgTextLeaves, svgDirectTextRuns, collectSvgTextRuns, isHtmlTextLeaf, collectHtmlTextLeaves, htmlDirectTextRuns, collectHtmlTextRuns, inForeignObject } from "../../client/lib";
+import { stripActive, spliceBody, proseModelable, editableModelable, subtreeEditable, scopeCss, filterInlineStyle, escapeAttr, mdLite, buildTree, countFiles, sanitizeRelNotePath, tidySaveHtml, hasInteractiveScript, hasOwnStyling, buildInteractSrcdoc, BASE_NOTE_CSS, isSvgTextLeaf, collectSvgTextLeaves, svgDirectTextRuns, collectSvgTextRuns, isHtmlTextLeaf, collectHtmlTextLeaves, htmlDirectTextRuns, collectHtmlTextRuns, inForeignObject, parseFormatIntent, parseClockTz, parseCalloutKind, parseTableIntent, stripCodeFence, cleanProseResult, routeCmdkIntent } from "../../client/lib";
 
 // ───────────────────────── spliceBody — the $-corruption bug ─────────────────────────
 const TOKEN = "%%NOTE_BODY%%";
@@ -458,4 +458,116 @@ test("sanitizeRelNotePath: returns null when nothing usable remains", () => {
   expect(sanitizeRelNotePath("///")).toBe(null);
   expect(sanitizeRelNotePath("***")).toBe(null);
   expect(sanitizeRelNotePath("   ")).toBe(null);
+});
+
+// ───────────────────────── ⌘K intent routing (rebuild) ─────────────────────────
+// The contract these enforce: a FORMATTING instruction on a text selection becomes a real editor
+// mark (never literal "**" inserted as text), and a NATIVE-BLOCK instruction becomes an attr change
+// on that one node (never a duplicate block beside it). Pure recognizers — the deterministic core
+// of the rebuilt ⌘K, so they get the hard format-contract coverage the e2e cache-replay can't.
+
+test("parseFormatIntent: formatting verbs → the matching mark op (not text)", () => {
+  expect(parseFormatIntent("bold these words")).toEqual({ op: "bold" });
+  expect(parseFormatIntent("make this bold")).toEqual({ op: "bold" });
+  expect(parseFormatIntent("italic")).toEqual({ op: "italic" });
+  expect(parseFormatIntent("make it italic")).toEqual({ op: "italic" });
+  expect(parseFormatIntent("strikethrough this")).toEqual({ op: "strike" });
+  expect(parseFormatIntent("cross this out")).toEqual({ op: "strike" });
+  expect(parseFormatIntent("inline code")).toEqual({ op: "code" });
+  expect(parseFormatIntent("clear formatting")).toEqual({ op: "clear" });
+});
+
+test("parseFormatIntent: color + highlight resolve a concrete value", () => {
+  expect(parseFormatIntent("make it red")).toEqual({ op: "color", color: "#e5484d" });
+  expect(parseFormatIntent("color this blue")).toEqual({ op: "color", color: "#3b82f6" });
+  expect(parseFormatIntent("text color #00ff88")).toEqual({ op: "color", color: "#00ff88" });
+  expect(parseFormatIntent("highlight")).toEqual({ op: "highlight" });
+  expect(parseFormatIntent("highlight in yellow")).toEqual({ op: "highlight", color: "#fde047" });
+});
+
+test("parseFormatIntent: a content REWRITE is not a format command (→ null, falls to AI)", () => {
+  expect(parseFormatIntent("rewrite this to be more concise")).toBe(null);
+  expect(parseFormatIntent("translate to spanish")).toBe(null);
+  expect(parseFormatIntent("summarize this paragraph")).toBe(null);
+  expect(parseFormatIntent("make this a three item list")).toBe(null); // long → not a one-word format
+  expect(parseFormatIntent("")).toBe(null);
+});
+
+test("parseClockTz: 'change clock to PT' → America/Los_Angeles (and other zones)", () => {
+  expect(parseClockTz("change clock to PT")).toBe("America/Los_Angeles");
+  expect(parseClockTz("pacific time")).toBe("America/Los_Angeles");
+  expect(parseClockTz("show UTC")).toBe("UTC");
+  expect(parseClockTz("set it to Tokyo")).toBe("Asia/Tokyo");
+  expect(parseClockTz("eastern")).toBe("America/New_York");
+  expect(parseClockTz("America/Sao_Paulo")).toBe("America/Sao_Paulo"); // raw IANA accepted
+  expect(parseClockTz("make it spin")).toBe(null);                     // unrecognized → hint, no AI
+});
+
+test("parseCalloutKind: maps to info/tip/warn, else null", () => {
+  expect(parseCalloutKind("make it a warning")).toBe("warn");
+  expect(parseCalloutKind("turn this into a tip")).toBe("tip");
+  expect(parseCalloutKind("make it info")).toBe("info");
+  expect(parseCalloutKind("rewrite the text")).toBe(null);
+});
+
+test("parseTableIntent: structural ops on the existing table", () => {
+  expect(parseTableIntent("add a row")).toBe("addRowAfter");
+  expect(parseTableIntent("insert a row above")).toBe("addRowBefore");
+  expect(parseTableIntent("add a column")).toBe("addColumnAfter");
+  expect(parseTableIntent("delete this row")).toBe("deleteRow");
+  expect(parseTableIntent("remove the column")).toBe("deleteColumn");
+  expect(parseTableIntent("toggle header row")).toBe("toggleHeaderRow");
+  expect(parseTableIntent("delete the table")).toBe("deleteTable");
+  expect(parseTableIntent("make it pretty")).toBe(null);
+});
+
+test("stripCodeFence: removes a ```lang fence the model wrapped output in", () => {
+  expect(stripCodeFence("```html\n<p>hi</p>\n```")).toBe("<p>hi</p>");
+  expect(stripCodeFence("```\nplain\n```")).toBe("plain");
+  expect(stripCodeFence("<p>no fence</p>")).toBe("<p>no fence</p>");
+});
+
+test("cleanProseResult: de-narrates + unwraps quotes (produce the artifact, not a reply)", () => {
+  expect(cleanProseResult("Here's a tighter version: The cat sat.")).toBe("The cat sat.");
+  expect(cleanProseResult('"The cat sat."')).toBe("The cat sat.");
+  expect(cleanProseResult("Sure, done. The cat sat.")).toBe("done. The cat sat."); // only the lead-in token is stripped
+  expect(cleanProseResult("```\nThe cat sat.\n```")).toBe("The cat sat.");
+});
+
+// ───────────── routeCmdkIntent — the routing-bug regression (dogfood F-found) ─────────────
+// The bug: a text selection (or cell-selection) INSIDE a table classified as "prose", so a table
+// instruction never reached parseTableIntent and fell through to the model. The router must put a
+// native-block instruction first whenever the caret/selection is in/on that block.
+
+test("routeCmdkIntent: 'add row' with a TEXT SELECTION in a table → table op, NOT the model (the bug)", () => {
+  expect(routeCmdkIntent({ kind: "prose", inTable: true }, "add row")).toEqual({ kind: "table", op: "addRowAfter" });
+  expect(routeCmdkIntent({ kind: "prose", inTable: true }, "add a row")).toEqual({ kind: "table", op: "addRowAfter" });
+  // cell-selection context (primary kind table) routes the same
+  expect(routeCmdkIntent({ kind: "table", inTable: true }, "delete column")).toEqual({ kind: "table", op: "deleteColumn" });
+});
+
+test("routeCmdkIntent: in-table but a non-table instruction still does the right thing", () => {
+  // a format command on selected cell text → real marks, not a table op
+  expect(routeCmdkIntent({ kind: "prose", inTable: true }, "bold this")).toEqual({ kind: "format", op: { op: "bold" } });
+  // a genuine rewrite on selected cell text → the model (prose), not a spurious table op
+  expect(routeCmdkIntent({ kind: "prose", inTable: true }, "rephrase this")).toEqual({ kind: "ai", mode: "prose" });
+  // bare caret in a cell + a non-table instruction → author (write into the cell)
+  expect(routeCmdkIntent({ kind: "author", inTable: true }, "write a haiku")).toEqual({ kind: "ai", mode: "author" });
+});
+
+test("routeCmdkIntent: callout kind change wins in-callout; authoring does not mis-fire", () => {
+  expect(routeCmdkIntent({ kind: "prose", inCallout: true }, "make it a warning")).toEqual({ kind: "callout", calloutKind: "warn" });
+  // "write a tip about X" is authoring, not a kind change → model author, callout NOT recolored
+  expect(routeCmdkIntent({ kind: "author", inCallout: true }, "write a tip about deploys")).toEqual({ kind: "ai", mode: "author" });
+});
+
+test("routeCmdkIntent: node-selected atoms + plain prose/rich/author route as before", () => {
+  expect(routeCmdkIntent({ kind: "clock" }, "change to PT")).toEqual({ kind: "clock", tz: "America/Los_Angeles" });
+  expect(routeCmdkIntent({ kind: "clock" }, "make it spin")).toEqual({ kind: "hint", target: "clock" });
+  expect(routeCmdkIntent({ kind: "calendar" }, "https://cal.example/x")).toEqual({ kind: "calendar", src: "https://cal.example/x" });
+  expect(routeCmdkIntent({ kind: "callout" }, "rewrite the text")).toEqual({ kind: "hint", target: "callout" });
+  expect(routeCmdkIntent({ kind: "prose" }, "bold this")).toEqual({ kind: "format", op: { op: "bold" } });
+  expect(routeCmdkIntent({ kind: "prose" }, "make it more concise")).toEqual({ kind: "ai", mode: "prose" });
+  expect(routeCmdkIntent({ kind: "rich" }, "make the grid 6x6")).toEqual({ kind: "ai", mode: "rich" });
+  expect(routeCmdkIntent({ kind: "author" }, "a table of fruits")).toEqual({ kind: "ai", mode: "author" });
 });

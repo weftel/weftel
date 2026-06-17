@@ -12,27 +12,46 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, renameSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { resolve, extname, basename, dirname, sep, join } from "node:path";
 import { createHash } from "node:crypto";
-import { query } from "@anthropic-ai/claude-agent-sdk";
+// [AI:model-layer] The raw model call now lives behind a provider seam (server/providers.ts).
+// streamAI() below delegates to the selected provider (CloudProvider by default, which wraps
+// the Agent SDK exactly as before) instead of calling query() directly here.
+import { getProvider, modelInfo } from "./server/providers";
 
-// In-app AI edit (⌘K) — cut for first launch. It was net-negative on dogfooding (harmed
-// notes more than it helped; 2026-06-15 generation regression) — see
-// notes-editor-wiki/quality-gaps.html F23 + ai-quality-audit.html. The plumbing below
-// (SYSTEM, streamAI, /rewrite) stays intact behind this flag so the rebuild flips it back
-// on rather than rebuilding the Agent-SDK + cache + sanitize integration. SINGLE SOURCE OF
-// TRUTH: this const gates the /rewrite route AND is injected into the client (shell()), so
-// front and back never drift. The rebuild also needs a real quality eval before flipping —
-// today's e2e tests replay a cached response and don't catch live-quality regressions.
-const AI_EDIT_ENABLED = false;
+// [AI:cmdk] In-app AI edit (⌘K) — DEFAULT OFF in committed code (net-negative on the pre-rebuild
+// dogfood; see notes-editor-wiki/quality-gaps.html F23). Env-gated so it flips on for evaluation
+// with no diff (`AI_EDIT_ENABLED=1`); the playwright webServer forwards it. SINGLE SOURCE OF TRUTH:
+// gates the /rewrite route AND is injected into the client via shell(). (model-layer + cmdk agreed.)
+const AI_EDIT_ENABLED = process.env.AI_EDIT_ENABLED === "1";
 
-// Output-format contract — the quality fix. Passed as the SDK systemPrompt so every AI
-// edit obeys it regardless of the per-mode instruction.
-const SYSTEM = `You generate content that is inserted DIRECTLY into a user's note. Obey strictly:
-- Output ONLY the content. No preamble, no explanation, no "Here's", no apologies, no code fences.
-- HTML block requested -> pure HTML, inline styles only. NEVER use markdown syntax inside it (no **bold**, no backslash line breaks, no |---| pipe tables).
-- Prose rewrite requested -> plain text only. The app applies bold/headings/color itself; never emit markdown or HTML.
-- Produce the EXACT structure asked for: a "2x2 table" is exactly 2 columns and 2 rows with no empty spacer cells; an N-item list has exactly N items.
-- Respect the note's theme: do NOT hardcode text or background colors unless the user explicitly asks; let colors inherit.
-- Prefer the simplest native structure (a plain <table>, a plain list) over heavily-styled HTML, unless the user asks for something visual or designed. Use inline SVG only for genuine vector graphics (diagrams, charts).`;
+// [AI:ghost] Tab ghost-text ("Cursor-Tab for notes", v1) — inline faded completion accepted with
+// Tab. Default OFF; flip with GHOST_TEXT_ENABLED=1. Gates the /ghost route AND is injected into the
+// client (shell()), so front and back never drift — same pattern as AI_EDIT_ENABLED.
+const GHOST_TEXT_ENABLED = process.env.GHOST_TEXT_ENABLED === "1";
+
+// [AI:integration] Diff-approve gate, wired INTO ⌘K (decision #4). The gate is part of the ⌘K flow,
+// so it's ON whenever ⌘K is on, with `DIFF_GATE=0` as an escape hatch. Committed default (AI off) ⇒
+// gate off ⇒ base behavior byte-identical. Injected into the client (shell()) as __DIFF_GATE_ENABLED.
+const DIFF_GATE_ENABLED = AI_EDIT_ENABLED && process.env.DIFF_GATE !== "0";
+
+// [AI:cmdk+model-layer] ⌘K model config is UNIFIED through the provider layer (modelInfo() at the
+// /rewrite call-site), the same path /ghost uses — PROVIDER/MODEL env drives both. (Replaced the
+// old per-feature CMDK_MODEL const.)
+
+// [AI:cmdk] Output-format contract — passed as the SDK systemPrompt so every ⌘K edit obeys it
+// regardless of the per-target instruction. Reworked for the rebuild to HARD-SEPARATE the two
+// output formats (HTML block vs prose) and to FRAME ACTION (produce the artifact, never narrate),
+// the two failure modes that made the old ⌘K net-negative.
+const SYSTEM = `You are an inline editor for ONE note. The user selected a target and gave one instruction. Apply it and output ONLY THE RESULT — the artifact itself, nothing wrapped around it.
+
+ALWAYS
+- No preamble, no explanation, no apology, no "Here is", no closing remark, no code fences. If you cannot do exactly what was asked, output your single best attempt at the artifact anyway — NEVER a message about it.
+- Edit ONLY the stated target. The rest of the note is context for tone and facts, not something to regenerate or echo back. Keep the target's length and scope unless told otherwise.
+- Produce EXACTLY the structure asked for: "a 2x2 table" = 2 columns and 2 rows, no empty spacer cells; "3 bullets" = 3 list items.
+- Respect the note's theme: never hardcode text or background colors unless explicitly asked; let colors inherit.
+
+OUTPUT FORMAT — the instruction names the target; obey its rule exactly:
+- HTML block target -> output PURE HTML only, inline styles only. NEVER markdown: no **bold**, no _italic_, no \`code\`, no |---| pipe tables, no backslash-newline. Prefer the simplest native element (a plain <table>, <ul>, <p>) over heavy wrappers unless asked for something visual; use inline SVG only for a genuine diagram or chart. Every <svg> MUST carry a viewBox AND width="100%" (so it sizes to the note, not a clipped 300x150 default), and any gradient/clip MUST be defined inside its proper wrapper (<linearGradient>/<radialGradient>/<clipPath>) — never bare <stop>s.
+- Text (prose) target -> output PLAIN TEXT only: the rewritten words, no markup of any kind (the app owns bold / italic / color / headings). Do not wrap the result in quotes.`;
 
 // AI record/replay cache — for deterministic e2e tests. AI_CACHE=<dir>: hash model+system+
 // prompt, replay the cached response if present, else call the model once and save it.
@@ -42,26 +61,26 @@ const AI_OFFLINE = process.env.AI_OFFLINE === "1";
 function aiKey(model: string, prompt: string) { return createHash("sha256").update(model + "\n" + SYSTEM + "\n" + prompt).digest("hex").slice(0, 40); }
 function aiCacheGet(key: string): string | null { if (!AI_CACHE) return null; try { return readFileSync(join(AI_CACHE, key + ".txt"), "utf8"); } catch { return null; } }
 function aiCacheSet(key: string, val: string) { if (!AI_CACHE) return; try { mkdirSync(AI_CACHE, { recursive: true }); writeFileSync(join(AI_CACHE, key + ".txt"), val); } catch {} }
-// Stream a one-shot completion via the Agent SDK (subscription auth, no tools). onChunk
-// receives each text delta; returns the full text. Honors the AI_CACHE (record/replay).
-async function streamAI(prompt: string, model: string, onChunk: (s: string) => void): Promise<{ ok: true; out: string } | { ok: false; error: string }> {
+// Stream a one-shot completion through the SELECTED provider (CloudProvider by default —
+// subscription auth, no tools). onChunk receives each raw text delta; returns the full
+// trimmed text. Honors the AI_CACHE (record/replay) and AI_OFFLINE exactly as before.
+// [AI:model-layer] The cache wrapper (key/get/AI_OFFLINE/set/trim) is unchanged — only the
+// raw model call is delegated to getProvider().stream(). The provider streams RAW deltas and
+// returns UNTRIMMED text; we trim here for the cache + return value, preserving byte-identical
+// legacy behavior. With PROVIDER unset the provider is CloudProvider and the key is identical.
+async function streamAI(prompt: string, model: string, onChunk: (s: string) => void, provider: ReturnType<typeof getProvider> = getProvider()): Promise<{ ok: true; out: string } | { ok: false; error: string }> {
   const key = aiKey(model, prompt);
   const cached = aiCacheGet(key);
   if (cached != null) { onChunk(cached); return { ok: true, out: cached }; }
   if (AI_OFFLINE) return { ok: false, error: "ai cache miss (AI_OFFLINE)" };
-  try {
-    let text = "";
-    for await (const m of query({ prompt, options: { model, systemPrompt: SYSTEM, allowedTools: [], maxTurns: 1 } } as any)) {
-      if (m.type === "assistant") for (const b of (m as any).message.content) { if (b.type === "text") { text += b.text; onChunk(b.text); } }
-      if (m.type === "result" && (m as any).is_error) return { ok: false, error: String((m as any).subtype || "ai error") };
-    }
-    text = text.trim();
-    aiCacheSet(key, text);
-    return { ok: true, out: text };
-  } catch (e) { return { ok: false, error: String(e).slice(0, 200) }; }
+  const r = await provider.stream(prompt, { system: SYSTEM, model }, onChunk); // [AI:integration] caller picks the provider (per-feature: ⌘K vs ghost)
+  if (!r.ok) return r;
+  const out = r.out.trim();
+  aiCacheSet(key, out);
+  return { ok: true, out };
 }
-import sanitizeHtml from "sanitize-html";
-import { hasInteractiveScript } from "./client/lib";
+import { hasInteractiveScript, buildGhostPrompt, cleanGhostCompletion, stripCodeFence, cleanProseResult } from "./client/lib"; // [AI:ghost+cmdk] ghost prompt/clean + output-format hygiene
+import { safeRichHtml } from "./safe-html"; // [AI:cmdk] sanitize that preserves camelCase SVG (extracted; replaces the inline sanitize-html use)
 
 const PORT = Number(process.env.PORT) || 4321;
 const ARG = resolve(process.argv[2] ?? "./sample.md");
@@ -124,35 +143,7 @@ function toTrash(p: string) {
   let i = 0; while (existsSync(dest)) dest = join(trash, `${basename(p)}.${Date.now()}.${++i}`);
   renameSync(p, dest); // never clobber an existing trash entry
 }
-// Calibrated sanitize for AI (Model B) rich-HTML output: keep the design
-// (classes, inline styles, SVG) but strip the real execution vectors
-// (script/iframe/object, on* handlers, javascript: URLs).
-const SVG_ATTRS = ["viewBox","preserveAspectRatio","xmlns","xmlns:xlink","d","fill","fill-opacity","fill-rule","stroke","stroke-width","stroke-linecap","stroke-linejoin","stroke-dasharray","x","y","x1","y1","x2","y2","cx","cy","r","rx","ry","width","height","points","transform","offset","stop-color","stop-opacity","gradientUnits","gradientTransform","text-anchor","dominant-baseline","font-size","font-family","font-weight","opacity","marker-end","marker-start","clip-path","mask"];
-function safeRichHtml(html: string): string {
-  return sanitizeHtml(html, {
-    allowedTags: [
-      "div","span","p","section","article","header","footer","main","aside","nav",
-      "h1","h2","h3","h4","h5","h6","ul","ol","li","dl","dt","dd",
-      "table","thead","tbody","tfoot","tr","td","th","caption","colgroup","col",
-      "figure","figcaption","img","picture","blockquote","pre","code","kbd","samp","var",
-      "strong","em","b","i","u","s","sub","sup","mark","small","hr","br","wbr",
-      "details","summary","time","abbr","cite","q","label","meter","progress",
-      "svg","g","path","circle","ellipse","rect","line","polyline","polygon","text","tspan",
-      "defs","linearGradient","radialGradient","stop","clipPath","use","symbol","marker","pattern","mask","title","desc",
-    ],
-    allowedAttributes: {
-      "*": ["class", "id", "style", "title", "role", "data-*", "aria-*"],
-      a: ["href", "target", "rel"],
-      img: ["src", "alt", "width", "height", "loading"],
-      svg: SVG_ATTRS, g: SVG_ATTRS, path: SVG_ATTRS, circle: SVG_ATTRS, ellipse: SVG_ATTRS,
-      rect: SVG_ATTRS, line: SVG_ATTRS, polyline: SVG_ATTRS, polygon: SVG_ATTRS, text: SVG_ATTRS,
-      tspan: SVG_ATTRS, stop: SVG_ATTRS, linearGradient: SVG_ATTRS, radialGradient: SVG_ATTRS,
-      use: SVG_ATTRS, clipPath: SVG_ATTRS, marker: SVG_ATTRS, pattern: SVG_ATTRS, mask: SVG_ATTRS,
-    },
-    allowedSchemes: ["http", "https", "data", "mailto"],
-    allowVulnerableTags: false,
-  });
-}
+// [AI:cmdk] safeRichHtml + SVG_ATTRS moved to ./safe-html.ts (unit-testable; preserves camelCase SVG).
 
 // ---- client bundle ----
 async function bundleClient(): Promise<string> {
@@ -405,7 +396,7 @@ function shell(note: { file: string; format: string; content: string } | null, o
 <style>${styles()}</style></head>
 <body>
   ${body}
-  <script>window.__NOTE__=${json};window.__AI_EDIT_ENABLED=${AI_EDIT_ENABLED};
+  <script>window.__NOTE__=${json};window.__AI_EDIT_ENABLED=${AI_EDIT_ENABLED};window.__GHOST_TEXT_ENABLED=${GHOST_TEXT_ENABLED};window.__DIFF_GATE_ENABLED=${DIFF_GATE_ENABLED};
   // This app uses no service worker. If a stale one (e.g. from a prior project on this port)
   // is registered on this origin it will intercept /editor.js and serve old code, immune to
   // refresh. Unregister any SW + drop its caches so the next load is always the fresh bundle.
@@ -418,6 +409,12 @@ function json(data: unknown, status = 200) { return Response.json(data as any, {
 
 Bun.serve({
   port: PORT,
+  // [AI:cmdk] Bun's default idleTimeout is 10s — it KILLED streaming /rewrite responses on a cold
+  // model start (first token > 10s with no bytes yet), surfacing to the user as a bare "failed:
+  // empty". Raise it to Bun's max (255s) so slow/cold model streams (and /ghost later) survive; once
+  // tokens flow, each chunk resets the idle clock, so steady streaming never trips it. Fast routes
+  // (save/list) are unaffected. (0 would fully disable it; a finite cap still reaps dead sockets.)
+  idleTimeout: 255,
   async fetch(req) {
     const url = new URL(req.url);
     if (url.pathname === "/editor.js") return new Response(EDITOR_JS, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" } });
@@ -514,25 +511,65 @@ Bun.serve({
         return json({ ok: true, first: firstNote() });
       }
       if (url.pathname === "/rewrite") {
+        // [AI:cmdk] AI generation for the three GENERATIVE ⌘K targets only (rich / author / prose).
+        // Native-block attr/structure edits + prose FORMATTING never reach here — the client routes
+        // those to deterministic editor commands, so the model can't duplicate a block or emit a
+        // literal markdown mark. streamAI() is the single AI call-site (model-layer swap-point).
         if (!AI_EDIT_ENABLED) return json({ ok: false, error: "ai edit disabled" }, 404);
         const mode = String(body.mode || "");
         const prompt = String(body.prompt || "");
-        const model = "haiku"; // fast; the system prompt now carries the structure/quality
+        const { provider: rwProvider, model } = modelInfo("rewrite"); // [AI:integration] ⌘K uses the REWRITE scope (PROVIDER/MODEL; claude/haiku by default → cache key unchanged)
         const stream = new ReadableStream({
           async start(controller) {
             const enc = new TextEncoder();
             const send = (o: any) => { try { controller.enqueue(enc.encode("data: " + JSON.stringify(o) + "\n\n")); } catch {} };
-            const r = await streamAI(prompt, model, (chunk) => send({ chunk }));
+            const r = await streamAI(prompt, model, (chunk) => send({ chunk }), getProvider(rwProvider));
             if (!r.ok) { send({ error: r.error }); controller.close(); return; }
-            let text = r.out.trim();
-            const fence = text.match(/^```[a-zA-Z]*\n([\s\S]*?)\n```$/); if (fence) text = fence[1].trim();
-            let html = mode === "rich"; if (mode === "author" && /<[a-z][\s\S]*>/i.test(text)) html = true;
-            if (html) text = safeRichHtml(text);
+            // Enforce the output-format contract on the RESULT (belt-and-suspenders to the SYSTEM
+            // prompt): a rich block is always pure sanitized HTML; prose is de-narrated plain text;
+            // author content becomes HTML only if it actually carries tags.
+            let text: string, html: boolean;
+            if (mode === "rich") { text = safeRichHtml(stripCodeFence(r.out)); html = true; }
+            else if (mode === "author") {
+              const body2 = stripCodeFence(r.out);
+              html = /<[a-z][\s\S]*>/i.test(body2);
+              text = html ? safeRichHtml(body2) : cleanProseResult(body2);
+            } else { text = cleanProseResult(r.out); html = false; } // prose
             send({ done: { ok: !!text, text, html } });
             controller.close();
           },
         });
         return new Response(stream, { headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache" } });
+      }
+      // [AI:ghost] Tab ghost-text: return a SHORT plain-text continuation of the block at the
+      // cursor. Gated on GHOST_TEXT_ENABLED (404 when off, like /rewrite). The prompt is built by
+      // the shared buildGhostPrompt (single source with the client's gate) and routed through the
+      // one streamAI() call-site — no streaming back to the client (a ghost is one short string),
+      // so the model can later be swapped to a fast/local one here without touching the client.
+      if (url.pathname === "/ghost") {
+        if (!GHOST_TEXT_ENABLED) return json({ ok: false, error: "ghost text disabled" }, 404);
+        const blockType = String(body.blockType || "paragraph");
+        const context = String(body.context || "").slice(0, 4000); // block text before cursor (chat path + spacing)
+        // [AI:ghost] FIM context: prefix = document text before the cursor, suffix = text after it.
+        // Falls back to `context` when the client doesn't send them (older client / chat path).
+        const prefix = String(body.prefix ?? context).slice(-4000);
+        const suffix = String(body.suffix ?? "").slice(0, 2000);
+        if (!context.trim() && !prefix.trim()) return json({ ok: false, error: "no context" }, 400);
+        const { provider: ghProvider, model } = modelInfo("ghost"); // [AI:integration] ghost uses the GHOST scope (GHOST_PROVIDER/GHOST_MODEL || PROVIDER/MODEL) — independent of ⌘K
+        const provider = getProvider(ghProvider);                   // e.g. GHOST_PROVIDER=ollama GHOST_MODEL=qwen2.5-coder:1.5b → local FIM, while ⌘K stays cloud
+        let r: { ok: true; out: string } | { ok: false; error: string };
+        if (provider.complete) {
+          // [AI:ghost] COMPLETION/FIM path (local completion models): raw prefix+suffix, NO chat
+          // wrapper and NO note-generation SYSTEM prompt — that framing made completion models emit
+          // junk like "html". maxTokens bounds latency; stop at a paragraph break.
+          r = await provider.complete(prefix, suffix, { model, maxTokens: 32, stop: ["\n\n"] }); // a ghost shows ≤~120 chars (~30 tok); 32 keeps the long-tail latency down
+        } else {
+          // chat fallback (Cloud / Claude, no FIM): the legacy "continue this <blockType>" prompt
+          // through streamAI on the GHOST provider (cache key identical for the default claude/haiku).
+          r = await streamAI(buildGhostPrompt(blockType, context), model, () => {}, provider);
+        }
+        if (!r.ok) return json({ ok: false, error: r.error }, 502);
+        return json({ ok: true, text: cleanGhostCompletion(r.out) });
       }
       return json({ ok: false, error: "unknown" }, 404);
     }
@@ -540,6 +577,11 @@ Bun.serve({
     // Stale-tab guard: a tab opened before a server restart keeps RUNNING (and saving
     // with) old code, silently. The client compares this on focus and asks for a reload.
     if (url.pathname === "/version") return json({ v: BUILD_ID });
+
+    // [AI:integration] which provider + model EACH AI feature uses right now — makes the per-feature
+    // split visible (⌘K can be cloud while ghost is local). `rewrite` kept top-level for any caller
+    // that read the old flat {provider,model} shape.
+    if (url.pathname === "/api/model") return json({ ...modelInfo("rewrite"), rewrite: modelInfo("rewrite"), ghost: modelInfo("ghost") });
 
     // Preflight for in-doc note links: lets the client explain a dead link in place
     // instead of navigating to a welcome screen.
