@@ -9,7 +9,7 @@
 //   bun run server.ts [file-or-folder]
 //   open http://localhost:4321/
 //
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, renameSync, mkdirSync, realpathSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, renameSync, mkdirSync, realpathSync, rmSync, copyFileSync } from "node:fs";
 import { resolve, extname, basename, dirname, sep, join } from "node:path";
 import { createHash } from "node:crypto";
 // [AI:model-layer] The raw model call now lives behind a provider seam (server/providers.ts).
@@ -112,6 +112,13 @@ function okNotePath(p: string): boolean { return inVault(p) && NOTE_RE.test(reso
 const IMG_RE = /\.(png|jpe?g|gif|webp|avif|svg)$/i;
 const IMG_MIME: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", avif: "image/avif", svg: "image/svg+xml" };
 function okAssetPath(p: string): boolean { return inVault(p) && IMG_RE.test(resolve(p)); }
+// Sanitize a user-supplied name into a SINGLE safe path segment: strip path separators and
+// control chars, drop leading dots (no hidden/dot-dirs, no `..` traversal). Used by
+// /folder-create. (The /create path takes a full pre-built path and relies on inVault confinement
+// — there is no segment-sanitizer there to reuse, so this is the project's first one.)
+function sanitizeSeg(name: string): string {
+  return String(name).replace(/[\\/]/g, "").replace(/[\u0000-\u001f\u007f]/g, "").replace(/^\.+/, "").trim();
+}
 function sameOrigin(req: Request): boolean {
   const origin = req.headers.get("origin");
   if (!origin) return true; // same-origin fetches may omit Origin entirely
@@ -163,25 +170,33 @@ function fmtOf(p: string): string {
   if (e === ".html" || e === ".htm") return "html";
   return "txt";
 }
-function listNotes(dir: string): { name: string; path: string; rel: string; fmt: string }[] {
+type NoteFile = { name: string; path: string; rel: string; fmt: string; mtime: number };
+// One walk yields both the note FILES (with mtime, epoch ms) and EVERY directory under the tree
+// (rel paths, incl. empty ones) so the client can show empty folders. Dot-dirs (.trash/.git/
+// .obsidian/…) and node_modules are skipped — never descended, never listed. Same depth(4)/
+// file-cap(800) guards as before.
+function listTree(dir: string): { files: NoteFile[]; dirs: string[] } {
   const root = resolve(dir);
-  const out: { name: string; path: string; rel: string; fmt: string }[] = [];
+  const files: NoteFile[] = [];
+  const dirs: string[] = [];
   const walk = (d: string, depth: number) => {
-    if (depth > 4 || out.length > 800) return;
+    if (depth > 4 || files.length > 800) return;
     let entries: string[] = [];
     try { entries = readdirSync(d); } catch { return; }
     for (const e of entries) {
       if (e.startsWith(".") || e === "node_modules") continue;
       const full = `${d}/${e}`;
       let st; try { st = statSync(full); } catch { continue; }
-      if (st.isDirectory()) walk(full, depth + 1);
-      else if (NOTE_RE.test(e)) out.push({ name: e, path: full, rel: full.slice(root.length + 1), fmt: fmtOf(e) });
+      if (st.isDirectory()) { dirs.push(full.slice(root.length + 1)); walk(full, depth + 1); }
+      else if (NOTE_RE.test(e)) files.push({ name: e, path: full, rel: full.slice(root.length + 1), fmt: fmtOf(e), mtime: Math.round(st.mtimeMs) });
     }
   };
   walk(root, 0);
-  out.sort((a, b) => a.rel.localeCompare(b.rel));
-  return out;
+  files.sort((a, b) => a.rel.localeCompare(b.rel));
+  dirs.sort((a, b) => a.localeCompare(b));
+  return { files, dirs };
 }
+function listNotes(dir: string): NoteFile[] { return listTree(dir).files; }
 function firstNote(): string | null { const f = listNotes(ROOT); return f.length ? f[0].path : null; }
 
 function styles(): string {
@@ -471,6 +486,83 @@ Bun.serve({
         if (!existsSync(p)) return json({ ok: false, error: "the note no longer exists" });
         try { toTrash(p); return json({ ok: true }); } catch (e) { return json({ ok: false, error: fsErrMsg(e) }, 500); }
       }
+      // Move a FILE or a FOLDER to a new location (backs drag-drop + rename). Dir-aware: a moved
+      // file must stay a note (NOTE_RE), a moved folder can be anything. No-clobber; mkdir the
+      // destination parent (same in-vault guarantee as /create — realParent confines the mkdir).
+      if (url.pathname === "/move") {
+        const a = resolve(String(body.from || "")), b = resolve(String(body.to || ""));
+        if (!inVault(a) || !inVault(b)) return json({ ok: false, error: "path not allowed" }, 403);
+        if (!existsSync(a)) return json({ ok: false, error: "the item no longer exists" });
+        if (existsSync(b)) return json({ ok: false, error: "a file or folder with that name already exists" });
+        let st; try { st = statSync(a); } catch { return json({ ok: false, error: "the item no longer exists" }); }
+        if (!st.isDirectory() && !NOTE_RE.test(b)) return json({ ok: false, error: "path not allowed" }, 403);
+        const parent = dirname(b);
+        if (!inVault(parent)) return json({ ok: false, error: "path not allowed" }, 403);
+        let made: string | undefined;
+        try { made = mkdirSync(parent, { recursive: true }); renameSync(a, b); return json({ ok: true, path: b }); }
+        catch (e) { if (made) try { rmSync(made, { recursive: true, force: true }); } catch {} return json({ ok: false, error: fsErrMsg(e) }, 500); }
+      }
+      // Create an empty directory dir/name. Sanitize name to a single safe segment; no-clobber.
+      if (url.pathname === "/folder-create") {
+        const parent = resolve(String(body.dir || ""));
+        if (!inVault(parent)) return json({ ok: false, error: "path not allowed" }, 403);
+        const name = sanitizeSeg(String(body.name || ""));
+        if (!name) return json({ ok: false, error: "enter a folder name" });
+        const p = join(parent, name);
+        if (!inVault(p)) return json({ ok: false, error: "path not allowed" }, 403);
+        if (existsSync(p)) return json({ ok: false, error: "a folder with that name already exists" });
+        try { mkdirSync(p, { recursive: true }); return json({ ok: true, path: p }); }
+        catch (e) { return json({ ok: false, error: fsErrMsg(e) }, 500); }
+      }
+      // Move a WHOLE folder (recursively, as-is) into the vault's .trash, timestamped — same
+      // semantics as toTrash() for a note. renameSync is an atomic move of the dir. Guards: must
+      // be an in-vault directory, never the vault root itself, never .trash.
+      if (url.pathname === "/folder-delete") {
+        const p = resolve(String(body.folder || ""));
+        if (!inVault(p)) return json({ ok: false, error: "path not allowed" }, 403);
+        let st; try { st = statSync(p); } catch { return json({ ok: false, error: "the folder no longer exists" }); }
+        if (!st.isDirectory()) return json({ ok: false, error: "not a folder" });
+        const vault = vaultOf(p) ?? ROOT;
+        if (realParent(p) === vault) return json({ ok: false, error: "can't delete the vault root" }, 403);
+        if (basename(p) === ".trash") return json({ ok: false, error: "path not allowed" }, 403);
+        try { toTrash(p); return json({ ok: true }); } catch (e) { return json({ ok: false, error: fsErrMsg(e) }, 500); }
+      }
+      // Duplicate a note → <base>-copy.<ext>, incrementing -copy-2, -copy-3 on collision. Byte-for-
+      // byte copy (copyFileSync), so content is preserved exactly.
+      if (url.pathname === "/duplicate") {
+        const p = resolve(String(body.file || ""));
+        if (!okNotePath(p)) return json({ ok: false, error: "path not allowed" }, 403);
+        if (!existsSync(p) || !statSync(p).isFile()) return json({ ok: false, error: "the note no longer exists" });
+        const ext = extname(p);                     // includes the dot (".md")
+        const base = p.slice(0, p.length - ext.length);
+        let dest = `${base}-copy${ext}`, i = 1;
+        while (existsSync(dest)) dest = `${base}-copy-${++i}${ext}`;
+        try { copyFileSync(p, dest); return json({ ok: true, path: dest }); }
+        catch (e) { return json({ ok: false, error: fsErrMsg(e) }, 500); }
+      }
+      // Restore a .trash entry to the vault ROOT under its origName (strip the .<ts>). No-clobber:
+      // if the name is taken, restore alongside as <base>-restored.<ext> (then -restored-2). path
+      // MUST be a direct child of this vault's .trash (path-safety) before we move it.
+      if (url.pathname === "/restore") {
+        const p = resolve(String(body.path || ""));
+        if (!inVault(p)) return json({ ok: false, error: "path not allowed" }, 403);
+        if (!existsSync(p)) return json({ ok: false, error: "that item is no longer in the trash" });
+        const vault = vaultOf(p) ?? ROOT;
+        let parentReal: string, trashReal: string;
+        try { parentReal = realpathSync(dirname(p)); } catch { return json({ ok: false, error: "path not allowed" }, 403); }
+        try { trashReal = realpathSync(join(vault, ".trash")); } catch { return json({ ok: false, error: "path not allowed" }, 403); }
+        if (parentReal !== trashReal) return json({ ok: false, error: "not a trash item" }, 403);
+        const m = basename(p).match(/^(.+)\.(\d{10,})(?:\.\d+)?$/);
+        const origName = m ? m[1] : basename(p);
+        let dest = join(vault, origName);
+        if (existsSync(dest)) {                       // origin name is taken — restore alongside
+          const ext = extname(origName), base = origName.slice(0, origName.length - ext.length);
+          dest = join(vault, `${base}-restored${ext}`);
+          let i = 1; while (existsSync(dest)) dest = join(vault, `${base}-restored-${++i}${ext}`);
+        }
+        try { renameSync(p, dest); return json({ ok: true, path: dest }); }
+        catch (e) { return json({ ok: false, error: fsErrMsg(e) }, 500); }
+      }
       if (url.pathname === "/asset") {
         // Save a pasted image as a sidecar file: <note-dir>/assets/img-<stamp>.<ext>.
         // Server generates the filename (no user input in the path) and returns the
@@ -593,8 +685,32 @@ Bun.serve({
     if (url.pathname === "/list") {
       const dir = url.searchParams.get("dir");
       const d = dir ? resolve(dir) : ROOT;
-      if (!inVault(d)) return json({ files: [], root: ROOT });
-      return json({ files: listNotes(d), root: ROOT });
+      if (!inVault(d)) return json({ files: [], dirs: [], root: ROOT });
+      const { files, dirs } = listTree(d);
+      return json({ files, dirs, root: ROOT });
+    }
+    // Enumerate the vault's .trash. Each entry is `<origbasename>.<unixms>` (toTrash format; a
+    // rare collision adds a `.<n>` dedupe suffix). Parse origName + trashedAt back out so the
+    // client can render a restore list. Missing .trash → empty. Vault-confined (GET, read-only).
+    if (url.pathname === "/trash") {
+      const dir = url.searchParams.get("dir");
+      const d = dir ? resolve(dir) : ROOT;
+      if (!inVault(d)) return json({ items: [] });
+      const trash = join(vaultOf(d) ?? ROOT, ".trash");
+      if (!existsSync(trash)) return json({ items: [] });
+      let entries: string[] = [];
+      try { entries = readdirSync(trash); } catch { return json({ items: [] }); }
+      const items: { path: string; name: string; origName: string; origRel: string; trashedAt: number }[] = [];
+      for (const e of entries) {
+        const full = join(trash, e);
+        let st; try { st = statSync(full); } catch { continue; }
+        const m = e.match(/^(.+)\.(\d{10,})(?:\.\d+)?$/); // <origbasename>.<unixms>[.<dedupe>]
+        const origName = m ? m[1] : e;
+        const trashedAt = m ? Number(m[2]) : Math.round(st.mtimeMs);
+        items.push({ path: full, name: e, origName, origRel: origName, trashedAt });
+      }
+      items.sort((a, b) => b.trashedAt - a.trashedAt); // newest-trashed first
+      return json({ items });
     }
     if (url.pathname !== "/") return new Response("not found", { status: 404 });
 
