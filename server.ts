@@ -68,12 +68,12 @@ function aiCacheSet(key: string, val: string) { if (!AI_CACHE) return; try { mkd
 // raw model call is delegated to getProvider().stream(). The provider streams RAW deltas and
 // returns UNTRIMMED text; we trim here for the cache + return value, preserving byte-identical
 // legacy behavior. With PROVIDER unset the provider is CloudProvider and the key is identical.
-async function streamAI(prompt: string, model: string, onChunk: (s: string) => void): Promise<{ ok: true; out: string } | { ok: false; error: string }> {
+async function streamAI(prompt: string, model: string, onChunk: (s: string) => void, provider: ReturnType<typeof getProvider> = getProvider()): Promise<{ ok: true; out: string } | { ok: false; error: string }> {
   const key = aiKey(model, prompt);
   const cached = aiCacheGet(key);
   if (cached != null) { onChunk(cached); return { ok: true, out: cached }; }
   if (AI_OFFLINE) return { ok: false, error: "ai cache miss (AI_OFFLINE)" };
-  const r = await getProvider().stream(prompt, { system: SYSTEM, model }, onChunk); // [AI:model-layer]
+  const r = await provider.stream(prompt, { system: SYSTEM, model }, onChunk); // [AI:integration] caller picks the provider (per-feature: ⌘K vs ghost)
   if (!r.ok) return r;
   const out = r.out.trim();
   aiCacheSet(key, out);
@@ -518,12 +518,12 @@ Bun.serve({
         if (!AI_EDIT_ENABLED) return json({ ok: false, error: "ai edit disabled" }, 404);
         const mode = String(body.mode || "");
         const prompt = String(body.prompt || "");
-        const { model } = modelInfo(); // [AI:cmdk+model-layer] unified: ⌘K routes through the provider layer, same as /ghost (PROVIDER/MODEL env; "haiku" by default → cache key unchanged)
+        const { provider: rwProvider, model } = modelInfo("rewrite"); // [AI:integration] ⌘K uses the REWRITE scope (PROVIDER/MODEL; claude/haiku by default → cache key unchanged)
         const stream = new ReadableStream({
           async start(controller) {
             const enc = new TextEncoder();
             const send = (o: any) => { try { controller.enqueue(enc.encode("data: " + JSON.stringify(o) + "\n\n")); } catch {} };
-            const r = await streamAI(prompt, model, (chunk) => send({ chunk }));
+            const r = await streamAI(prompt, model, (chunk) => send({ chunk }), getProvider(rwProvider));
             if (!r.ok) { send({ error: r.error }); controller.close(); return; }
             // Enforce the output-format contract on the RESULT (belt-and-suspenders to the SYSTEM
             // prompt): a rich block is always pure sanitized HTML; prose is de-narrated plain text;
@@ -555,8 +555,8 @@ Bun.serve({
         const prefix = String(body.prefix ?? context).slice(-4000);
         const suffix = String(body.suffix ?? "").slice(0, 2000);
         if (!context.trim() && !prefix.trim()) return json({ ok: false, error: "no context" }, 400);
-        const { model } = modelInfo(); // [AI:model-layer] config-driven (PROVIDER/MODEL env) — set PROVIDER=ollama MODEL=qwen2.5-coder:1.5b for fast local Tab; "haiku" by default
-        const provider = getProvider();
+        const { provider: ghProvider, model } = modelInfo("ghost"); // [AI:integration] ghost uses the GHOST scope (GHOST_PROVIDER/GHOST_MODEL || PROVIDER/MODEL) — independent of ⌘K
+        const provider = getProvider(ghProvider);                   // e.g. GHOST_PROVIDER=ollama GHOST_MODEL=qwen2.5-coder:1.5b → local FIM, while ⌘K stays cloud
         let r: { ok: true; out: string } | { ok: false; error: string };
         if (provider.complete) {
           // [AI:ghost] COMPLETION/FIM path (local completion models): raw prefix+suffix, NO chat
@@ -564,9 +564,9 @@ Bun.serve({
           // junk like "html". maxTokens bounds latency; stop at a paragraph break.
           r = await provider.complete(prefix, suffix, { model, maxTokens: 32, stop: ["\n\n"] }); // a ghost shows ≤~120 chars (~30 tok); 32 keeps the long-tail latency down
         } else {
-          // chat fallback (Cloud / Claude): the legacy "continue this <blockType>" prompt through
-          // streamAI (unchanged — keeps the AI cache key identical for the default provider).
-          r = await streamAI(buildGhostPrompt(blockType, context), model, () => {});
+          // chat fallback (Cloud / Claude, no FIM): the legacy "continue this <blockType>" prompt
+          // through streamAI on the GHOST provider (cache key identical for the default claude/haiku).
+          r = await streamAI(buildGhostPrompt(blockType, context), model, () => {}, provider);
         }
         if (!r.ok) return json({ ok: false, error: r.error }, 502);
         return json({ ok: true, text: cleanGhostCompletion(r.out) });
@@ -578,8 +578,10 @@ Bun.serve({
     // with) old code, silently. The client compares this on focus and asks for a reload.
     if (url.pathname === "/version") return json({ v: BUILD_ID });
 
-    // [AI:model-layer] which provider + model the ⌘K /rewrite call will use right now.
-    if (url.pathname === "/api/model") return json(modelInfo());
+    // [AI:integration] which provider + model EACH AI feature uses right now — makes the per-feature
+    // split visible (⌘K can be cloud while ghost is local). `rewrite` kept top-level for any caller
+    // that read the old flat {provider,model} shape.
+    if (url.pathname === "/api/model") return json({ ...modelInfo("rewrite"), rewrite: modelInfo("rewrite"), ghost: modelInfo("ghost") });
 
     // Preflight for in-doc note links: lets the client explain a dead link in place
     // instead of navigating to a welcome screen.

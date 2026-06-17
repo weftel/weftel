@@ -5,7 +5,7 @@ import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { getProvider, modelInfo, parseOllamaLine, CloudProvider, OllamaProvider, FimProvider } from "../../server/providers";
 
 // ── env isolation: provider config is read at call time, so save/clear/restore around each test ──
-const ENV_KEYS = ["PROVIDER", "MODEL", "OLLAMA_HOST"] as const;
+const ENV_KEYS = ["PROVIDER", "MODEL", "OLLAMA_HOST", "GHOST_PROVIDER", "GHOST_MODEL"] as const;
 const realFetch = globalThis.fetch;
 const saved: Record<string, string | undefined> = {};
 beforeEach(() => { for (const k of ENV_KEYS) { saved[k] = process.env[k]; delete process.env[k]; } });
@@ -60,6 +60,34 @@ describe("modelInfo", () => {
   test("PROVIDER=ollama reports the ollama provider + its default model", () => {
     process.env.PROVIDER = "ollama";
     expect(modelInfo()).toEqual({ provider: "ollama", model: OllamaProvider.defaultModel });
+  });
+});
+
+// [AI:integration] per-feature model split: ⌘K (rewrite) and ghost resolve independently so a strong
+// cloud ⌘K can run alongside a fast local ghost. With no env BOTH are claude/haiku (cache unchanged).
+describe("modelInfo per-feature scope (rewrite vs ghost)", () => {
+  test("no env → BOTH scopes resolve to claude/haiku (committed default, cache keys unchanged)", () => {
+    expect(modelInfo("rewrite")).toEqual({ provider: "claude", model: "haiku" });
+    expect(modelInfo("ghost")).toEqual({ provider: "claude", model: "haiku" });
+    expect(modelInfo()).toEqual(modelInfo("rewrite")); // default scope is rewrite
+  });
+  test("GHOST_PROVIDER/GHOST_MODEL split ghost LOCAL while ⌘K stays CLOUD — simultaneously", () => {
+    process.env.GHOST_PROVIDER = "ollama";
+    process.env.GHOST_MODEL = "qwen2.5-coder:1.5b";
+    expect(modelInfo("rewrite")).toEqual({ provider: "claude", model: "haiku" });        // ⌘K unaffected
+    expect(modelInfo("ghost")).toEqual({ provider: "ollama", model: "qwen2.5-coder:1.5b" }); // ghost local
+  });
+  test("ghost inherits PROVIDER/MODEL when GHOST_* unset; PROVIDER drives both", () => {
+    process.env.PROVIDER = "ollama";
+    process.env.MODEL = "llama3.2";
+    expect(modelInfo("rewrite")).toEqual({ provider: "ollama", model: "llama3.2" });
+    expect(modelInfo("ghost")).toEqual({ provider: "ollama", model: "llama3.2" }); // inherits PROVIDER/MODEL
+  });
+  test("GHOST_* overrides an inherited PROVIDER for ghost only", () => {
+    process.env.PROVIDER = "ollama"; process.env.MODEL = "llama3.2";
+    process.env.GHOST_MODEL = "qwen2.5-coder:1.5b";
+    expect(modelInfo("rewrite")).toEqual({ provider: "ollama", model: "llama3.2" });
+    expect(modelInfo("ghost")).toEqual({ provider: "ollama", model: "qwen2.5-coder:1.5b" }); // GHOST_MODEL wins
   });
 });
 

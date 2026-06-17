@@ -224,13 +224,23 @@ export function getProvider(name: string = process.env.PROVIDER || "claude"): AI
   return PROVIDERS[name.trim().toLowerCase()] || CloudProvider;
 }
 
-// The active provider + resolved model — for the /rewrite route and /api/model. MODEL env
-// overrides the provider's default. With PROVIDER and MODEL both unset this is
-// {provider:"claude", model:"haiku"}, matching the legacy hardcoded model so the AI cache
-// keys are unchanged.
-export function modelInfo(): { provider: string; model: string } {
-  const p = getProvider();
-  return { provider: p.name, model: process.env.MODEL || p.defaultModel };
+// [AI:integration] PER-FEATURE model config. ⌘K (rewrite) and Tab ghost need DIFFERENT models at
+// the SAME time — ⌘K wants a strong CLOUD model (quality), ghost wants a FAST LOCAL one (speed) —
+// so a single PROVIDER/MODEL env can't serve both. modelInfo(scope) resolves each independently:
+//   - "rewrite" (⌘K): PROVIDER || "claude", MODEL || provider-default.
+//   - "ghost"   (Tab): GHOST_PROVIDER || PROVIDER || "claude", GHOST_MODEL || MODEL || default.
+// With NO env set, BOTH resolve to {claude, haiku} — committed base byte-identical, cache keys
+// unchanged. Set GHOST_PROVIDER=ollama GHOST_MODEL=qwen2.5-coder:1.5b → ghost goes local-fast while
+// ⌘K stays cloud-strong, simultaneously. (/api/model reports both so the split is visible.)
+export function modelInfo(scope: "rewrite" | "ghost" = "rewrite"): { provider: string; model: string } {
+  const name = scope === "ghost"
+    ? (process.env.GHOST_PROVIDER || process.env.PROVIDER || "claude")
+    : (process.env.PROVIDER || "claude");
+  const p = getProvider(name);
+  const model = scope === "ghost"
+    ? (process.env.GHOST_MODEL || process.env.MODEL || p.defaultModel)
+    : (process.env.MODEL || p.defaultModel);
+  return { provider: p.name, model };
 }
 
 function errMsg(e: unknown): string { return String((e as any)?.message ?? e).slice(0, 80); }
