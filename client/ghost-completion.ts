@@ -31,8 +31,12 @@ const SUPPRESS_ANCESTORS = new Set([
 ]);
 
 // Map the cursor's ancestor chain to one supported block label (or null). Prefers the most
-// specific container so the prompt reads naturally ("Continue this list item / table cell").
+// specific CONTAINER (list item / table cell / blockquote) over the inner textblock, so the prompt
+// reads naturally ("Continue this list item"). A bare "paragraph" is only the fallback when no such
+// container is an ancestor — otherwise the inner paragraph (every list item / cell wraps one) would
+// always win and the structure-specific labels would be dead.
 function blockTypeAt($from: any): string | null {
+  let fallback: string | null = null;
   for (let d = $from.depth; d >= 1; d--) {
     const name = $from.node(d).type.name;
     if (name === "tableCell" || name === "tableHeader") return name;
@@ -40,9 +44,9 @@ function blockTypeAt($from: any): string | null {
     if (name === "listItem") return "listItem";
     if (name === "blockquote") return "blockquote";
     if (name === "heading") return "heading";
-    if (name === "paragraph") return "paragraph";
+    if (name === "paragraph") fallback = "paragraph";
   }
-  return null;
+  return fallback;
 }
 
 type CursorCtx = {
@@ -130,20 +134,29 @@ export function mountGhostCompletion(editor: Editor, opts: { onAccept?: () => vo
 
   let seq = 0;                                   // request token — drop responses the user has moved past
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let pending = false;                            // a request is scheduled or in flight
+
+  // Cancel any scheduled OR in-flight request: clear the debounce timer and bump the request token
+  // so a late /ghost response is DROPPED (its reqId !== seq) instead of popping a ghost the user has
+  // already dismissed. The model round-trip can be seconds; without this, Esc/blur clear the CURRENT
+  // ghost but a response already in flight would still show one afterward (real-latency bug).
+  function cancelPending() { clearTimeout(timer); seq++; pending = false; }
 
   async function fire() {
     const reqId = ++seq;
     const ctx = readCursor(editor);
-    if (!shouldRequestGhost(ctx.gate)) return;
+    if (!shouldRequestGhost(ctx.gate)) { pending = false; return; }
     let r: any;
     try {
       r = await fetch("/ghost", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ blockType: ctx.blockType, context: ctx.textBefore }),
       }).then((x) => x.json());
-    } catch { return; }
-    if (reqId !== seq) return;                   // a newer edit superseded this request
+    } catch { pending = false; return; }
+    pending = false;
+    if (reqId !== seq) return;                   // superseded by a newer edit, or cancelled (Esc/blur)
     if (!r || !r.ok || !r.text) return;
+    if (!editor.view.hasFocus()) return;         // editor lost focus mid-flight — don't show a ghost into it
     // re-read: the cursor must still be at the exact point we requested for (no edit/move since)
     const now = readCursor(editor);
     if (now.pos !== ctx.pos || now.textBefore !== ctx.textBefore) return;
@@ -155,6 +168,7 @@ export function mountGhostCompletion(editor: Editor, opts: { onAccept?: () => vo
   function schedule() {
     clearTimeout(timer);
     seq++;                                        // invalidate any in-flight request
+    pending = true;
     timer = setTimeout(fire, 300);
   }
   // Trigger on document edits (typing). The plugin clears the ghost on the same docChange tx, so a
@@ -162,12 +176,23 @@ export function mountGhostCompletion(editor: Editor, opts: { onAccept?: () => vo
   // trigger on bare caret moves (selectionUpdate) — that would fire a model call on every click.
   editor.on("update", schedule);
 
-  // Esc dismisses a showing ghost (capture, so it pre-empts the editor's blur and the app's global
-  // Escape handler). Tab acceptance is NOT here — it's delegated through TabKeys via acceptTab().
+  // Esc dismisses a showing ghost AND cancels any pending/in-flight request, so a slow response can't
+  // pop a ghost after the user dismissed it. Capture phase, so it pre-empts the editor's blur and the
+  // app's global Escape handler. We only CONSUME the key (preventDefault/stop) when a ghost is visibly
+  // shown — if nothing is visible we still cancel the pending request but let Esc propagate (so it can
+  // close other UI). Tab acceptance is NOT here — it's delegated through TabKeys via acceptTab().
   const onKeydown = (e: KeyboardEvent) => {
-    if (e.key === "Escape" && ghostNow()) { clearGhost(); e.preventDefault(); e.stopPropagation(); }
+    if (e.key !== "Escape") return;
+    const showing = !!ghostNow();
+    if (showing || pending) cancelPending();
+    if (showing) { clearGhost(); e.preventDefault(); e.stopPropagation(); }
   };
   editor.view.dom.addEventListener("keydown", onKeydown, true);
+
+  // Leaving the editor cancels any pending request and clears the ghost — never show a completion
+  // into an editor the user has clicked away from.
+  const onBlur = () => { cancelPending(); clearGhost(); };
+  editor.on("blur", onBlur);
 
   function acceptTab(): boolean {
     const g = ghostNow();
@@ -188,8 +213,9 @@ export function mountGhostCompletion(editor: Editor, opts: { onAccept?: () => vo
   return {
     acceptTab,
     destroy() {
-      clearTimeout(timer);
+      cancelPending();
       editor.off("update", schedule);
+      editor.off("blur", onBlur);
       editor.view.dom.removeEventListener("keydown", onKeydown, true);
       clearGhost();
     },
