@@ -102,6 +102,30 @@ test("cleanGhostCompletion: empty / whitespace input → empty", () => {
   expect(cleanGhostCompletion("   \n  ")).toBe("");
 });
 
+test("cleanGhostCompletion: strips FIM / special sentinel tokens a completion model leaks", () => {
+  expect(cleanGhostCompletion("and then we ship<|endoftext|>")).toBe("and then we ship");
+  expect(cleanGhostCompletion("<|fim_middle|>and then we ship")).toBe("and then we ship");
+  expect(cleanGhostCompletion("and then we ship<|im_end|>")).toBe("and then we ship");
+  expect(cleanGhostCompletion("and then we ship</s>")).toBe("and then we ship");
+  expect(cleanGhostCompletion("and then we ship<EOT>")).toBe("and then we ship");
+});
+
+test("cleanGhostCompletion: strips stray HTML tag fragments (the 1.5b trailing </p>)", () => {
+  expect(cleanGhostCompletion("and then we ship</p>")).toBe("and then we ship");
+  expect(cleanGhostCompletion("<p>and then we ship")).toBe("and then we ship");
+  expect(cleanGhostCompletion("ship the <li>feature")).toBe("ship the feature");
+});
+
+test("cleanGhostCompletion: strips code-fence artifacts", () => {
+  expect(cleanGhostCompletion("```html")).toBe("");
+  expect(cleanGhostCompletion("```\nand then we ship")).toBe("and then we ship");
+});
+
+test("cleanGhostCompletion: a bare punctuation char (< 5) is NOT treated as a tag", () => {
+  expect(cleanGhostCompletion("is less than 5 items")).toBe("is less than 5 items");
+  expect(cleanGhostCompletion("x < 5 and y > 3")).toBe("x < 5 and y > 3");
+});
+
 // ───────────────────────── joinGhost — what-you-see-is-what-you-accept spacing ─────────────────────────
 test("joinGhost: adds ONE leading space between a word and a word", () => {
   expect(joinGhost("The quick", "brown fox")).toBe(" brown fox");

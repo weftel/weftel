@@ -537,12 +537,22 @@ export function buildGhostPrompt(blockType: string, context: string): string {
     + `<text>${context}</text>`;
 }
 
-// Clean a raw model completion into a short, single-segment continuation. Pure: strips common
-// wrappers (surrounding quotes/backticks a model adds), keeps only the first line, and caps length
-// — so a chatty or multi-paragraph response still renders as a 1–2 clause ghost. Does NOT add the
-// cursor-join space — that depends on the live preceding char (see joinGhost).
+// Special / sentinel tokens a completion model can leak into its output: FIM markers
+// (<|fim_prefix|>, <|fim_middle|>, <|fim_pad|>, <|endoftext|>, <|im_end|>…), CodeLlama-style
+// <PRE>/<SUF>/<MID>/<EOT>, and the </s> end token. Stripped wherever they appear.
+const GHOST_SENTINELS = /<\|[a-zA-Z0-9_]+\|>|<\/?(?:PRE|SUF|MID|EOT|FILL_ME|s)>/g;
+
+// Clean a raw model completion into a short, single-segment continuation. Pure. Order matters:
+// strip model artifacts FIRST (FIM/special tokens, code fences, stray HTML tag fragments like a
+// trailing "</p>" — a small completion model leaks these even in FIM mode), THEN reduce to one
+// line + drop wrapping quotes + cap length. So a chatty or junk-laden response still renders as a
+// 1–2 clause prose ghost. Does NOT add the cursor-join space — that depends on the live preceding
+// char (see joinGhost).
 export function cleanGhostCompletion(raw: string): string {
   let s = (raw || "").replace(/\r/g, "");
+  s = s.replace(GHOST_SENTINELS, "");                    // FIM / chat / EOT special tokens
+  s = s.replace(/```[a-zA-Z]*\n?/g, "").replace(/```/g, ""); // code-fence artifacts ("```html")
+  s = s.replace(/<\/?[a-zA-Z][^>]*>/g, "");             // stray HTML tag fragments ("</p>", "<li>")
   s = s.split("\n")[0];                                   // first line only — a ghost is one segment
   s = s.replace(/^\s*["'`]+/, "").replace(/["'`]+\s*$/, ""); // drop wrapping quotes/backticks
   s = s.trim();

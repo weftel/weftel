@@ -49,8 +49,15 @@ function blockTypeAt($from: any): string | null {
   return fallback;
 }
 
+// [AI:ghost] FIM context window: how much document text (around the cursor) to send as the
+// fill-in-the-middle prefix/suffix. Bounded so a small local model stays fast and focused; the
+// prefix is richer than the block alone (preceding paragraphs help the model continue coherently),
+// and the suffix lets a FIM model infill toward what follows.
+const FIM_PREFIX_CHARS = 600;
+const FIM_SUFFIX_CHARS = 300;
+
 type CursorCtx = {
-  pos: number; blockType: string | null; textBefore: string;
+  pos: number; blockType: string | null; textBefore: string; prefix: string; suffix: string;
   gate: Parameters<typeof shouldRequestGhost>[0];
 };
 // Read everything the gate + request need from current editor state. Pure w.r.t. the editor
@@ -64,11 +71,16 @@ function readCursor(editor: Editor): CursorCtx {
   let inRichBlock = false;
   for (let d = $from.depth; d >= 0; d--) { if (SUPPRESS_ANCESTORS.has($from.node(d).type.name)) { inRichBlock = true; break; } }
   const atTextEnd = $from.parentOffset === parent.content.size;
-  const textBefore = parent.textBetween(0, $from.parentOffset, "\n", " ");
+  const textBefore = parent.textBetween(0, $from.parentOffset, "\n", " "); // block-level: gate + cursor-join spacing
   const blockType = inCodeBlock || inRichBlock ? null : blockTypeAt($from);
+  // Document-level FIM windows around the caret (bounded). Block separators render as "\n".
+  const doc = state.doc;
+  const at = sel.empty ? sel.from : 0;
+  const prefix = doc.textBetween(Math.max(0, at - FIM_PREFIX_CHARS), at, "\n", " ");
+  const suffix = doc.textBetween(at, Math.min(doc.content.size, at + FIM_SUFFIX_CHARS), "\n", " ");
   return {
     pos: sel.empty ? sel.from : -1,
-    blockType, textBefore,
+    blockType, textBefore, prefix, suffix,
     gate: { selectionEmpty: !!sel.empty, atTextEnd, inCodeBlock, inRichBlock, blockType, textBefore },
   };
 }
@@ -150,7 +162,9 @@ export function mountGhostCompletion(editor: Editor, opts: { onAccept?: () => vo
     try {
       r = await fetch("/ghost", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ blockType: ctx.blockType, context: ctx.textBefore }),
+        // context = block text before cursor (chat fallback + spacing); prefix/suffix = doc-level
+        // fill-in-the-middle windows for the completion path. [AI:ghost]
+        body: JSON.stringify({ blockType: ctx.blockType, context: ctx.textBefore, prefix: ctx.prefix, suffix: ctx.suffix }),
       }).then((x) => x.json());
     } catch { pending = false; return; }
     pending = false;

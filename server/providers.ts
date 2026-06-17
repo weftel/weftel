@@ -27,6 +27,8 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 
 export type AIResult = { ok: true; out: string } | { ok: false; error: string };
 export type AIStreamOpts = { system?: string; model?: string; signal?: AbortSignal };
+// [AI:ghost] Options for a raw completion / fill-in-the-middle call (inline ghost text).
+export type AICompleteOpts = { model?: string; maxTokens?: number; stop?: string[]; signal?: AbortSignal };
 
 export interface AIProvider {
   name: string;
@@ -34,6 +36,13 @@ export interface AIProvider {
   // cache keys match the legacy hardcoded model.
   defaultModel: string;
   stream(prompt: string, opts: AIStreamOpts, onChunk: (s: string) => void): Promise<AIResult>;
+  // [AI:ghost] Raw completion / fill-in-the-middle for inline ghost text. `prefix` = the document
+  // text before the cursor, `suffix` = the text after it (may be ""). Returns the MIDDLE text only —
+  // NO chat framing, NO note-generation system prompt (which makes completion models emit junk like
+  // "html"). Optional: providers without a completion endpoint (Cloud) omit it, and /ghost falls
+  // back to the chat path. Models with a FIM template (qwen2.5-coder) infill using both sides; others
+  // degrade to prefix-only continuation.
+  complete?(prefix: string, suffix: string, opts: AICompleteOpts): Promise<AIResult>;
 }
 
 // ───────────────────────── CloudProvider (default) ─────────────────────────
@@ -108,7 +117,71 @@ export const OllamaProvider: AIProvider = {
       return { ok: false, error: `ollama stream error: ${errMsg(e)}` };
     }
   },
+  // [AI:ghost] Completion / fill-in-the-middle via Ollama /api/generate, with NO chat wrapper and
+  // NO note-generation system prompt (that framing is what made the completion model emit garbage
+  // like "html"). Non-streaming (a ghost is one short string), bounded by num_predict for latency,
+  // low temperature for stable completions.
+  //
+  // For a FIM-capable model (qwen2.5-coder) we build the model's NATIVE FIM prompt ourselves and
+  // send raw:true. This is deliberate: relying on Ollama's `suffix` param leaves qwen in plain
+  // generate mode whenever the suffix is empty (end of the doc — the common ghost case), where the
+  // INSTRUCT model chats ("I'm sorry, but I need more context…") instead of completing. The raw FIM
+  // prompt always infills, even with an empty suffix. Models with no known FIM template (llama3.2)
+  // fall back to Ollama's native suffix infill, then to prefix-only — they have no real FIM path.
+  async complete(prefix, suffix, opts) {
+    const model = opts.model || OllamaProvider.defaultModel;
+    const fim = fimTemplate(model);
+    if (fim) {
+      const prompt = fim.pre + prefix + fim.suf + suffix + fim.mid;
+      return ollamaGenerate({ model, prompt, raw: true, stop: [...FIM_STOPS, "\n\n"], opts });
+    }
+    const r = await ollamaGenerate({ model, prompt: prefix, suffix, stop: ["\n\n"], opts });
+    if (!r.ok && suffix && /insert|suffix|does not support/i.test(r.error)) return ollamaGenerate({ model, prompt: prefix, stop: ["\n\n"], opts });
+    return r;
+  },
 };
+
+// Native FIM token templates by model family. qwen2.5-coder / codeqwen use the qwen sentinels;
+// codellama uses <PRE>/<SUF>/<MID>. A model with no entry has no FIM template — it falls back to
+// Ollama's native suffix infill (and likely can't do good inline completion; that's a sweep
+// finding, not a crash). Kept conservative on purpose: a WRONG token set is worse than none.
+function fimTemplate(model: string): { pre: string; suf: string; mid: string } | null {
+  const m = model.toLowerCase();
+  if (m.includes("qwen") || m.includes("codeqwen")) return { pre: "<|fim_prefix|>", suf: "<|fim_suffix|>", mid: "<|fim_middle|>" };
+  if (m.includes("codellama") || m.includes("code-llama")) return { pre: "<PRE> ", suf: " <SUF>", mid: " <MID>" };
+  return null;
+}
+// End/sentinel tokens to stop generation on in raw FIM mode (Ollama won't auto-stop on these when
+// we send the prompt raw). cleanGhostCompletion strips any that still slip through.
+const FIM_STOPS = ["<|fim_pad|>", "<|endoftext|>", "<|fim_prefix|>", "<|fim_suffix|>", "<|fim_middle|>", "<|im_end|>", "<|file_sep|>", "<EOT>"];
+
+// One non-streaming POST to Ollama /api/generate. With `raw:true` the prompt is sent verbatim (we
+// supply the FIM template); otherwise `suffix` (when set) triggers Ollama's own FIM template. Returns
+// the model's raw `response` (uncleaned — cleanGhostCompletion trims it). Fails gracefully (never
+// throws) so a missing daemon/model degrades to a clean error.
+async function ollamaGenerate(a: { model: string; prompt: string; suffix?: string; raw?: boolean; stop?: string[]; opts: AICompleteOpts }): Promise<AIResult> {
+  const host = (process.env.OLLAMA_HOST || "http://localhost:11434").replace(/\/+$/, "");
+  const body: any = {
+    model: a.model,
+    prompt: a.prompt,
+    stream: false,
+    options: { temperature: 0.2, num_predict: a.opts.maxTokens ?? 48, stop: a.stop ?? ["\n\n"] },
+  };
+  if (a.suffix) body.suffix = a.suffix;
+  if (a.raw) body.raw = true;
+  let res: Response;
+  try {
+    res = await fetch(host + "/api/generate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: a.opts.signal });
+  } catch (e) {
+    return { ok: false, error: `ollama unreachable at ${host} — is it running? (${errMsg(e)})` };
+  }
+  if (!res.ok) { let detail = ""; try { detail = (await res.json())?.error || ""; } catch {} return { ok: false, error: `ollama http ${res.status}${detail ? ": " + detail : ""}` }; }
+  try {
+    const o: any = await res.json();
+    if (o?.error) return { ok: false, error: `ollama: ${o.error}` };
+    return { ok: true, out: String(o?.response ?? "") };
+  } catch (e) { return { ok: false, error: `ollama generate parse error: ${errMsg(e)}` }; }
+}
 
 // Parse one NDJSON frame from Ollama's stream. /api/chat emits
 // {"message":{"content":"…"},"done":false} per token and a final {"done":true}; /api/generate

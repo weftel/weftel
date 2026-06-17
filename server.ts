@@ -555,10 +555,25 @@ Bun.serve({
       if (url.pathname === "/ghost") {
         if (!GHOST_TEXT_ENABLED) return json({ ok: false, error: "ghost text disabled" }, 404);
         const blockType = String(body.blockType || "paragraph");
-        const context = String(body.context || "").slice(0, 4000); // bound the prompt; ghosts use local context only
-        if (!context.trim()) return json({ ok: false, error: "no context" }, 400);
+        const context = String(body.context || "").slice(0, 4000); // block text before cursor (chat path + spacing)
+        // [AI:ghost] FIM context: prefix = document text before the cursor, suffix = text after it.
+        // Falls back to `context` when the client doesn't send them (older client / chat path).
+        const prefix = String(body.prefix ?? context).slice(-4000);
+        const suffix = String(body.suffix ?? "").slice(0, 2000);
+        if (!context.trim() && !prefix.trim()) return json({ ok: false, error: "no context" }, 400);
         const { model } = modelInfo(); // [AI:model-layer] config-driven (PROVIDER/MODEL env) — set PROVIDER=ollama MODEL=qwen2.5-coder:1.5b for fast local Tab; "haiku" by default
-        const r = await streamAI(buildGhostPrompt(blockType, context), model, () => {});
+        const provider = getProvider();
+        let r: { ok: true; out: string } | { ok: false; error: string };
+        if (provider.complete) {
+          // [AI:ghost] COMPLETION/FIM path (local completion models): raw prefix+suffix, NO chat
+          // wrapper and NO note-generation SYSTEM prompt — that framing made completion models emit
+          // junk like "html". maxTokens bounds latency; stop at a paragraph break.
+          r = await provider.complete(prefix, suffix, { model, maxTokens: 32, stop: ["\n\n"] }); // a ghost shows ≤~120 chars (~30 tok); 32 keeps the long-tail latency down
+        } else {
+          // chat fallback (Cloud / Claude): the legacy "continue this <blockType>" prompt through
+          // streamAI (unchanged — keeps the AI cache key identical for the default provider).
+          r = await streamAI(buildGhostPrompt(blockType, context), model, () => {});
+        }
         if (!r.ok) return json({ ok: false, error: r.error }, 502);
         return json({ ok: true, text: cleanGhostCompletion(r.out) });
       }
