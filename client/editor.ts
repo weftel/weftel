@@ -2206,7 +2206,10 @@ if (note && mount) {
     sortSel.value = loadSort();
     sortSel.onchange = () => { saveSort(sortSel.value); rerenderList(curFilter); };
     tb.appendChild(sortSel);
-    tb.appendChild(tBtn("⊟", "Collapse all folders", () => { try { localStorage.setItem(expandKey(), "[]"); } catch {} rerenderList(curFilter); }));
+    const collapseAll = document.createElement("button"); collapseAll.className = "fm-tool"; collapseAll.title = "Collapse all folders";
+    collapseAll.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13l-6-6-6 6"/><path d="M18 19l-6-6-6 6"/></svg>';
+    collapseAll.onclick = () => { try { localStorage.setItem(expandKey(), "[]"); } catch {} rerenderList(curFilter); };
+    tb.appendChild(collapseAll);
     sb.appendChild(tb);
     const list = document.createElement("div"); list.id = "notelist"; sb.appendChild(list);
     rerenderList = renderList;
@@ -2389,13 +2392,19 @@ if (note && mount) {
     if (!r.ok) { flash(r.error || "couldn't create", false); return; }
     go("/?file=" + encodeURIComponent(path));
   }
-  // New folder = create a folder + a first note inside it in one step (an empty folder can't
-  // show in the list, which is built from files). Reuses newNote's prompt for the note name.
+  // New folder = create an EMPTY folder (no forced note). Empty folders now render (the server
+  // returns `dirs` and the tree seeds them), so there's no need to stuff a starter note inside.
   async function newFolder(parentRel?: string) {
     const where = parentRel ? ` in ${parentRel}/` : "";
-    const fname = window.prompt("New folder name" + where + " (you'll name a note to put inside it):"); if (!fname) return;
-    const folder = sanitizeRelNotePath(fname); if (!folder) { flash("invalid folder name", false); return; }
-    newNote(parentRel ? parentRel + "/" + folder : folder);
+    const fname = window.prompt("New folder name" + where + ":"); if (!fname) return;
+    const folder = (sanitizeRelNotePath(fname).split("/").pop() || ""); // a single folder segment
+    if (!folder) { flash("invalid folder name", false); return; }
+    const dir = parentRel ? ROOT + "/" + parentRel : ROOT;
+    const r = await fetch("/folder-create", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ dir, name: folder }) }).then((x) => x.json());
+    if (!r.ok) { flash(r.error || "couldn't create folder", false); return; }
+    if (parentRel) { const s = loadExpanded(); s.add(parentRel); try { localStorage.setItem(expandKey(), JSON.stringify([...s])); } catch {} } // reveal the parent so the new child folder is visible
+    await loadNotes();
+    flash("Created folder “" + folder + "”", true);
   }
   // (rename + delete moved to the command registry — context menu / inline rename drive them
   //  through commandsFor(kind) now; see runCmd / startRowRename above.)

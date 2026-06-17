@@ -184,15 +184,16 @@ test("Trash: a real deleted note appears in the live Trash section and restores 
   // openSidebar; /trash is left REAL (no opts.trash). page.request bypasses the page.route mocks.
   const listed = await (await page.request.get("/list?dir=" + encodeURIComponent(VAULT))).json();
   const root = listed.root as string; // authoritative server root (may differ from VAULT at boot)
-  const file = root + "/trashme.md";
+  const base = "trashme-" + Date.now(); // unique per run → no no-clobber collision with prior runs' leftovers
+  const file = root + "/" + base + ".md";
   expect((await (await page.request.post("/create", { data: { file, content: "bye" } })).json()).ok).toBeTruthy();
   expect((await (await page.request.post("/delete", { data: { file } })).json()).ok).toBeTruthy();
   await openSidebar(page);
   await sectionHead(page, "trash").click(); // expand → lazy-loads the real /trash
-  const entry = page.locator(".fm-trash-entry", { hasText: "trashme" });
+  const entry = page.locator(".fm-trash-entry", { hasText: base });
   await expect(entry).toBeVisible();
   await entry.locator(".fm-trash-restore").click(); // registry restore → /restore, then re-fetches trash
-  await expect(page.locator(".fm-trash-entry", { hasText: "trashme" })).toHaveCount(0);
+  await expect(page.locator(".fm-trash-entry", { hasText: base })).toHaveCount(0);
 });
 
 test("Trash lists entries with a Restore action when /trash responds", async ({ page }) => {
@@ -203,6 +204,22 @@ test("Trash lists entries with a Restore action when /trash responds", async ({ 
   const entry = page.locator(".fm-trash-entry", { hasText: "gone.md" });
   await expect(entry).toBeVisible();
   await expect(entry.locator(".fm-trash-restore")).toBeVisible();
+});
+
+test("New folder creates an EMPTY folder — no forced note inside", async ({ page }) => {
+  // Regression guard: 'New folder' used to force you to also name a note inside it (legacy, from
+  // before empty folders could render). It must now create an empty dir via /folder-create.
+  // /list is mocked for the sidebar UI; we assert against the REAL server (page.request bypasses it).
+  await openSidebar(page);
+  const root = (await (await page.request.get("/list?dir=" + encodeURIComponent(VAULT))).json()).root as string;
+  const folder = "EmptyOne-" + Date.now(); // unique per run
+  page.once("dialog", (d) => d.accept(folder)); // the New-folder name prompt
+  await page.locator('.fm-toolbar [title="New folder"]').click();
+  await expect
+    .poll(async () => ((await (await page.request.get("/list?dir=" + encodeURIComponent(root))).json()).dirs as string[]) || [])
+    .toContain(folder);
+  const after = await (await page.request.get("/list?dir=" + encodeURIComponent(root))).json();
+  expect((after.files || []).some((f: any) => (f.rel as string).startsWith(folder + "/"))).toBe(false); // no forced note
 });
 
 // needs integration: /move — dropping actually relocates the note on disk. The drag-drop WIRING
