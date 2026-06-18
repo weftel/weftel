@@ -60,7 +60,7 @@ async function open(page: Page, name: string, content: string): Promise<string> 
   const path = join(VAULT, name);
   writeFileSync(path, content);
   await page.goto("/?file=" + encodeURIComponent(path));
-  await page.waitForSelector(".ProseMirror");
+  await page.waitForSelector(".ProseMirror", { state: "attached" });
   await page.waitForFunction(() => (window as any).__editor && (window as any).__setMode);
   return path;
 }
