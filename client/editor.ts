@@ -1584,6 +1584,17 @@ if (note && mount) {
     // attach block context so a native instruction routes deterministically regardless of primary kind
     if (tblAnc) { tgt.inTable = true; if (tgt.tableAnchor == null) tgt.tableAnchor = tblAnc.anchor; }
     if (coAnc) { tgt.inCallout = true; if (tgt.calloutPos == null) tgt.calloutPos = coAnc.pos; }
+    // [F47] A table TARGET (whole-table or multi-cell selection) can take a free-form model REWRITE,
+    // not just the structural ops. Capture the table's node range + serialized HTML so the rich path
+    // can prompt on it, gate it, and REPLACE the table node in place (parsed back to a real table).
+    if (tgt.kind === "table") {
+      const tpos = sel.node ? sel.from : (tblAnc ? tblAnc.pos : null);
+      const tnode = tpos == null ? null : editor.state.doc.nodeAt(tpos);
+      if (tnode && tnode.type.name === "table") {
+        tgt.tablePos = tpos; tgt.tableEnd = tpos + tnode.nodeSize;
+        tgt.html = (DOMSerializer.fromSchema(tnode.type.schema).serializeNode(tnode) as HTMLElement).outerHTML;
+      }
+    }
     cmdkTarget = tgt;
     cmdkHint.textContent = tgt.kind === "prose"
       ? "“" + tgt.text.slice(0, 52) + (tgt.text.length > 52 ? "…" : "") + "” — format, rewrite, or transform"
@@ -1635,6 +1646,8 @@ if (note && mount) {
 
   // ---- generative path (model) -----------------------------------------------------------------
   function buildCmdkPrompt(t: any, mode: string, intent: string): string {
+    if (t.kind === "table") // [F47] whole-table free-form rewrite — keep the result a single <table>
+      return "TARGET: an HTML table. Rewrite it to satisfy the instruction, keeping it a single well-formed <table> (preserve the real cell data unless the instruction says to change it). Output pure HTML — one <table> only, no prose, no code fences.\n\nInstruction: " + intent + "\n\nCurrent table HTML:\n" + t.html;
     if (mode === "rich")
       return "TARGET: an HTML block. Rewrite its inner HTML to satisfy the instruction. Output pure HTML only.\n\nInstruction: " + intent + "\n\nCurrent inner HTML:\n" + t.html;
     if (mode === "author")
@@ -1682,6 +1695,15 @@ if (note && mount) {
   function applyAiResult(t: any, mode: string, r: any): boolean {
     if (mode === "rich") {
       if (r.text.indexOf("<") < 0) { cmdkHint.textContent = "AI didn’t return HTML — try again"; return false; }
+      if (t.kind === "table") {
+        // [F47] Replace the TABLE node in place with the rewritten HTML, parsed back into a real,
+        // editable table — a table isn't a richBlock, so never setNodeMarkup an html attr on it.
+        const node = typeof t.tablePos === "number" ? editor!.state.doc.nodeAt(t.tablePos) : null;
+        if (!node || node.type.name !== "table") { cmdkHint.textContent = "table moved — reopen ⌘K"; return false; }
+        const to = Math.min(t.tableEnd, editor!.state.doc.content.size);
+        editor!.chain().focus().insertContentAt({ from: t.tablePos, to }, tidyInsertHtml(r.text)).run();
+        return true;
+      }
       let pos: number | null = t.pos;                        // trust the captured pos; else re-find by content
       const at = pos == null ? null : editor!.state.doc.nodeAt(pos);
       if (!at || at.type.name !== "richBlock" || at.attrs.html !== t.html) pos = findRichPos(t.html);

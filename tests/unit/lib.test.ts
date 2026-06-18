@@ -571,3 +571,24 @@ test("routeCmdkIntent: node-selected atoms + plain prose/rich/author route as be
   expect(routeCmdkIntent({ kind: "rich" }, "make the grid 6x6")).toEqual({ kind: "ai", mode: "rich" });
   expect(routeCmdkIntent({ kind: "author" }, "a table of fruits")).toEqual({ kind: "ai", mode: "author" });
 });
+
+// ───────────── routeCmdkIntent — [F47] a TABLE primary target can take a free-form rewrite ───────
+// The bug: with a table the primary target (multi-cell CellSelection or a whole-table NodeSelection),
+// only a deterministic structural op submitted — any free-form instruction dead-ended in a hint, so
+// a table was second-class to ⌘K (no path to a real model rewrite). A structural op must still win
+// (no model, can't duplicate); everything else now routes to the rich model REWRITE path + gate.
+test("routeCmdkIntent: a free-form instruction on a table target → model rewrite (not a dead-end hint)", () => {
+  // multi-cell selection (inTable) — the case the screenshot caught
+  expect(routeCmdkIntent({ kind: "table", inTable: true }, "make this cleaner")).toEqual({ kind: "ai", mode: "rich" });
+  expect(routeCmdkIntent({ kind: "table", inTable: true }, "sort by revenue descending")).toEqual({ kind: "ai", mode: "rich" });
+  // whole-table NodeSelection (no inTable flag) — same free-form rewrite path
+  expect(routeCmdkIntent({ kind: "table" }, "summarize these rows into three")).toEqual({ kind: "ai", mode: "rich" });
+});
+
+test("routeCmdkIntent: a structural op still wins over the rewrite path for a table target", () => {
+  // inTable (cell-selection) — recognized op never reaches the model
+  expect(routeCmdkIntent({ kind: "table", inTable: true }, "add a row")).toEqual({ kind: "table", op: "addRowAfter" });
+  // whole-table NodeSelection — a structural op now routes correctly here too (was previously a hint)
+  expect(routeCmdkIntent({ kind: "table" }, "delete column")).toEqual({ kind: "table", op: "deleteColumn" });
+  expect(routeCmdkIntent({ kind: "table" }, "toggle header row")).toEqual({ kind: "table", op: "toggleHeaderRow" });
+});
