@@ -15,7 +15,7 @@ Writes are race-free because GitHub serializes them server-side — **never coor
 - **Branch:** `gh issue develop <N> --checkout` — work in a dedicated git worktree so parallel agents don't collide on the working tree.
 - **Report progress:** `gh issue comment <N> --body "..."`
 - **Finish:** put `Fixes #<N>` in the PR body so the issue auto-closes on merge.
-- **New finding:** `gh issue create --label qa-board --label sev:<x> --title "[area] ..." --body "...repro..."` — do not reopen the old HTML board.
+- **New finding:** `gh issue create --label qa-board --label sev:<x> --label status:open --title "[area] ..." --body "...repro..."` — the project's **Auto-add** workflow (filter `is:issue label:qa-board`) puts it on the board in **Active** automatically; no `item-add`/`item-edit` needed. Do not reopen the old HTML board.
 
 ### Claiming when many agents run at once
 
