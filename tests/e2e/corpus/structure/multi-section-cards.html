@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<!--corpus stress="multi <section>/<article> cards + native <details>, NO top-level <main>/<article> (F78: must not collapse to the first card)" editable=true frozenMin=0 mustRender="overture,finale" -->
+<html lang="en"><head><meta charset="utf-8"><title>Multi-section cards</title>
+<style>
+  body{font-family:system-ui,sans-serif;margin:0}
+  .wrap{max-width:720px;margin:0 auto;padding:32px}
+  .hero h1{font-size:28px}
+  .section{margin-top:32px}
+  .card{border:1px solid #e4e4e7;border-radius:12px;padding:14px;margin:10px 0}
+  details.landed{border:1px solid #e4e4e7;border-radius:12px;margin-top:10px}
+  details.landed>summary{cursor:pointer;padding:12px;font-weight:600}
+</style></head>
+<body><div class="wrap">
+
+  <header class="hero">
+    <p class="eyebrow">overture</p>
+    <h1>A multi-section document with semantic cards.</h1>
+    <p>This intro sits before the first article. If the editor mistakes a nested
+      <code>article.card</code> for the page frame, everything here disappears from the view.</p>
+  </header>
+
+  <section class="section">
+    <h2>First review</h2>
+    <article class="card"><h3>Alpha card</h3><p>The first article holds the alpha finding.</p></article>
+    <article class="card"><h3>Beta card</h3><p>A second article that must also render.</p></article>
+  </section>
+
+  <section class="section">
+    <h2>Collapsed record</h2>
+    <details class="landed">
+      <summary>Landed items — expand for the list</summary>
+      <div class="ltable"><p>A row inside a native details/summary collapse.</p></div>
+    </details>
+  </section>
+
+  <section class="section">
+    <h2>Closing</h2>
+    <p>The closing section is the finale, and it must survive the load intact.</p>
+  </section>
+
+</div></body></html>

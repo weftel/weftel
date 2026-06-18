@@ -19,6 +19,10 @@
 //     frozenMin  (default 0)     — at least this many frozen [data-rich-block] hosts
 //     editTarget                  — a word to edit in place (behavioral proof of editability)
 //     neighbor                    — a word that MUST survive the edit (no collapse/replace-all)
+//     mustContain                 — substring that MUST survive in the saved bytes (lossless preservation)
+//     mustRender                  — comma-list of substrings that MUST each appear in the LIVE editable
+//                                   surface, not just on disk (catches a multi-section doc collapsing
+//                                   to its first <article>/<main> — see F78)
 import { test, expect, type Page } from "@playwright/test";
 import { writeFileSync, mkdirSync, readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -29,7 +33,7 @@ const SHOTS = join(CORPUS, "_shots");
 mkdirSync(VAULT, { recursive: true });
 mkdirSync(SHOTS, { recursive: true });
 
-type Dir = { stress: string; editable: boolean; frozenMin: number; editTarget?: string; neighbor?: string; mustContain?: string };
+type Dir = { stress: string; editable: boolean; frozenMin: number; editTarget?: string; neighbor?: string; mustContain?: string; mustRender?: string };
 function parseDirective(html: string): Dir {
   const m = html.match(/<!--\s*corpus\b([\s\S]*?)-->/i);
   const a = m ? m[1] : "";
@@ -42,6 +46,7 @@ function parseDirective(html: string): Dir {
     editTarget: get("editTarget"),
     neighbor: get("neighbor"),
     mustContain: get("mustContain"),
+    mustRender: get("mustRender"),
   };
 }
 // Visible-text normalization for the lossless round-trip check: drop comments + <style>/<script>
@@ -174,6 +179,18 @@ for (const subset of subsets) {
         expect(counts.richHosts, "fewer frozen blocks than expected").toBeGreaterThanOrEqual(d.frozenMin);
         if (d.editable) expect(counts.editableProse, "expected editable prose, found none (masquerading frozen?)").toBeGreaterThan(0);
         else expect(counts.editableProse, "expected NO editable prose (canary)").toBe(0);
+
+        // 5.5) RENDER COVERAGE (F78): a comma-list of strings that must each appear in the LIVE
+        // editable surface (the ProseMirror document text), not merely survive in the saved bytes.
+        // This is the only check that catches a frame-container mistake that collapses a multi-
+        // section doc to its first <article>/<main> — losslessness (#2) still passes because the
+        // dropped sections are preserved in htmlTemplate, but they never render or become editable.
+        if (d.mustRender) {
+          const live = await page.evaluate(() => (window as any).__editor.getText() || "");
+          for (const frag of d.mustRender.split(",").map((s) => s.trim()).filter(Boolean)) {
+            expect(live, `"${frag}" did not render in the editable surface (truncated/frozen, not editable)`).toContain(frag);
+          }
+        }
 
         // 6) BEHAVIORAL edit through the document model — the trust core.
         // Real-world fixtures carry no directive, so auto-derive the target from the document
