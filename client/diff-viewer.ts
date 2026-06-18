@@ -339,7 +339,18 @@ function preview(html: string, css?: string): HTMLElement {
   // mode (see @media block below), and the hunk backgrounds go dark — but that outer media query
   // can't reach into this shadow root, so it'd leave content near-black on a dark hunk. Re-declare
   // it here. The doc's own colors (appended after) still win; this only sets the default.
-  reset.textContent = "*{box-sizing:border-box}:host{font-family:-apple-system,BlinkMacSystemFont,'Inter',system-ui,sans-serif;color:#1c1c1e;line-height:1.55}@media(prefers-color-scheme:dark){:host{color:#ececef}}img,svg,video{max-width:100%;height:auto}";
+  //
+  // BASELINE TABLE STYLING (F49): the live editor draws every table's gridlines via
+  // `.ProseMirror table td,th{border…;padding…}` (server.ts), and the ⌘K SYSTEM prompt asks the
+  // model for a PLAIN <table> with no inline borders. That class selector can't reach into this
+  // shadow root, so a generated table previewed here rendered as a borderless, padding-less grid —
+  // invisible — and the human was asked to approve a change they couldn't see. Re-declare the
+  // gridlines as bare element selectors (specificity 0,0,2; self-contained, gate-owned palette).
+  // A cell's inline style always wins, and a doc's own RICH_STYLES (appended after) wins by source
+  // order when it targets the same td/th — so a deliberately-styled table keeps its own look.
+  reset.textContent = "*{box-sizing:border-box}:host{font-family:-apple-system,BlinkMacSystemFont,'Inter',system-ui,sans-serif;color:#1c1c1e;line-height:1.55}@media(prefers-color-scheme:dark){:host{color:#ececef}}img,svg,video{max-width:100%;height:auto}"
+    + "table{border-collapse:collapse;width:100%;margin:2px 0}table td,table th{border:1px solid #d3d3da;padding:7px 10px;vertical-align:top;text-align:left}table th{background:#f4f4f6;font-weight:600}"
+    + "@media(prefers-color-scheme:dark){table td,table th{border-color:#3a3a42}table th{background:#26262c}}";
   shadow.appendChild(reset);
   // opts.css may be either style-tag MARKUP (the editor's RICH_STYLES, which is what the
   // RichBlock nodeView injects verbatim) or raw CSS text — handle both.
