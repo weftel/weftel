@@ -128,6 +128,27 @@ test("cmd+K 'a 2x2 table' yields a NATIVE EDITABLE table, not a frozen rich bloc
   expect(cellEditable).toBe(true);
 });
 
+// #40 regression: "NxM" is ROWS × COLUMNS (rows first). An ASYMMETRIC ask (5x2) catches a
+// transpose that the symmetric 2x2 case above cannot — "5x2" must be 5 rows × 2 columns, not
+// 2 rows × 5 columns. The dimension contract lives in the server SYSTEM prompt; this drives the
+// real ⌘K → model path (replayed from .ai-cache) end to end.
+test("cmd+K 'a 5x2 table' honors rows × columns (5 rows, 2 columns — not transposed)", async ({ page }) => {
+  test.skip(!AI_EDIT_ENABLED, "in-app AI edit (⌘K) cut for first launch — F23");
+  await openNote(page, "aitable52.md", "# t\n\n");
+  await clearAndFocus(page);
+  await page.keyboard.press("Meta+k");
+  const input = page.locator(".cmdk input");
+  await expect(input).toBeVisible();
+  await input.fill("a 5x2 table");
+  await input.press("Enter");
+  await expect(page.locator(".ProseMirror table")).toBeVisible({ timeout: 60_000 });
+  const grid = await page.evaluate(() => {
+    const rows = Array.from(document.querySelectorAll(".ProseMirror table tr"));
+    return { rows: rows.length, cols: Math.max(0, ...rows.map((r) => r.querySelectorAll("td,th").length)) };
+  });
+  expect(grid).toEqual({ rows: 5, cols: 2 });
+});
+
 // FULL_PARSE: a class/<style>-driven bespoke doc (the cheat-sheet case) opens as EDITABLE
 // nested nodes — not one frozen rich block — renders with its real design, edits in place,
 // and round-trips (design + <style> intact, edit persisted) through save/reload.
