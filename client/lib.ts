@@ -736,10 +736,17 @@ export function routeCmdkIntent(ctx: { kind: string; inTable?: boolean; inCallou
   // 2. Node-selected dynamic atoms (clock / calendar): attr edit, or a hint if unrecognized.
   if (ctx.kind === "clock") { const tz = parseClockTz(intent); return tz ? { kind: "clock", tz } : { kind: "hint", target: "clock" }; }
   if (ctx.kind === "calendar") { const src = (intent.match(/https?:\/\/\S+/) || [])[0]; return src ? { kind: "calendar", src } : { kind: "hint", target: "calendar" }; }
-  // 3. A callout/table as the PRIMARY target with no matching native instruction → hint, NOT
-  //    generation (generation beside an existing block is the duplication failure we're avoiding).
+  // 3. A callout as the PRIMARY target with no matching native instruction → hint, NOT generation
+  //    (generation BESIDE an existing block is the duplication failure we're avoiding; a callout's
+  //    prose stays rewritable by selecting the cell text). A table (next line) differs.
   if (ctx.kind === "callout") { const k = parseCalloutKind(intent); return k ? { kind: "callout", calloutKind: k } : { kind: "hint", target: "callout" }; }
-  if (ctx.kind === "table") return { kind: "hint", target: "table" };
+  // [F47] A TABLE as the primary target (whole-table NodeSelection / multi-cell CellSelection): a
+  // structural op still wins (deterministic, no model), but ANY other instruction is now a free-form
+  // REWRITE of the whole table → the model (rich HTML) + gate, instead of dead-ending in a hint. A
+  // table differs from a callout (whose prose is reachable by selecting cell text): its structure
+  // can't be rewritten any other way, and the apply step REPLACES the table node in place — so there
+  // is no duplication risk (the reason a callout still hints rather than generates beside itself).
+  if (ctx.kind === "table") { const op = parseTableIntent(intent); return op ? { kind: "table", op } : { kind: "ai", mode: "rich" }; }
   // 4. Prose selection: a formatting command → real marks; anything else → model rewrite.
   if (ctx.kind === "prose") { const op = parseFormatIntent(intent); return op ? { kind: "format", op } : { kind: "ai", mode: "prose" }; }
   // 5. Rich block → model (pure HTML); bare caret → model author.
