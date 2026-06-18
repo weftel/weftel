@@ -1071,9 +1071,31 @@ function isolateRich(el: HTMLElement, doc: Document) {
   });
 }
 
+// F78: pick the page-FRAME container — the top-level wrapper that holds the doc's content — NOT a
+// nested semantic <article>/<main> used as a content CARD. The old `doc.querySelector("article,
+// main")` matched the FIRST such element ANYWHERE in the doc, so a page built from
+// <section><article class="card">… cards (no top-level <main>) had its whole edit surface collapsed
+// to the first card: every later section vanished from the view (still preserved on disk via
+// htmlTemplate, but unrendered and uneditable). A frame must be TOP-LEVEL — not itself nested
+// inside another content region (<article>/<main>/<section>): that rules out a content card AND its
+// inverse (a <main> tucked inside an outer <article> frame, where grabbing the inner <main> would
+// drop the article's surrounding content). Prefer a top-level <main> (the single page-content
+// region); else a SOLE top-level <article> (a page wrapping all its content in one <article>).
+// Multiple top-level articles, or none, mean article/main is content — fall back to <body> so
+// isolateRich keeps every section editable.
+function frameContainer(doc: Document): HTMLElement {
+  const body = doc.body;
+  const topLevel = (el: Element) => !(el.parentElement && el.parentElement.closest("article, main, section"));
+  const mains = Array.from(body.querySelectorAll("main")).filter(topLevel) as HTMLElement[];
+  if (mains.length === 1) return mains[0];
+  const articles = Array.from(body.querySelectorAll("article")).filter(topLevel) as HTMLElement[];
+  if (mains.length === 0 && articles.length === 1) return articles[0];
+  return body;
+}
+
 function prepareHtml(raw: string): string {
   const doc = new DOMParser().parseFromString(raw, "text/html");
-  const container = (doc.querySelector("article, main") as HTMLElement) || doc.body;
+  const container = frameContainer(doc);
   // F39: record the container's identity (only when it's a real wrapper, not body) so own-frame
   // detection can probe whether IT carried the page frame (max-width + margin:auto) the editor stripped.
   FRAME_CONTAINER = (FULL_PARSE && container !== doc.body)
