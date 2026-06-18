@@ -1469,24 +1469,40 @@ if (note && mount) {
   let dirty = false;
   let armed = false; // never auto-save until a genuine user edit — opening/normalizing a note must NOT rewrite it
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  let retryAttempt = 0;
+  const RETRY_MAX = 6; // bounded auto-retry: a server that stays down isn't hammered forever
   let saveChain: Promise<boolean> = Promise.resolve(true);
+  function clearRetry() { clearTimeout(retryTimer); retryTimer = undefined; retryAttempt = 0; }
+  // On a failed /save, retry on a bounded exponential backoff (1s,2s,4s,8s,15s,15s) so a
+  // transient blip — server restarting/unreachable/non-2xx — self-heals back to "Saved" with NO
+  // keystroke (F50). Reset by any success or fresh edit; after RETRY_MAX it parks on a static
+  // label and the next edit/navigation re-arms a save. One pending retry at a time.
+  function scheduleRetry() {
+    if (retryTimer) return;
+    if (retryAttempt >= RETRY_MAX) { setStatus("error", "Save failed — retry"); return; }
+    const delay = Math.min(15000, 1000 * 2 ** retryAttempt);
+    retryAttempt++;
+    setStatus("error", "Save failed — retrying…");
+    retryTimer = setTimeout(() => { retryTimer = undefined; if (dirty) doSave(); }, delay);
+  }
   // One save at a time: chain so a new save never races a /save already in flight
   // (both POST the same file; concurrent writes could otherwise land out of order).
   function actualSave(): Promise<boolean> {
     return (async () => {
       const out = serialize();
-      if (out === lastSaved) { dirty = false; setStatus("saved", "Saved"); return true; }
+      if (out === lastSaved) { dirty = false; clearRetry(); setStatus("saved", "Saved"); return true; }
       setStatus("saving", "Saving…");
       try {
         const r = await fetch("/save", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ file: note.file, content: out }) }).then((x) => x.json());
-        if (r.ok) { lastSaved = out; if (serialize() === out) { dirty = false; setStatus("saved", "Saved"); } return true; } // stay dirty if edited mid-save
-        setStatus("error", "Save failed — retry"); return false;
-      } catch { setStatus("error", "Save failed — retry"); return false; }
+        if (r.ok) { lastSaved = out; clearRetry(); if (serialize() === out) { dirty = false; setStatus("saved", "Saved"); } return true; } // stay dirty if edited mid-save
+        scheduleRetry(); return false; // server reachable but refused — back off and retry
+      } catch { scheduleRetry(); return false; } // unreachable — back off and retry
     })();
   }
   function doSave(): Promise<boolean> { saveChain = saveChain.then(actualSave, actualSave); return saveChain; }
-  function scheduleSave() { if (!armed) return; dirty = true; setStatus("dirty", "Unsaved"); clearTimeout(timer); timer = setTimeout(doSave, 600); }
-  async function flushSave(): Promise<boolean> { clearTimeout(timer); if (dirty) return await doSave(); await saveChain; return true; }
+  function scheduleSave() { if (!armed) return; dirty = true; clearRetry(); setStatus("dirty", "Unsaved"); clearTimeout(timer); timer = setTimeout(doSave, 600); }
+  async function flushSave(): Promise<boolean> { clearTimeout(timer); clearRetry(); if (dirty) return await doSave(); await saveChain; return true; }
   editor.on("update", scheduleSave);
   setStatus("saved", "Saved");
   // Arm auto-save only on real user input. Programmatic edits (cmd+K, chat insert, block
