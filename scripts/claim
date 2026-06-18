@@ -121,10 +121,12 @@ def claim(n):
     print(f"#{n}: already claimed by {winner[1]} — yielding", file=sys.stderr)
     return 2
 
-def claim_next(label=None, dry=False):
+def claim_next(label=None, sev=None, dry=False):
     q = f"is:open label:{QA_LABEL} -label:status:deferred no:assignee"
     if label:
-        q += f" label:{label}"
+        q += f' label:"{label}"'
+    if sev:  # comma-OR across severities: --sev bug,gap -> label:"sev:bug","sev:gap"
+        q += " label:" + ",".join(f'"sev:{s.strip()}"' for s in sev.split(","))
     rows = gh_json(["issue", "list", "-R", REPO, "--search", q,
                     "--json", "number,title", "-L", "30"]) or []
     rows.sort(key=lambda r: r["number"])
@@ -176,7 +178,8 @@ def main():
     cmd = a[0]
     if cmd == "next":
         label = a[a.index("--label")+1] if "--label" in a else None
-        return claim_next(label, dry="--dry" in a)
+        sev = a[a.index("--sev")+1] if "--sev" in a else None
+        return claim_next(label, sev, dry="--dry" in a)
     if cmd == "drop" and len(a) > 1:
         return drop(int(a[1]))
     if cmd == "board":
