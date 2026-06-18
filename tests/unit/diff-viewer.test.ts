@@ -6,7 +6,7 @@ import { test, expect } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 if (typeof (globalThis as any).document === "undefined") GlobalRegistrator.register();
 
-import { splitBlocks, diffBlocks, composeAccepted, type Hunk } from "../../client/diff-viewer";
+import { splitBlocks, diffBlocks, composeAccepted, diffApprove, type Hunk } from "../../client/diff-viewer";
 
 // ───────────────────────── splitBlocks ─────────────────────────
 test("splitBlocks: splits top-level elements into blocks", () => {
@@ -110,4 +110,37 @@ test("composeAccepted: accepting an addition includes it; rejecting drops it", (
   const h = diffBlocks(["<p>a</p>"], ["<p>a</p>", "<p>b</p>"]);
   expect(composeAccepted(h, [true, true])).toBe("<p>a</p><p>b</p>");
   expect(composeAccepted(h, [true, false])).toBe("<p>a</p>");
+});
+
+// ───────────────────────── diffApprove overlay (F49) ─────────────────────────
+// The overlay needs a DOM (happy-dom provides shadow roots). A ⌘K-GENERATED table reaches the
+// gate in AUTHOR mode as a PLAIN <table> (no inline borders — the SYSTEM prompt asks for one).
+// Regression: it must be rendered in the preview AND carry gate-owned gridline styling, or the
+// human is asked to approve a borderless, invisible grid (the F49 report).
+test("diffApprove: a generated plain table is previewed WITH baseline gridline styling (F49)", async () => {
+  document.querySelectorAll(".dgate-root").forEach((n) => n.remove());
+  const PLAIN_TABLE =
+    "<table><tr><th>A</th><th>B</th><th>C</th></tr>" +
+    "<tr><td>1</td><td>2</td><td>3</td></tr>" +
+    "<tr><td>4</td><td>5</td><td>6</td></tr></table>";
+  // author mode, empty original → a single "add" hunk. The Promise resolves on a decision; we
+  // press Esc at the end (below) so the gate tears itself down — removing its document keydown
+  // listener and root — instead of leaking them onto the shared happy-dom global document.
+  const decided = diffApprove("", PLAIN_TABLE, "author");
+
+  const host = document.querySelector(".dgate-add .dgate-render") as HTMLElement | null;
+  expect(host).not.toBeNull();
+  const shadow = (host as any).shadowRoot as ShadowRoot;
+  // The table IS rendered into the preview (not dropped) — all 9 cells present.
+  expect(shadow.querySelector("table")).not.toBeNull();
+  expect(shadow.querySelectorAll("td, th").length).toBe(9);
+  // ...and the baseline reset now gives table cells a border (the fix). Before it, the shadow's
+  // stylesheet mentioned no table/border at all, so a plain table rendered as an invisible grid.
+  const styleText = Array.from(shadow.querySelectorAll("style")).map((s) => s.textContent || "").join("\n");
+  expect(styleText).toMatch(/table\s+td[^}]*border/);
+
+  // Esc → finish({accepted:false}): real teardown (removes the keydown listener + root, resolves).
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+  await decided;
+  expect(document.querySelector(".dgate-root")).toBeNull();
 });
