@@ -17,16 +17,18 @@ import { createHash } from "node:crypto";
 // the Agent SDK exactly as before) instead of calling query() directly here.
 import { getProvider, modelInfo } from "./server/providers";
 
-// [AI:cmdk] In-app AI edit (⌘K) — DEFAULT OFF in committed code (net-negative on the pre-rebuild
-// dogfood; see notes-editor-wiki/quality-gaps.html F23). Env-gated so it flips on for evaluation
-// with no diff (`AI_EDIT_ENABLED=1`); the playwright webServer forwards it. SINGLE SOURCE OF TRUTH:
-// gates the /rewrite route AND is injected into the client via shell(). (model-layer + cmdk agreed.)
-const AI_EDIT_ENABLED = process.env.AI_EDIT_ENABLED === "1";
+// [AI:cmdk] In-app AI edit (⌘K) — DEFAULT ON in committed code (launch #88: the headline feature
+// must be visible on a fresh clone, no dev.sh). Env override still works: `AI_EDIT_ENABLED=0` drops
+// ⌘K (any other value, incl. unset, is ON). SINGLE SOURCE OF TRUTH: gates the /rewrite route AND is
+// injected into the client via shell(). When no provider is reachable the route degrades cleanly
+// (CloudProvider catches, /rewrite streams {error}, client shows it) — it never hangs. Connect/
+// first-run UX is #89. (model-layer + cmdk agreed on the single-source pattern.)
+const AI_EDIT_ENABLED = process.env.AI_EDIT_ENABLED !== "0";
 
 // [AI:ghost] Tab ghost-text ("Cursor-Tab for notes", v1) — inline faded completion accepted with
-// Tab. Default OFF; flip with GHOST_TEXT_ENABLED=1. Gates the /ghost route AND is injected into the
-// client (shell()), so front and back never drift — same pattern as AI_EDIT_ENABLED.
-const GHOST_TEXT_ENABLED = process.env.GHOST_TEXT_ENABLED === "1";
+// Tab. Default ON (launch #88); disable with GHOST_TEXT_ENABLED=0. Gates the /ghost route AND is
+// injected into the client (shell()), so front and back never drift — same pattern as AI_EDIT_ENABLED.
+const GHOST_TEXT_ENABLED = process.env.GHOST_TEXT_ENABLED !== "0";
 
 // [AI:integration] Diff-approve gate, wired INTO ⌘K (decision #4). The gate is part of the ⌘K flow,
 // so it's ON whenever ⌘K is on, with `DIFF_GATE=0` as an escape hatch. Committed default (AI off) ⇒

@@ -20,6 +20,10 @@ export default defineConfig({
     // [AI:integration] forward all AI feature flags so one run can exercise the whole stack: ⌘K +
     // diff-gate (AI_EDIT_ENABLED), Tab ghost (GHOST_TEXT_ENABLED), gate on/off (DIFF_GATE), and the
     // provider/model (PROVIDER/MODEL). e.g. `AI_EDIT_ENABLED=1 GHOST_TEXT_ENABLED=1 bun run e2e`.
-    env: { PORT: String(PORT), AI_CACHE: "tests/e2e/.ai-cache", AI_OFFLINE: process.env.AI_OFFLINE || "", AI_EDIT_ENABLED: process.env.AI_EDIT_ENABLED || "", GHOST_TEXT_ENABLED: process.env.GHOST_TEXT_ENABLED || "", DIFF_GATE: process.env.DIFF_GATE || "", PROVIDER: process.env.PROVIDER || "", MODEL: process.env.MODEL || "" },
+    // NOTE: default these to "0" (not ""), because the committed server default is now ON (#88) and
+    // "" reads as ON there. The e2e matrix is opt-IN (tests skip/expect AI-off unless the flag is
+    // "1"), so the harness pins AI off by default to stay in sync with the test-process reads.
+    // Explicit `AI_EDIT_ENABLED=1 bun run e2e` still turns the whole stack on, exactly as before.
+    env: { PORT: String(PORT), AI_CACHE: "tests/e2e/.ai-cache", AI_OFFLINE: process.env.AI_OFFLINE || "", AI_EDIT_ENABLED: process.env.AI_EDIT_ENABLED || "0", GHOST_TEXT_ENABLED: process.env.GHOST_TEXT_ENABLED || "0", DIFF_GATE: process.env.DIFF_GATE || "", PROVIDER: process.env.PROVIDER || "", MODEL: process.env.MODEL || "" },
   },
 });
