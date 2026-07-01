@@ -384,7 +384,17 @@ function styles(): string {
   .onboard .notice{text-align:left;font-size:13.5px;background:color-mix(in srgb,#dc2626 9%,var(--surface));border:1px solid color-mix(in srgb,#dc2626 35%,transparent);border-radius:8px;padding:10px 14px;margin-bottom:26px;word-break:break-all}
   .onboard .actions{display:flex;gap:10px;justify-content:center}
   .onboard button{font:inherit;font-size:14px;border-radius:8px;padding:9px 16px;cursor:pointer;border:1px solid var(--border-strong);background:var(--surface);color:var(--text)}
-  .onboard button.primary{background:var(--accent);border-color:var(--accent);color:#fff}`;
+  .onboard button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  /* [AI:firstrun] "connect your Claude / point at Ollama" banner — a dismissible strip under the
+     toolbar, shown only when an AI feature is enabled but its provider isn't reachable. Amber (a
+     to-do, not an error) so it reads as setup guidance, not a failure. */
+  .ai-connect{display:flex;align-items:flex-start;gap:10px;padding:10px 16px;font-size:13px;line-height:1.5;background:color-mix(in srgb,#f59e0b 12%,var(--surface));border-bottom:1px solid color-mix(in srgb,#f59e0b 40%,transparent);color:var(--text)}
+  .ai-connect .ic{flex:none;font-size:15px;line-height:1.4}
+  .ai-connect .msg{flex:1;min-width:0}
+  .ai-connect .msg b{font-weight:600}
+  .ai-connect code{font-family:ui-monospace,Menlo,monospace;font-size:.86em;background:color-mix(in srgb,#f59e0b 20%,var(--surface));border-radius:4px;padding:1px 5px}
+  .ai-connect .x{flex:none;font:inherit;font-size:16px;line-height:1;color:var(--muted);background:transparent;border:none;cursor:pointer;padding:2px 4px;border-radius:5px}
+  .ai-connect .x:hover{color:var(--text);background:color-mix(in srgb,#f59e0b 18%,transparent)}`;
 }
 
 function shell(note: { file: string; format: string; content: string } | null, openError: string | null = null): string {
@@ -423,6 +433,38 @@ function shell(note: { file: string; format: string; content: string } | null, o
 }
 
 function json(data: unknown, status = 200) { return Response.json(data as any, { status }); }
+
+// [AI:firstrun] First-run connection state. Cheaply probes (no inference / token spend) whether the
+// provider EACH ENABLED AI feature routes to is actually reachable — a logged-in Claude subscription
+// session (Agent SDK OAuth, no API key) or a running local Ollama daemon. The client polls this on
+// load to decide whether to show the "connect your Claude / point at Ollama" banner. When AI is
+// disabled entirely (the committed default) there is nothing to connect, so `anyEnabled` is false and
+// the client shows nothing. When a provider IS connected the banner stays invisible. Probes are only
+// run for ENABLED features and are de-duped by provider so we never probe the same daemon twice.
+async function aiStatus() {
+  const rewrite = modelInfo("rewrite");
+  const ghost = modelInfo("ghost");
+  const cache = new Map<string, Promise<{ connected: boolean; detail: string; hint?: string }>>();
+  const probe = (name: string) => {
+    if (!cache.has(name)) cache.set(name, Promise.resolve(getProvider(name).probe?.() ?? { connected: true, detail: name + ": no probe (assumed ok)" }));
+    return cache.get(name)!;
+  };
+  const rwProbe = AI_EDIT_ENABLED ? await probe(rewrite.provider) : null;
+  const ghProbe = GHOST_TEXT_ENABLED ? await probe(ghost.provider) : null;
+  const relevant = [rwProbe, ghProbe].filter(Boolean) as { connected: boolean; hint?: string }[];
+  const notConnected = relevant.filter((p) => !p.connected);
+  return {
+    anyEnabled: AI_EDIT_ENABLED || GHOST_TEXT_ENABLED,
+    aiEditEnabled: AI_EDIT_ENABLED,
+    ghostEnabled: GHOST_TEXT_ENABLED,
+    // connected = every ENABLED feature's provider is reachable (vacuously true when none enabled)
+    connected: relevant.every((p) => p.connected),
+    rewrite: { ...rewrite, ...(rwProbe ?? {}) },
+    ghost: { ...ghost, ...(ghProbe ?? {}) },
+    // one actionable next step (first not-connected provider's hint) for the banner
+    hint: notConnected[0]?.hint ?? null,
+  };
+}
 
 Bun.serve({
   port: PORT,
@@ -676,6 +718,10 @@ Bun.serve({
     // split visible (⌘K can be cloud while ghost is local). `rewrite` kept top-level for any caller
     // that read the old flat {provider,model} shape.
     if (url.pathname === "/api/model") return json({ ...modelInfo("rewrite"), rewrite: modelInfo("rewrite"), ghost: modelInfo("ghost") });
+
+    // [AI:firstrun] Connection state for the "connect your Claude / point at Ollama" first-run banner —
+    // whether each ENABLED AI feature's provider is actually reachable (no inference, cheap probe).
+    if (url.pathname === "/api/ai-status") return json(await aiStatus());
 
     // Preflight for in-doc note links: lets the client explain a dead link in place
     // instead of navigating to a welcome screen.

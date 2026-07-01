@@ -24,11 +24,19 @@
 //   FIM_MODEL    — FIM default model name (stub only)
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 
 export type AIResult = { ok: true; out: string } | { ok: false; error: string };
 export type AIStreamOpts = { system?: string; model?: string; signal?: AbortSignal };
 // [AI:ghost] Options for a raw completion / fill-in-the-middle call (inline ghost text).
 export type AICompleteOpts = { model?: string; maxTokens?: number; stop?: string[]; signal?: AbortSignal };
+// [AI:firstrun] Result of a cheap reachability check (NO inference / token spend). `connected` is the
+// gate for the first-run banner; `detail` is a short machine/debug string; `hint` (present only when
+// NOT connected) is the ONE actionable next step shown to the user. See probe() on each provider.
+export type ProbeResult = { connected: boolean; detail: string; hint?: string };
 
 export interface AIProvider {
   name: string;
@@ -43,6 +51,11 @@ export interface AIProvider {
   // back to the chat path. Models with a FIM template (qwen2.5-coder) infill using both sides; others
   // degrade to prefix-only continuation.
   complete?(prefix: string, suffix: string, opts: AICompleteOpts): Promise<AIResult>;
+  // [AI:firstrun] CHEAP reachability check — is this provider actually usable right now? Must NEVER
+  // run a real inference (no token spend, no cold-model start): cloud checks for a local OAuth
+  // session/key, ollama pings the daemon. Powers the "connect your Claude / point at Ollama"
+  // first-run state so a missing provider guides the user instead of failing silently on ⌘K.
+  probe?(): Promise<ProbeResult>;
 }
 
 // ───────────────────────── CloudProvider (default) ─────────────────────────
@@ -65,7 +78,37 @@ export const CloudProvider: AIProvider = {
       return { ok: true, out: text };
     } catch (e) { return { ok: false, error: String(e).slice(0, 200) }; }
   },
+  // [AI:firstrun] Detect a usable Claude session WITHOUT calling the model. The Agent SDK auths three
+  // ways (in the order it prefers them): an explicit API key/OAuth token in env, or — the default,
+  // no-API-key path this product is built around — the SUBSCRIPTION session Claude Code stores on
+  // login. We detect that session the same two ways Claude Code persists it: a ~/.claude/.credentials.json
+  // file (Linux + fallback), or the macOS login keychain item "Claude Code-credentials". A false
+  // negative just shows the connect banner (safe); we never spend a token to check.
+  async probe() {
+    if (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN)
+      return { connected: true, detail: "claude: API key/token in env" };
+    if (existsSync(join(homedir(), ".claude", ".credentials.json")))
+      return { connected: true, detail: "claude: subscription session (logged in)" };
+    if (process.platform === "darwin" && macKeychainHasClaude())
+      return { connected: true, detail: "claude: subscription session (macOS keychain)" };
+    return {
+      connected: false,
+      detail: "claude: no session or key found",
+      hint: "Connect your Claude: run `claude` in a terminal and log in (uses your subscription — no API key needed). Or set ANTHROPIC_API_KEY.",
+    };
+  },
 };
+
+// macOS stores the Claude Code OAuth session in the login keychain as a generic-password item named
+// "Claude Code-credentials". `security find-generic-password` exits 0 iff it exists; we only need the
+// exit code, not the secret, so stdout is discarded. Wrapped + timed so a keychain prompt/hang can't
+// stall the status route (treat any failure as "not found" → banner shows, which is the safe default).
+function macKeychainHasClaude(): boolean {
+  try {
+    execFileSync("security", ["find-generic-password", "-s", "Claude Code-credentials"], { stdio: "ignore", timeout: 2000 });
+    return true;
+  } catch { return false; }
+}
 
 // ───────────────────────── OllamaProvider (local) ─────────────────────────
 // POSTs to a local Ollama daemon's /api/chat and streams its NDJSON response. If Ollama
@@ -144,7 +187,35 @@ export const OllamaProvider: AIProvider = {
     if (!r.ok && suffix && /insert|suffix|does not support/i.test(r.error)) return ollamaGenerate({ model, prompt: prefix, stop: ["\n\n"], opts });
     return r;
   },
+  // [AI:firstrun] Is the local Ollama daemon reachable? A short GET /api/tags (lists installed models)
+  // is Ollama's cheapest liveness probe — no generation, no token cost. Bounded by a 1.5s timeout so a
+  // hung host can't stall the status route. Connection-refused (daemon not running) → NOT connected
+  // with a start hint. Reachable but the configured model isn't pulled → still "connected" (the daemon
+  // is up and the pull is a clearer/separate error at call time), but we note it in `detail`.
+  async probe() {
+    const host = ollamaHost();
+    let res: Response;
+    try {
+      res = await fetch(host + "/api/tags", { signal: AbortSignal.timeout(1500) });
+    } catch (e) {
+      return {
+        connected: false,
+        detail: `ollama: unreachable at ${host} (${errMsg(e)})`,
+        hint: `Start a local model: install Ollama, run \`ollama serve\`, then \`ollama pull ${OllamaProvider.defaultModel}\`. (Set OLLAMA_HOST if it runs elsewhere.)`,
+      };
+    }
+    if (!res.ok) return { connected: false, detail: `ollama: HTTP ${res.status} at ${host}`, hint: `Ollama answered ${res.status} at ${host} — check the daemon.` };
+    let models: string[] = [];
+    try { models = ((await res.json())?.models ?? []).map((m: any) => String(m?.name || "")); } catch {}
+    const want = (process.env.MODEL || OllamaProvider.defaultModel);
+    const hasModel = models.some((n) => n === want || n.split(":")[0] === want.split(":")[0]);
+    return { connected: true, detail: `ollama: running at ${host}${models.length ? ` (${models.length} model${models.length === 1 ? "" : "s"}${hasModel ? "" : `, "${want}" not pulled`})` : ""}` };
+  },
 };
+
+// Ollama base URL from env (default localhost), trailing slash trimmed. Single source used by probe;
+// stream()/complete() inline the same expression for their own hot paths.
+function ollamaHost(): string { return (process.env.OLLAMA_HOST || "http://localhost:11434").replace(/\/+$/, ""); }
 
 // Native FIM token templates by model family. qwen2.5-coder / codeqwen use the qwen sentinels;
 // codellama uses <PRE>/<SUF>/<MID>. A model with no entry has no FIM template — it falls back to
@@ -212,6 +283,9 @@ export const FimProvider: AIProvider = {
   name: "fim",
   defaultModel: process.env.FIM_MODEL || "codestral-latest",
   async stream() { return { ok: false, error: "FIM not implemented" }; },
+  // [AI:firstrun] The hosted-FIM provider is a stub — always report not-connected so the banner points
+  // the user at a provider that actually works today.
+  async probe() { return { connected: false, detail: "fim: not implemented (stub)", hint: "The hosted FIM provider isn't built yet — use Claude (default) or a local Ollama model." }; },
 };
 
 // ───────────────────────── factory + config ─────────────────────────

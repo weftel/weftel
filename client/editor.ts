@@ -930,6 +930,13 @@ const TaskListMd = TaskList.extend({
 // (server.ts shell()). Off ⇒ no ⌘K keybinding, chip, slash item, or bubble button.
 const AI_EDIT_ENABLED: boolean = !!(window as any).__AI_EDIT_ENABLED;
 
+// [AI:firstrun] Live provider-connection state, filled by initAiConnectBanner() from /api/ai-status.
+// null = unknown (not yet checked / AI off); false = a provider is missing (banner shown); true =
+// reachable. The ⌘K path reads it so a rewrite that fails while NOT connected shows the actionable
+// "connect your Claude / point at Ollama" step instead of a raw provider error.
+let aiConnected: boolean | null = null;
+let aiConnectHint = "";
+
 // [AI:diff-gate] Optional human-approval gate: when on, a computed AI edit is shown as a
 // RENDERED visual diff (client/diff-viewer.ts) and only inserted on accept. Default OFF so
 // base behavior is byte-identical to the no-gate path; the rebuild flips __DIFF_GATE_ENABLED.
@@ -1771,7 +1778,13 @@ if (note && mount) {
     cmdkInput.disabled = true; cmdkHint.textContent = "thinking with your Claude…";
     // Honest failure UX (cut-off vs timeout vs empty) lives inside runRewrite.error now.
     const out = await runRewrite(buildCmdkPrompt(t, mode, intent), mode, (p) => { cmdkHint.textContent = p.replace(/\s+/g, " ").trim().slice(-90) || "…"; });
-    if (!out.ok || !out.r) { cmdkInput.disabled = false; cmdkHint.textContent = out.error || "failed — try again"; return; }
+    if (!out.ok || !out.r) {
+      cmdkInput.disabled = false;
+      // [AI:firstrun] If we already know no provider is connected, the failure is a SETUP problem, not a
+      // model problem — show the actionable connect step instead of a raw provider error.
+      cmdkHint.textContent = aiConnected === false ? (aiConnectHint || "Not connected — connect your Claude, or start a local model (Ollama).") : (out.error || "failed — try again");
+      return;
+    }
     const r: any = out.r;
     try {
       // [AI:cmdk+diff-gate] Human-approval gate (decision #4) — wired into ⌘K at the SINGLE commit
@@ -2513,3 +2526,39 @@ if (!note) {
     if (r.ok) location.href = "/?file=" + encodeURIComponent(path); else alert(r.error || "couldn't create");
   });
 }
+
+// ============================ first-run: connect a provider ============================
+// [AI:firstrun] The AI features (⌘K, Tab ghost) depend on a provider the user must connect: a
+// logged-in Claude subscription session (Agent SDK OAuth — no API key) OR a running local Ollama
+// daemon. That dependency used to be tribal knowledge; a fresh clone had no way to know. This asks
+// the server (/api/ai-status, a cheap probe — no inference) whether the provider each ENABLED feature
+// routes to is reachable, and if not, shows a dismissible "connect your Claude / point at Ollama"
+// strip under the toolbar with the concrete next step. When AI is off (nothing to connect) or a
+// provider IS connected, it renders nothing — the banner is invisible on the happy path.
+async function initAiConnectBanner() {
+  const ghostEnabled = !!(window as any).__GHOST_TEXT_ENABLED;
+  if (!AI_EDIT_ENABLED && !ghostEnabled) return; // no AI feature on → nothing to connect
+  let s: any;
+  try { s = await fetch("/api/ai-status").then((x) => x.json()); } catch { return; } // never block the app on this
+  aiConnected = !!s.connected;
+  aiConnectHint = s.hint || "";
+  if (!s.anyEnabled || s.connected) return; // connected (or nothing enabled) → banner stays invisible
+  // Re-show whenever the situation CHANGES (provider swapped, still broken) even if dismissed before —
+  // but don't nag across reloads once dismissed for the SAME unmet state.
+  const sig = "ai-connect:" + [s.rewrite?.provider, s.rewrite?.connected, s.ghost?.provider, s.ghost?.connected, s.hint].join("|");
+  try { if (localStorage.getItem("aiConnectDismissed") === sig) return; } catch {}
+
+  const bar = document.createElement("div");
+  bar.className = "ai-connect";
+  const hint = escapeAttr(String(s.hint || "Connect your Claude, or point at a local model (Ollama)."));
+  bar.innerHTML =
+    '<span class="ic">⚡</span>' +
+    '<span class="msg"><b>AI features aren’t connected yet.</b> ' + hint + "</span>" +
+    '<button class="x" title="Dismiss" aria-label="Dismiss">✕</button>';
+  (bar.querySelector(".x") as HTMLElement).onclick = () => { try { localStorage.setItem("aiConnectDismissed", sig); } catch {} bar.remove(); };
+  // Under the toolbar when a note is open; at the very top on the onboarding screen.
+  const barEl = document.querySelector(".bar");
+  if (barEl && barEl.parentElement) barEl.parentElement.insertBefore(bar, barEl.nextSibling);
+  else document.body.insertBefore(bar, document.body.firstChild);
+}
+initAiConnectBanner();

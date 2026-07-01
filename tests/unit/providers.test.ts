@@ -5,7 +5,7 @@ import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { getProvider, modelInfo, parseOllamaLine, CloudProvider, OllamaProvider, FimProvider } from "../../server/providers";
 
 // ── env isolation: provider config is read at call time, so save/clear/restore around each test ──
-const ENV_KEYS = ["PROVIDER", "MODEL", "OLLAMA_HOST", "GHOST_PROVIDER", "GHOST_MODEL"] as const;
+const ENV_KEYS = ["PROVIDER", "MODEL", "OLLAMA_HOST", "GHOST_PROVIDER", "GHOST_MODEL", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"] as const;
 const realFetch = globalThis.fetch;
 const saved: Record<string, string | undefined> = {};
 beforeEach(() => { for (const k of ENV_KEYS) { saved[k] = process.env[k]; delete process.env[k]; } });
@@ -177,4 +177,78 @@ describe("OllamaProvider (mocked fetch — no live daemon)", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain("not found");
   });
+});
+
+// ───────────────────────── probe() — first-run connection detection ─────────────────────────
+// [AI:firstrun] Each provider's cheap reachability check (NO inference). Cloud reads env / local
+// session; Ollama pings /api/tags (mocked). These power the "connect your Claude / point at Ollama"
+// banner via /api/ai-status.
+
+// A minimal JSON Response for the Ollama probe's `fetch(...).json()` (distinct from the streaming
+// mockRes above, which has no .json()).
+function jsonRes(obj: any, status = 200) {
+  return { ok: status >= 200 && status < 300, status, json: async () => obj } as any;
+}
+
+describe("CloudProvider.probe (env auth — no keychain/network)", () => {
+  test("an API key in env reports connected", async () => {
+    process.env.ANTHROPIC_API_KEY = "sk-ant-xxx";
+    const p = await CloudProvider.probe!();
+    expect(p.connected).toBe(true);
+    expect(p.detail).toContain("env");
+    expect(p.hint).toBeUndefined();
+  });
+  test("an OAuth token in env reports connected", async () => {
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = "tok";
+    expect((await CloudProvider.probe!()).connected).toBe(true);
+  });
+  // Note: the NOT-connected cloud path depends on the host's local Claude session (credentials file /
+  // macOS keychain), so it's intentionally not asserted here — it's covered by the manual QA on a
+  // provider forced to a not-running Ollama, where the connected state is deterministic.
+});
+
+describe("OllamaProvider.probe (mocked fetch — no live daemon)", () => {
+  test("daemon up with the configured model → connected", async () => {
+    process.env.MODEL = "llama3.2";
+    let url: any = null;
+    globalThis.fetch = (async (u: any) => { url = u; return jsonRes({ models: [{ name: "llama3.2:latest" }, { name: "qwen2.5-coder:3b" }] }); }) as any;
+    const p = await OllamaProvider.probe!();
+    expect(url).toBe("http://localhost:11434/api/tags");
+    expect(p.connected).toBe(true);
+    expect(p.hint).toBeUndefined();
+    expect(p.detail).not.toContain("not pulled");
+  });
+  test("daemon up but the configured model isn't pulled → still connected, noted in detail", async () => {
+    process.env.MODEL = "llama3.2";
+    globalThis.fetch = (async () => jsonRes({ models: [{ name: "mistral:latest" }] })) as any;
+    const p = await OllamaProvider.probe!();
+    expect(p.connected).toBe(true);
+    expect(p.detail).toContain("not pulled");
+  });
+  test("connection refused → not connected, with an actionable hint", async () => {
+    globalThis.fetch = (async () => { throw new Error("ECONNREFUSED"); }) as any;
+    const p = await OllamaProvider.probe!();
+    expect(p.connected).toBe(false);
+    expect(p.detail).toContain("unreachable");
+    expect(p.hint).toContain("ollama");
+  });
+  test("a non-2xx from the daemon → not connected", async () => {
+    globalThis.fetch = (async () => jsonRes({}, 500)) as any;
+    const p = await OllamaProvider.probe!();
+    expect(p.connected).toBe(false);
+    expect(p.detail).toContain("500");
+  });
+  test("honors OLLAMA_HOST (trailing slash trimmed) for the probe endpoint", async () => {
+    process.env.OLLAMA_HOST = "http://127.0.0.1:9999/";
+    let url: any = null;
+    globalThis.fetch = (async (u: any) => { url = u; return jsonRes({ models: [] }); }) as any;
+    await OllamaProvider.probe!();
+    expect(url).toBe("http://127.0.0.1:9999/api/tags");
+  });
+});
+
+test("FimProvider.probe reports not connected (stub) with a redirect hint", async () => {
+  const p = await FimProvider.probe!();
+  expect(p.connected).toBe(false);
+  expect(p.hint).toBeTruthy();
 });
