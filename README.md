@@ -11,14 +11,23 @@ API key. Personal-use OAuth, which is exactly the local-first model.
 
 ## Run it
 
-**Dev (browser):**
+**One command (fresh clone):**
 ```bash
-bun install
-./dev.sh ~/notebook               # kill stale servers on the port, start fresh, VERIFY
-# open http://localhost:4321/
+bun start                         # installs deps, picks a safe port, opens the editor
 ```
-(`bun run server.ts ~/notebook` works too, but use `dev.sh` after code changes — see
-"Stale server" below.)
+That's it. `bun start` (or `npm start`, or `./start.sh`) installs dependencies on first
+run, defaults the vault to `~/notebook` (creating it if needed), starts the server, opens
+your browser, and handles the stale-server trap for you — if a previous editor is already
+on the port it restarts it fresh; if an unrelated program owns the port it moves to the
+next one. Point it elsewhere with `bun start <vault> <port>`.
+
+**Advanced / dev workflows** are unchanged:
+```bash
+./dev.sh ~/notebook               # dev restart with AI flags default-ON; kills+verifies the port
+bun run server.ts ~/notebook      # raw server, no port hygiene (use dev.sh after code changes)
+```
+`dev.sh` is for hacking on the app (see "Stale server" below); `start.sh` is the
+zero-knowledge launch path for just running it.
 
 **As a desktop app (macOS):**
 ```bash

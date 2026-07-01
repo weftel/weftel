@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "start": "sh ./start.sh",
     "dev": "bun run server.ts",
     "test": "bun test tests/unit",
     "e2e": "playwright test"
