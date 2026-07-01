@@ -725,17 +725,15 @@ export type CmdkRoute =
   | { kind: "table"; op: TableOp }
   | { kind: "callout"; calloutKind: "info" | "tip" | "warn" }
   | { kind: "clock"; tz: string }
-  | { kind: "calendar"; src: string }
   | { kind: "format"; op: FormatOp }
   | { kind: "ai"; mode: "rich" | "prose" | "author" }
-  | { kind: "hint"; target: "clock" | "calendar" | "callout" | "table" };
+  | { kind: "hint"; target: "clock" | "callout" | "table" };
 export function routeCmdkIntent(ctx: { kind: string; inTable?: boolean; inCallout?: boolean }, intent: string): CmdkRoute {
   // 1. In/on a native block → its structural/attr op takes priority (no model call, can't duplicate).
   if (ctx.inTable) { const op = parseTableIntent(intent); if (op) return { kind: "table", op }; }
   if (ctx.inCallout) { const k = parseCalloutKind(intent); if (k) return { kind: "callout", calloutKind: k }; }
-  // 2. Node-selected dynamic atoms (clock / calendar): attr edit, or a hint if unrecognized.
+  // 2. Node-selected dynamic atoms (clock): attr edit, or a hint if unrecognized.
   if (ctx.kind === "clock") { const tz = parseClockTz(intent); return tz ? { kind: "clock", tz } : { kind: "hint", target: "clock" }; }
-  if (ctx.kind === "calendar") { const src = (intent.match(/https?:\/\/\S+/) || [])[0]; return src ? { kind: "calendar", src } : { kind: "hint", target: "calendar" }; }
   // 3. A callout as the PRIMARY target with no matching native instruction → hint, NOT generation
   //    (generation BESIDE an existing block is the duplication failure we're avoiding; a callout's
   //    prose stays rewritable by selecting the cell text). A table (next line) differs.

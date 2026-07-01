@@ -564,7 +564,6 @@ test("routeCmdkIntent: callout kind change wins in-callout; authoring does not m
 test("routeCmdkIntent: node-selected atoms + plain prose/rich/author route as before", () => {
   expect(routeCmdkIntent({ kind: "clock" }, "change to PT")).toEqual({ kind: "clock", tz: "America/Los_Angeles" });
   expect(routeCmdkIntent({ kind: "clock" }, "make it spin")).toEqual({ kind: "hint", target: "clock" });
-  expect(routeCmdkIntent({ kind: "calendar" }, "https://cal.example/x")).toEqual({ kind: "calendar", src: "https://cal.example/x" });
   expect(routeCmdkIntent({ kind: "callout" }, "rewrite the text")).toEqual({ kind: "hint", target: "callout" });
   expect(routeCmdkIntent({ kind: "prose" }, "bold this")).toEqual({ kind: "format", op: { op: "bold" } });
   expect(routeCmdkIntent({ kind: "prose" }, "make it more concise")).toEqual({ kind: "ai", mode: "prose" });

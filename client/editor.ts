@@ -2,7 +2,7 @@
 //
 //   ProseBlock   fluid text (md/html)
 //   RichBlock    arbitrary HTML, verbatim + atomic (div[data-rich-block])
-//   CalendarBlock / ClockBlock   live dynamic apps (node views)
+//   ClockBlock    live dynamic app (node view)
 //
 // Safety: lossless html round-trip (full <head>/shell preserved; unmodelable
 // top-level elements wrapped, never flattened); sequence-guarded autosave with a
@@ -225,12 +225,12 @@ const sboxMd = { markdown: { serialize(state: any, node: any) {
 // safe on the live editable surface — and silently dropping them broke script-driven docs on save
 // (F32: the tabs no longer switched because every panel's data-p was gone). The exclusion list is
 // ONLY the editor's own structural <div> markers — those that a *different* node would re-claim on
-// reload (so echoing one back would flip a styled div into a rich/calendar/clock/callout block) or
+// reload (so echoing one back would flip a styled div into a rich/clock/callout block) or
 // that we strip ourselves (data-sbox). Generic names a doc legitimately uses as its own hooks
 // (data-type, data-id, data-src, data-state, …) are USER CONTENT and must round-trip — keeping them
-// here was the whole point. (The app's companion-keyed nodes need data-calendar/clock/callout to
-// match, so a lone data-kind/data-src/data-tz on a styled div is unambiguous user content.)
-const APP_DATA_HOOKS = new Set(["data-sbox", "data-rich-block", "data-calendar", "data-clock", "data-callout"]);
+// here was the whole point. (The app's companion-keyed nodes need data-clock/callout to
+// match, so a lone data-kind/data-tz on a styled div is unambiguous user content.)
+const APP_DATA_HOOKS = new Set(["data-sbox", "data-rich-block", "data-clock", "data-callout"]);
 const dataAttrs = () => ({
   data: {
     default: null,
@@ -757,26 +757,6 @@ function appHead(title: string, onSettings?: () => void): HTMLElement {
   return head;
 }
 
-const CalendarBlock = Node.create({
-  name: "calendarBlock", group: "block", atom: true, selectable: true, draggable: true,
-  addAttributes() { return { src: { default: "" } }; },
-  addStorage() { return { markdown: { serialize(state: any, node: any) { state.write(`<div data-calendar data-src="${escapeAttr(node.attrs.src)}"></div>`); state.closeBlock(node); } } }; },
-  parseHTML() { return [{ tag: "div[data-calendar]", getAttrs: (el: any) => ({ src: el.getAttribute("data-src") || "" }) }]; },
-  renderHTML({ node }: any) { return ["div", { "data-calendar": "", "data-src": node.attrs.src }]; },
-  addNodeView() {
-    return ({ node, editor, getPos }: any) => {
-      const dom = document.createElement("div"); dom.className = "app-block"; dom.setAttribute("data-calendar", ""); dom.contentEditable = "false";
-      dom.appendChild(appHead("Google Calendar", () => {
-        const next = window.prompt("Google Calendar embed URL:", node.attrs.src);
-        if (next != null && typeof getPos === "function") editor.chain().command(({ tr }: any) => { tr.setNodeMarkup(getPos(), undefined, { ...node.attrs, src: next }); return true; }).run();
-      }));
-      const f = document.createElement("iframe"); f.src = node.attrs.src; f.style.width = "100%"; f.style.height = "600px"; f.style.border = "0"; f.setAttribute("frameborder", "0");
-      dom.appendChild(f);
-      return { dom, stopEvent: () => true, ignoreMutation: () => true };
-    };
-  },
-});
-
 // Auth-free dynamic block — proves the live-component mechanism without any login.
 const ClockBlock = Node.create({
   name: "clockBlock", group: "block", atom: true, selectable: true, draggable: true,
@@ -955,7 +935,7 @@ const AI_EDIT_ENABLED: boolean = !!(window as any).__AI_EDIT_ENABLED;
 // base behavior is byte-identical to the no-gate path; the rebuild flips __DIFF_GATE_ENABLED.
 const DIFF_GATE_ENABLED: boolean = !!(window as any).__DIFF_GATE_ENABLED;
 
-// Slash menu. Cross-references into the main scope (Ask AI → cmd+K, calendar prompt)
+// Slash menu. Cross-references into the main scope (Ask AI → cmd+K, insert-block prompts)
 // go through this hooks object, populated once the editor + helpers exist.
 const slashHooks: { askAI?: () => void; insertEmbed?: (k: string) => void } = {};
 type SlashItem = { title: string; group: string; hint?: string; aliases?: string; run: (editor: any, range: any) => void };
@@ -974,7 +954,6 @@ const SLASH_ITEMS: SlashItem[] = [
   { title: "Code block", group: "Writing", hint: "```", aliases: "pre monospace", run: (e, r) => del(e, r).toggleCodeBlock().run() },
   { title: "Divider", group: "Writing", hint: "---", aliases: "hr rule separator", run: (e, r) => del(e, r).setHorizontalRule().run() },
   { title: "Rich HTML block", group: "Embeds", aliases: "html custom design", run: (e, r) => { del(e, r).run(); slashHooks.insertEmbed?.("rich"); } },
-  { title: "Calendar", group: "Embeds", aliases: "gcal google schedule", run: (e, r) => { del(e, r).run(); slashHooks.insertEmbed?.("calendar"); } },
   { title: "Clock", group: "Embeds", aliases: "time live", run: (e, r) => { del(e, r).run(); slashHooks.insertEmbed?.("clock"); } },
   ...(AI_EDIT_ENABLED ? [{ title: "Write with AI…", group: "AI", aliases: "generate cmdk diagram ask", run: (e: any, r: any) => { del(e, r).run(); slashHooks.askAI?.(); } } as SlashItem] : []),
 ];
@@ -1063,7 +1042,7 @@ const STRUCTURAL_TAGS = new Set(["DIV", "ARTICLE", "MAIN", "SECTION", "BODY", "H
 function isolateRich(el: HTMLElement, doc: Document) {
   Array.from(el.children).forEach((c) => {
     const child = c as HTMLElement;
-    if (child.hasAttribute("data-calendar") || child.hasAttribute("data-clock")) return;    // dynamic block — leave for its node
+    if (child.hasAttribute("data-clock")) return;                                           // dynamic block — leave for its node
     if (subtreeEditable(child)) return;                                                     // no unmodelable element anywhere — keep editable
     if (STRUCTURAL_TAGS.has(child.tagName)) { isolateRich(child, doc); return; }            // block wrapper (classed or not) — descend, isolate only the leaves
     const wrap = doc.createElement("div"); wrap.setAttribute("data-rich-block", "");        // unmodelable leaf / unsplittable text element — freeze whole
@@ -1095,6 +1074,18 @@ function frameContainer(doc: Document): HTMLElement {
 
 function prepareHtml(raw: string): string {
   const doc = new DOMParser().parseFromString(raw, "text/html");
+  // The Google Calendar embed block was removed. A note saved earlier may still carry a
+  // <div data-calendar data-src="URL">; with no calendarBlock node to claim it, degrade it in
+  // place to a plain link so the embed URL is PRESERVED (never silently dropped) and the note
+  // opens without a missing-node crash. Empty (src-less) markers just drop out.
+  doc.querySelectorAll("div[data-calendar]").forEach((el) => {
+    const src = el.getAttribute("data-src") || "";
+    if (src) {
+      const p = doc.createElement("p");
+      const a = doc.createElement("a"); a.setAttribute("href", src); a.textContent = src;
+      p.appendChild(a); el.replaceWith(p);
+    } else { el.remove(); }
+  });
   const container = frameContainer(doc);
   // F39: record the container's identity (only when it's a real wrapper, not body) so own-frame
   // detection can probe whether IT carried the page frame (max-width + margin:auto) the editor stripped.
@@ -1126,11 +1117,11 @@ function prepareHtml(raw: string): string {
   // the EDITABLE content without clobbering the chrome (live-only; the original <style> still
   // round-trips verbatim through htmlTemplate's head).
   SCOPED_NOTE_CSS = FULL_PARSE ? scopeCss(Array.from(doc.querySelectorAll("style")).map((s) => s.textContent || "").join("\n"), ".note-scope") : "";
-  const hasMarkers = !!container.querySelector("[data-rich-block],[data-calendar],[data-clock]");
+  const hasMarkers = !!container.querySelector("[data-rich-block],[data-clock]");
   if (FULL_PARSE) {
     // Re-derive rich blocks from CONTENT, not stale markers: drop every data-rich-block wrapper
     // (from a prior save / md-to-redesigned output — these often pin a whole <article> atomic),
-    // keep dynamic markers (data-calendar/clock), then recursively isolate ONLY the minimal
+    // keep dynamic markers (data-clock), then recursively isolate ONLY the minimal
     // unmodelable subtrees (svg/img/…). A single nested svg no longer freezes the whole document;
     // everything else parses into editable nodes rendered by the scoped doc sheet.
     container.querySelectorAll("[data-rich-block]").forEach((rb) => {
@@ -1144,7 +1135,7 @@ function prepareHtml(raw: string): string {
     // element so it's preserved atomic rather than flattened.
     Array.from(container.children).forEach((child) => {
       const el = child as HTMLElement;
-      if (el.hasAttribute("data-rich-block") || el.hasAttribute("data-calendar") || el.hasAttribute("data-clock")) return;
+      if (el.hasAttribute("data-rich-block") || el.hasAttribute("data-clock")) return;
       if (PROSE_TAGS.has(el.tagName)) return;
       const wrap = doc.createElement("div"); wrap.setAttribute("data-rich-block", "");
       el.replaceWith(wrap); wrap.appendChild(el);
@@ -1188,7 +1179,7 @@ if (note && mount) {
     TaskListMd, TaskItem.configure({ nested: true }), TaskInputRule, MarkdownListFix,
     Table.configure({ resizable: true }), TableRow, TableHeader, TableCell,
     Callout,
-    StyledInlineBox, StyledBox, StyledSpan, DecoSpan, ImageNode, RichBlock, CalendarBlock, ClockBlock,
+    StyledInlineBox, StyledBox, StyledSpan, DecoSpan, ImageNode, RichBlock, ClockBlock,
     SlashMenu, TabKeys, EscapeTrap,
     Placeholder.configure({ placeholder: ({ node }: any) => (node.type.name === "heading" ? "Heading" : "Write, or press “/” for commands…"), showOnlyCurrent: true }),
   ];
@@ -1580,7 +1571,6 @@ if (note && mount) {
   const CMDK_HINT: Record<string, string> = {
     rich: "edit this HTML block — e.g. “make the grid 6×6”",
     clock: "change the clock — “PT”, “Tokyo”, “UTC”",
-    calendar: "set the calendar — paste a Google Calendar URL",
     callout: "recolor this callout — “make it a warning / tip / info”",
     table: "edit this table — “add a row”, “delete column”, “toggle header”",
     author: "write — a paragraph, list, table, or diagram (HTML when it helps)",
@@ -1607,7 +1597,6 @@ if (note && mount) {
       const n = sel.node.type.name;
       if (n === "richBlock") tgt = { kind: "rich", nodeType: n, pos: sel.from, html: sel.node.attrs.html };
       else if (n === "clockBlock") tgt = { kind: "clock", nodeType: n, pos: sel.from };
-      else if (n === "calendarBlock") tgt = { kind: "calendar", nodeType: n, pos: sel.from };
       else if (n === "callout") tgt = { kind: "callout", nodeType: n, pos: sel.from, calloutPos: sel.from };
       else if (n === "table") tgt = { kind: "table", tableAnchor: sel.from + 1 };
     }
@@ -1769,12 +1758,11 @@ if (note && mount) {
     //    row — it no longer falls through to generation. Unrecognized native instructions → a hint
     //    (never generation, which is what used to duplicate the block).
     const TABLE_HINT = "try “add a row”, “delete column”, “toggle header”";
-    const HINT_FOR: Record<string, string> = { clock: "name a zone — “PT”, “UTC”, “Tokyo”…", calendar: "paste a Google Calendar embed URL", callout: "try “make it a warning / tip / info”", table: TABLE_HINT };
+    const HINT_FOR: Record<string, string> = { clock: "name a zone — “PT”, “UTC”, “Tokyo”…", callout: "try “make it a warning / tip / info”", table: TABLE_HINT };
     const route = routeCmdkIntent({ kind: t.kind, inTable: t.inTable, inCallout: t.inCallout }, intent);
     if (route.kind === "table") { runTableOp(t.tableAnchor, route.op); markEdited(); closeCmdk(); flash("table updated"); return; }
     if (route.kind === "callout") { if (setNodeAttrsAt(t.calloutPos, "callout", { kind: route.calloutKind })) { markEdited(); closeCmdk(); flash("callout → " + route.calloutKind); } return; }
     if (route.kind === "clock") { if (setNodeAttrsAt(t.pos, "clockBlock", { tz: route.tz })) { markEdited(); closeCmdk(); flash("clock → " + route.tz); } return; }
-    if (route.kind === "calendar") { if (setNodeAttrsAt(t.pos, "calendarBlock", { src: route.src })) { markEdited(); closeCmdk(); flash("calendar updated"); } return; }
     if (route.kind === "format") { applyFormat(t, route.op); markEdited(); closeCmdk(); flash("formatted"); return; }
     if (route.kind === "hint") { cmdkHint.textContent = HINT_FOR[route.target]; return; }
 
@@ -1865,8 +1853,7 @@ if (note && mount) {
   // ============================ insert menu ============================
   function insertBlock(kind: string) {
     if (!editor) return;
-    if (kind === "calendar") { const def = "https://calendar.google.com/calendar/embed?src=benjamingonzales121102%40gmail.com&ctz=America%2FLos_Angeles"; const url = window.prompt("Google Calendar embed URL:", def); if (url) { editor.chain().focus().insertContent({ type: "calendarBlock", attrs: { src: url } }).run(); markEdited(); } }
-    else if (kind === "clock") { editor.chain().focus().insertContent({ type: "clockBlock", attrs: { tz: "local" } }).run(); markEdited(); }
+    if (kind === "clock") { editor.chain().focus().insertContent({ type: "clockBlock", attrs: { tz: "local" } }).run(); markEdited(); }
     else if (kind === "rich") { const hint = AI_EDIT_ENABLED ? "empty rich block — ⌘K to fill it with AI" : "empty rich block — paste or write HTML here"; editor.chain().focus().insertContent('<div data-rich-block><div style="padding:16px;border:1px dashed var(--border-strong);border-radius:8px;text-align:center;color:var(--muted)">' + hint + '</div></div>').run(); markEdited(); }
   }
 
@@ -1962,7 +1949,7 @@ if (note && mount) {
   if (AI_EDIT_ENABLED) slashHooks.askAI = () => openCmdk();
   slashHooks.insertEmbed = (k: string) => insertBlock(k);
   document.getElementById("insertchip")?.addEventListener("click", () => {
-    const k = window.prompt("Insert block: type 'calendar', 'clock', or 'rich'", "clock");
+    const k = window.prompt("Insert block: type 'clock' or 'rich'", "clock");
     if (k) insertBlock(k.trim().toLowerCase());
   });
   // title from first H1 if present
