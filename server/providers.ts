@@ -80,7 +80,12 @@ export const OllamaProvider: AIProvider = {
     const messages: { role: string; content: string }[] = [];
     if (opts.system) messages.push({ role: "system", content: opts.system });
     messages.push({ role: "user", content: prompt });
-    const body = JSON.stringify({ model: opts.model || OllamaProvider.defaultModel, messages, stream: true });
+    // [AI:cmdk] Cap rewrite-path generation so a local model can't run away (a runaway inline-SVG
+    // hung the cloud-vs-local experiment — issue #74). ghost caps via complete()'s num_predict, but
+    // stream() (the ⌘K /rewrite path) had none. Generous default fits prose/table/callout rewrites;
+    // override with OLLAMA_NUM_PREDICT. Diagrams route to cloud/Claude Code, so the cap won't clip them.
+    const numPredict = Number(process.env.OLLAMA_NUM_PREDICT) || 2048;
+    const body = JSON.stringify({ model: opts.model || OllamaProvider.defaultModel, messages, stream: true, options: { num_predict: numPredict } });
 
     let res: Response;
     try {

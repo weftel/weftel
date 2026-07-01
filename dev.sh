@@ -14,6 +14,24 @@ DIR=$(cd "$(dirname "$0")" && pwd)
 VAULT="${1:-$HOME/notebook}"
 PORT="${2:-4321}"
 
+# AI features default ON for DEV (so a restart never silently disables ⌘K/ghost again — the trap
+# that bit us 2026-06-17). The committed server.ts default stays OFF, so launch/tests are untouched;
+# this is dev-convenience only. Per-flag override still works: `AI_EDIT_ENABLED=0 ./dev.sh …` drops
+# ⌘K, `DIFF_GATE=0 ./dev.sh …` keeps ⌘K but drops the approve gate (the gate rides on AI_EDIT_ENABLED).
+# Ghost defaults to the local FIM model; if Ollama isn't running it degrades cleanly (no ghost, no crash).
+: "${AI_EDIT_ENABLED:=1}"
+: "${GHOST_TEXT_ENABLED:=1}"
+: "${GHOST_PROVIDER:=ollama}"
+: "${GHOST_MODEL:=qwen2.5-coder:1.5b}"
+# ⌘K (the rewrite scope) defaults to LOCAL qwen2.5-coder:3b in dev — cloud Haiku was the measured
+# "too slow" (cloud-vs-local experiment, issue #74): ~56× slower to first token for ~0.5 quality
+# points more, and Ben's bar is latency-first (the quality path is the user's own Claude Code). Ghost
+# keeps its own 1.5b (its GHOST_* override wins). Committed server.ts default stays cloud/haiku for
+# launch. Override: `PROVIDER=claude MODEL=haiku ./dev.sh …` puts ⌘K back on cloud.
+: "${PROVIDER:=ollama}"
+: "${MODEL:=qwen2.5-coder:3b}"
+export AI_EDIT_ENABLED GHOST_TEXT_ENABLED GHOST_PROVIDER GHOST_MODEL PROVIDER MODEL
+
 # macOS: /tmp is a symlink to /private/tmp; the server realpaths its root, so a /tmp/…
 # ?file= URL fails confinement. Normalize here so printed URLs are the canonical form.
 VAULT=$(cd "$VAULT" 2>/dev/null && pwd -P) || { echo "vault not found: $1"; exit 1; }
