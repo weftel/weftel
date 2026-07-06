@@ -2,10 +2,8 @@
 
 *The AI lays the warp. You pass the weft.*
 
-![Hand-editing an AI-authored design note: cursor in, type — then a cmd-K AI edit on the same page](docs/demo.gif)
-
-<!-- Full 24s demo video: open this README in the GitHub web editor and drag
-     the .mp4 in right here — GitHub uploads it and renders an inline player.
+<!-- Demo video: open this README in the GitHub web editor and drag the .mp4 in
+     right here — GitHub uploads it and renders an inline player.
      (Committed video files don't render; only drag-drop uploads do.) -->
 
 A local-first, AI-native notes editor. Notes are plain `.md` / `.html` on disk in a
