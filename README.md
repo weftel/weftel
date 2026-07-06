@@ -2,9 +2,11 @@
 
 *The AI lays the warp. You pass the weft.*
 
-<!-- Demo video: open this README in the GitHub web editor and drag the .mp4 in
-     right here — GitHub uploads it and renders an inline player.
-     (Committed video files don't render; only drag-drop uploads do.) -->
+
+
+https://github.com/user-attachments/assets/0ed7bcfd-770c-4c0d-8cbc-4311bf58e348
+
+
 
 A local-first, AI-native notes editor. Notes are plain `.md` / `.html` on disk in a
 folder ("vault"). Fluid WYSIWYG editing (TipTap), with the mission: **edit as much of the
