@@ -1,4 +1,6 @@
-# note-editor-spike
+# weftel
+
+*The AI lays the warp. You pass the weft.*
 
 A local-first, AI-native notes editor. Notes are plain `.md` / `.html` on disk in a
 folder ("vault"). Fluid WYSIWYG editing (TipTap), with the mission: **edit as much of the
