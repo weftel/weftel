@@ -129,9 +129,9 @@ export const TASKS: GoldenTask[] = [
     instruction: "Turn the three status lines into a checklist (API done, the other two unchecked).",
     op: { kind: "sequence", ops: [
       { kind: "insertBlock", after: { type: "paragraph", textContains: "Batch" }, html: '<ul class="contains-task-list" data-type="taskList"><li data-type="taskItem" data-checked="true">API green, deploys flowing</li><li data-type="taskItem" data-checked="false">Queue backlog to drain</li><li data-type="taskItem" data-checked="false">Batch storage migration</li></ul>' },
-      { kind: "deleteBlock", match: { type: "paragraph", textContains: "API" } },
-      { kind: "deleteBlock", match: { type: "paragraph", textContains: "Queue" } },
-      { kind: "deleteBlock", match: { type: "paragraph", textContains: "Batch" } },
+      { kind: "deleteBlock", match: { type: "paragraph", textContains: "pipeline is green" } },   // distinctive: "API" also appears in the NEW checklist item
+      { kind: "deleteBlock", match: { type: "paragraph", textContains: "backlog above normal" } },
+      { kind: "deleteBlock", match: { type: "paragraph", textContains: "paused pending" } },
     ] },
     deletes: ["dot-api", "dot-queue", "dot-batch"],
     expect: [{ kind: "countNodes", type: "taskItem", equals: 3 }, { kind: "savedContains", text: "storage migration" },
@@ -157,5 +157,11 @@ export const TASKS: GoldenTask[] = [
     instruction: "Re-theme the Revenue card from purple to a light indigo panel with dark readable text.",
     op: { kind: "setNodeAttr", match: { type: "styledBox", textContains: "Revenue" }, attrs: { style: "flex:1;background:#eef2ff;color:#111827;border-radius:12px;padding:18px" } },
     contrastGate: true,
-    expect: [{ kind: "savedContains", text: "#eef2ff" }, { kind: "nodeAttr", match: { type: "styledBox", textContains: "Revenue" }, attr: "style", equals: "flex:1;background:#eef2ff;color:#111827;border-radius:12px;padding:18px" }] },
+    expect: [{ kind: "savedContains", text: "#eef2ff" },
+             { kind: "nodeAttr", match: { type: "styledBox", textContains: "Revenue" }, attr: "style", equals: "flex:1;background:#eef2ff;color:#111827;border-radius:12px;padding:18px" },
+             // the SIBLING card and the flex wrapper must be untouched (gate-F: the op once
+             // hit the wrapper, killing the row layout — grader agreed because it queried
+             // through the same resolver; these pin the neighbors)
+             { kind: "savedContains", text: "display: flex" },  // serializer normalizes spacing (see shorthand gotcha)
+             { kind: "savedContains", text: "#10b981" }] },
 ];

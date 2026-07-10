@@ -20,8 +20,14 @@ export function findNode(doc: PMNode, m: NodeMatch): Found {
     hits.push({ node, pos });
     return true;
   });
-  // prefer the SHALLOWEST/most specific: for type matches keep order; index selects
-  const hit = hits[m.index ?? 0];
+  // Ambiguity rule (gate-F catch): a textContains match resolves to the INNERMOST hit —
+  // "the box containing 'Revenue'" means the Revenue card, not the flex wrapper that also
+  // contains that text. document-order-first picked the wrapper and the grader, querying
+  // through the same resolver, agreed with the wrong answer. Explicit `index` still
+  // selects in document order. (The phase-2 op layer sidesteps this whole class by
+  // addressing nodes by id.)
+  const ordered = m.textContains && m.index == null ? [...hits].sort((a, b) => a.node.nodeSize - b.node.nodeSize) : hits;
+  const hit = ordered[m.index ?? 0];
   if (!hit) throw new Error("findNode: no match for " + JSON.stringify(m));
   return hit;
 }
