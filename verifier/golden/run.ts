@@ -121,17 +121,20 @@ if (reviewN && rendered.length) {
     const cls = `pane-${taskId}-${label}`;
     // Pane reset BEFORE the doc's own styles: panes render against browser defaults
     // regardless of the app's dark canvas (#96 — the app fills undeclared colors from its
-    // dark theme, garbling light-styled tables). No !important: the reset only needs to
-    // beat the app's theme defaults (it does — the app double-scopes pane rules under
-    // .note-scope, and later-in-sheet doc styles still win over the reset by order).
-    // Table defaults included: in-app, classed tables lose their class in the live DOM
-    // (#97 — resizable TableView rebuilds the element), so class-scoped table rules die
-    // and the app's dark th fills win. The reset paints browser-ish table chrome; doc
-    // rules still override wherever their selectors actually match (higher specificity).
-    const reset = `.${cls}{background:#fff}.${cls} :is(p,h1,h2,h3,h4,li,td,th,span,div,strong,em,code){color:#111}.${cls} th{background:#f2f4f8}.${cls} :is(th,td){border:1px solid #c8cdd6}`;
-    return `<div style="flex:1;min-width:0"><h4>${label}</h4><style>${reset}\n${scopeCss(styles, "." + cls)}</style><div class="${cls}" style="border:1px solid #ccc;border-radius:6px;padding:14px;max-height:480px;overflow:auto;background:#fff;color:#111">${t.innerHTML}</div></div>`;
+    // dark theme, garbling light-styled tables). No !important, and NOTHING color-related
+    // inline (inline would beat everything — a self-dark-themed doc like adamw could
+    // never paint its own background): colors live in the reset SHEET, and the doc's
+    // scoped rules come after it, so `body{…}` (mapped to .pane-x by scopeCss) wins by
+    // order and self-themed docs render as themselves. Table chrome defaults included:
+    // in-app, classed tables lose their class in the live DOM (#97 — resizable TableView
+    // rebuilds the element), so class-scoped table rules die without a fallback.
+    const reset = `.${cls}{background:#fff;color:#111}.${cls} :is(p,h1,h2,h3,h4,li,td,th,span,div,strong,em,code){color:#111}.${cls} th{background:#f2f4f8}.${cls} :is(th,td){border:1px solid #c8cdd6}`;
+    return `<div style="flex:1;min-width:0"><h4>${label}</h4><style>${reset}\n${scopeCss(styles, "." + cls)}</style><div class="${cls}" style="border:1px solid #ccc;border-radius:6px;padding:14px;max-height:480px;overflow:auto">${t.innerHTML}</div></div>`;
   };
-  const sections = picks.map(({ t, before, saved }) => `<section style="margin:28px 0"><h2>${t.id}</h2><p><em>${t.instruction}</em> · <code>${t.source}</code></p><div style="display:flex;gap:12px">${cell(t.id, "before", before)}${cell(t.id, "after", saved)}</div></section>`).join("\n");
+  // instructions are prose that may mention literal tags ("the <head> must not change") —
+  // escape or the browser eats them as markup
+  const escText = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const sections = picks.map(({ t, before, saved }) => `<section style="margin:28px 0"><h2>${t.id}</h2><p><em>${escText(t.instruction)}</em> · <code>${t.source}</code></p><div style="display:flex;gap:12px">${cell(t.id, "before", before)}${cell(t.id, "after", saved)}</div></section>`).join("\n");
   writeFileSync(join(REPO, "verifier/golden/review.html"), `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Golden review sheet</title></head><body style="font:15px/1.5 sans-serif;max-width:1100px;margin:2rem auto"><h1>Golden task review — ${commit}</h1>${sections}</body></html>`);
   console.log(`review sheet: verifier/golden/review.html (${picks.length} tasks)`);
 }
