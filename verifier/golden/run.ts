@@ -104,9 +104,12 @@ for (const t of tasks) {
 
 const reviewN = optOf("--review");
 if (reviewN && rendered.length) {
-  // deterministic "random" sample: seeded by commit hash so a given tree reviews the same set
-  const seed = [...commit].reduce((a, c) => a + c.charCodeAt(0), 0);
-  const picks = [...rendered].sort((a, b) => ((seed * 31 + a.t.id.length) % 97) - ((seed * 31 + b.t.id.length) % 97)).slice(0, reviewN);
+  // tier-prioritized sample: delegate tasks (representation-scale, where taste matters most)
+  // always make the sheet, then assist, then substrate — deterministic, stable within tier.
+  const rank = { delegate: 0, assist: 1, substrate: 2 } as Record<string, number>;
+  const picks = [...rendered]
+    .sort((a, b) => (rank[a.t.tier || "substrate"] - rank[b.t.tier || "substrate"]) || a.t.id.localeCompare(b.t.id))
+    .slice(0, reviewN);
   // Panes are SCOPED DIVS, not iframes: weftel's live render strips script/iframe/object/
   // embed (stripActive — own-files security model), so an iframe-based sheet reads as empty
   // panes in the app. Each pane inlines the doc's body with its styles rewritten to the
