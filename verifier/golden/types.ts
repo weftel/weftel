@@ -14,6 +14,7 @@ export type Op =
   | { kind: "replaceText"; find: string; replace: string }
   | { kind: "setNodeAttr"; match: NodeMatch; attrs: Record<string, any> }
   | { kind: "insertBlock"; after: NodeMatch; html: string }
+  | { kind: "appendItem"; list: NodeMatch; text: string }   // append a real <li> INSIDE a list
   | { kind: "deleteBlock"; match: NodeMatch }
   | { kind: "moveBlock"; match: NodeMatch; to: "before" | "after"; anchor: NodeMatch }
   | { kind: "sortTable"; match: NodeMatch; column: number; order: "asc" | "desc"; numeric?: boolean }

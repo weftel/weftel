@@ -70,6 +70,18 @@ export function applyOp(doc: PMNode, op: Op): PMNode {
         tr.insert(f.pos + f.node.nodeSize, nodes);
         break;
       }
+      case "appendItem": {
+        // insertBlock adds SIBLINGS; a list addition must land INSIDE the list as a real
+        // item (gate-F review caught the paragraph-after-the-list failure mode).
+        const f = findNode(d, { type: "bulletList", ...o.list });
+        const itemType = f.node.type.name === "taskList" ? "taskItem" : "listItem";
+        const item = schema.nodes[itemType].createChecked(
+          itemType === "taskItem" ? { checked: false } : null,
+          schema.nodes.paragraph.createChecked(null, schema.text(o.text)),
+        );
+        tr.insert(f.pos + f.node.nodeSize - 1, item);
+        break;
+      }
       case "deleteBlock": {
         const f = topLevelBlock(d, o.match);
         tr.delete(f.pos, f.pos + f.node.nodeSize);

@@ -16,7 +16,7 @@ import { frag } from "../engine-io";
 import { checkRoundtrip } from "../checks/roundtrip";
 import { checkValidity } from "../checks/validity";
 import { checkIds } from "../checks/ids";
-import { checkContrast } from "../checks/contrast";
+import { contrastReport } from "../checks/contrast";
 import { roundTrip } from "../engine-io";
 import { applyOp, schema, findNode } from "./ops";
 import { Node as PMNode } from "@tiptap/pm/model";
@@ -71,7 +71,16 @@ function runTask(t: GoldenTask): { res: TaskResult; before: string; saved: strin
   push("roundtrip", checkRoundtrip(t.source, rt).filter((r) => r.state === "fail").map((r) => r.detail || ""));
   push("validity", checkValidity(t.source, saved, rt.t2, rt.s1).filter((r) => r.state === "fail").map((r) => r.detail || ""));
   push("ids", checkIds(t.source, raw, saved, t.deletes || []).filter((r) => r.state === "fail").map((r) => r.detail || ""));
-  push("contrast", checkContrast(t.source, saved, !t.contrastGate).filter((r) => r.state === "fail" && !r.advisory).map((r) => r.detail || ""));
+  if (t.contrastGate) {
+    // DELTA semantics: the gate judges the EDIT, not the doc — only contrast failures the
+    // op introduced fail the task; pre-existing doc contrast is the corpus run's advisory
+    // business. The baseline is the SAVED-BEFORE doc (not raw): the engine re-represents
+    // elements on save (<div>→<p>/<strong>), so raw-vs-saved comparisons misattribute
+    // pre-existing failures as new.
+    const baseline = serializeDoc(docToBody(htmlToDoc(prep.content)), prep);
+    const beforeFails = new Set(contrastReport(baseline).fails);
+    push("contrast", contrastReport(saved).fails.filter((f) => !beforeFails.has(f)));
+  }
 
   return { res: { id: t.id, ok: !failures.length, failures, xfails }, before: raw, saved };
 }

@@ -24,9 +24,14 @@ const idsIn = (root: ParentNode) => Array.from(root.querySelectorAll("[id]")).ma
 const dataIn = (root: ParentNode) => {
   const out: string[] = [];
   root.querySelectorAll("*").forEach((e) => {
+    // data-kind / data-tz are APP-OWNED companions when they ride the app's own block
+    // markers (data-callout / data-clock) — an op legitimately edits them. A LONE
+    // data-kind/data-tz on any other element is user content and must survive.
+    const companion = (n: string) =>
+      (n === "data-kind" && e.hasAttribute("data-callout")) || (n === "data-tz" && e.hasAttribute("data-clock"));
     for (const a of Array.from(e.attributes)) {
       const n = a.name.toLowerCase();
-      if (n.startsWith("data-") && !APP_DATA_HOOKS.has(n)) out.push(n + "=" + a.value);
+      if (n.startsWith("data-") && !APP_DATA_HOOKS.has(n) && !companion(n)) out.push(n + "=" + a.value);
     }
   });
   return out;

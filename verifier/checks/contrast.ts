@@ -10,7 +10,8 @@ import { parseSheets, customProps, substVars, parseColor, declared, contrastRati
 
 const THRESHOLD = 4.5; // AA normal text (large-text 3.0 refinement: future gotcha)
 
-export function checkContrast(file: string, s1: string, advisory: boolean): CheckResult[] {
+// raw material for both the corpus check and the golden DELTA gate (new failures only)
+export function contrastReport(s1: string): { fails: string[]; judged: number; skips: string[] } {
   const doc = frag(s1);
   const rules = parseSheets(Array.from(doc.querySelectorAll("style")).map((s) => s.textContent || ""));
   const vars = customProps(rules);
@@ -63,7 +64,11 @@ export function checkContrast(file: string, s1: string, advisory: boolean): Chec
     const ratio = contrastRatio(fgc.a < 1 ? over(fgc, bg) : fgc, bg);
     if (ratio < THRESHOLD) fails.push(`${tag(el)} ratio ${ratio.toFixed(2)} < ${THRESHOLD}`);
   }
+  return { fails, judged, skips };
+}
 
+export function checkContrast(file: string, s1: string, advisory: boolean): CheckResult[] {
+  const { fails, judged, skips } = contrastReport(s1);
   const out: CheckResult[] = [];
   if (fails.length) {
     out.push({ file, check: "contrast", state: "fail", advisory, detail: `${fails.length}/${judged} judged elements below AA: ${fails.slice(0, 4).join(" · ")}${fails.length > 4 ? ` (+${fails.length - 4})` : ""}` });
