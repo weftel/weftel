@@ -1,61 +1,49 @@
-<!DOCTYPE html><html><head><meta charset="utf-8"><title>Golden review sheet</title></head><body style="font:15px/1.5 sans-serif;max-width:1100px;margin:2rem auto"><h1>Golden task review — 060d4c8</h1><section style="margin:28px 0"><h2>block-move-up</h2><p><em>Move the Batch status line above the Queue line.</em> · <code>tests/e2e/corpus/identity/deco-dots.html</code></p><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>before</h4><iframe srcdoc="&lt;!--corpus stress=&quot;empty decorative spans with ids (status dots) beside editable prose&quot; editable=true editTarget=&quot;pipeline&quot; neighbor=&quot;deploys&quot; mustContain=&quot;Status board&quot;-->
-&lt;!DOCTYPE html>
-&lt;html>&lt;head>&lt;meta charset=&quot;utf-8&quot;>&lt;title>Status board&lt;/title>&lt;style>
-body{font:15px/1.6 sans-serif;color:#14171c;background:#fff;max-width:600px;margin:2rem auto}
-.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
-.ok{background:#1a9c4b}.warn{background:#d99114}.down{background:#c9302c}
-&lt;/style>&lt;/head>&lt;body>
-&lt;h2 id=&quot;board-head&quot;>Status board&lt;/h2>
-&lt;p>&lt;span class=&quot;dot ok&quot; id=&quot;dot-api&quot;>&lt;/span>API — the pipeline is green and deploys are flowing.&lt;/p>
-&lt;p>&lt;span class=&quot;dot warn&quot; id=&quot;dot-queue&quot;>&lt;/span>Queue — backlog above normal, drained hourly.&lt;/p>
-&lt;p>&lt;span class=&quot;dot down&quot; id=&quot;dot-batch&quot;>&lt;/span>Batch — paused pending the storage migration.&lt;/p>
-&lt;/body>&lt;/html>
-" style="width:100%;height:420px;border:1px solid #ccc;border-radius:6px;background:#fff"></iframe></div><div style="flex:1;min-width:0"><h4>after</h4><iframe srcdoc="&lt;!DOCTYPE html>
-&lt;html>&lt;head>&lt;meta charset=&quot;utf-8&quot;>&lt;title>Status board&lt;/title>&lt;style>
-body{font:15px/1.6 sans-serif;color:#14171c;background:#fff;max-width:600px;margin:2rem auto}
-.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
-.ok{background:#1a9c4b}.warn{background:#d99114}.down{background:#c9302c}
-&lt;/style>&lt;/head>&lt;body>&lt;h2>Status board&lt;/h2>&lt;p>&lt;span class=&quot;dot ok&quot;>&lt;/span>API — the pipeline is green and deploys are flowing.&lt;/p>&lt;p>&lt;span class=&quot;dot down&quot;>&lt;/span>Batch — paused pending the storage migration.&lt;/p>&lt;p>&lt;span class=&quot;dot warn&quot;>&lt;/span>Queue — backlog above normal, drained hourly.&lt;/p>&lt;/body>&lt;/html>" style="width:100%;height:420px;border:1px solid #ccc;border-radius:6px;background:#fff"></iframe></div></div></section>
-<section style="margin:28px 0"><h2>list-task-add</h2><p><em>Add 'ship the retro notes' to the end of the first list.</em> · <code>tests/e2e/corpus/schema/lists.html</code></p><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>before</h4><iframe srcdoc="&lt;!--corpus stress=&quot;nested + classed lists (li class survives, no collapse)&quot; editable=true editTarget=&quot;alpha&quot; neighbor=&quot;beta&quot;-->
-&lt;!DOCTYPE html>&lt;html>&lt;head>&lt;meta charset=&quot;utf-8&quot;>&lt;title>Lists&lt;/title>&lt;style>.ask>li{font-weight:600}.ask .fu{color:#888;font-style:italic}&lt;/style>&lt;/head>&lt;body>
-&lt;article>&lt;ul class=&quot;ask&quot;>&lt;li>Item alpha&lt;ul>&lt;li class=&quot;fu&quot;>nested note&lt;/li>&lt;/ul>&lt;/li>&lt;li>Item beta&lt;/li>&lt;/ul>&lt;/article>
-&lt;/body>&lt;/html>
-" style="width:100%;height:420px;border:1px solid #ccc;border-radius:6px;background:#fff"></iframe></div><div style="flex:1;min-width:0"><h4>after</h4><iframe srcdoc="&lt;!DOCTYPE html>
-&lt;html>&lt;head>&lt;meta charset=&quot;utf-8&quot;>&lt;title>Lists&lt;/title>&lt;style>.ask>li{font-weight:600}.ask .fu{color:#888;font-style:italic}&lt;/style>&lt;/head>&lt;body>
-&lt;article>&lt;ul class=&quot;ask&quot;>&lt;li>&lt;p>Item alpha&lt;/p>&lt;ul>&lt;li class=&quot;fu&quot;>&lt;p>nested note&lt;/p>&lt;/li>&lt;/ul>&lt;/li>&lt;li>&lt;p>Item beta&lt;/p>&lt;/li>&lt;/ul>&lt;p>ship the retro notes&lt;/p>&lt;/article>
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Golden review sheet</title></head><body style="font:15px/1.5 sans-serif;max-width:1100px;margin:2rem auto"><h1>Golden task review — 898c370</h1><section style="margin:28px 0"><h2>block-move-up</h2><p><em>Move the Batch status line above the Queue line.</em> · <code>tests/e2e/corpus/identity/deco-dots.html</code></p><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>before</h4><style>.pane-block-move-up-before{font:15px/1.6 sans-serif;color:#14171c;background:#fff;max-width:600px;margin:2rem auto}.pane-block-move-up-before .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}.pane-block-move-up-before .ok{background:#1a9c4b}.pane-block-move-up-before .warn{background:#d99114}.pane-block-move-up-before .down{background:#c9302c}</style><div class="pane-block-move-up-before" style="border:1px solid #ccc;border-radius:6px;padding:14px;max-height:480px;overflow:auto;background:#fff;color:#111"><!--corpus stress="empty decorative spans with ids (status dots) beside editable prose" editable=true editTarget="pipeline" neighbor="deploys" mustContain="Status board"-->
 
-&lt;/body>&lt;/html>" style="width:100%;height:420px;border:1px solid #ccc;border-radius:6px;background:#fff"></iframe></div></div></section>
-<section style="margin:28px 0"><h2>clock-tz-edit</h2><p><em>Switch the office clock to New York time.</em> · <code>verifier/golden/fixtures/callout-clock.html</code></p><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>before</h4><iframe srcdoc="&lt;!DOCTYPE html>
-&lt;html>&lt;head>&lt;meta charset=&quot;utf-8&quot;>&lt;title>Team notes&lt;/title>&lt;style>
-body{font:15px/1.6 sans-serif;color:#16191f;background:#fff;max-width:620px;margin:2rem auto}
-&lt;/style>&lt;/head>&lt;body>
-&lt;h2>Standup notes&lt;/h2>
-&lt;div data-callout data-kind=&quot;info&quot;>
-&lt;p>Deploy freeze starts Friday; coordinate with the release channel.&lt;/p>
-&lt;/div>
-&lt;p>Current time in the office:&lt;/p>
-&lt;div data-clock data-tz=&quot;America/Los_Angeles&quot;>&lt;/div>
-&lt;p>Wrap-up owed by end of week.&lt;/p>
-&lt;/body>&lt;/html>
-" style="width:100%;height:420px;border:1px solid #ccc;border-radius:6px;background:#fff"></iframe></div><div style="flex:1;min-width:0"><h4>after</h4><iframe srcdoc="&lt;!DOCTYPE html>
-&lt;html>&lt;head>&lt;meta charset=&quot;utf-8&quot;>&lt;title>Team notes&lt;/title>&lt;style>
-body{font:15px/1.6 sans-serif;color:#16191f;background:#fff;max-width:620px;margin:2rem auto}
-&lt;/style>&lt;/head>&lt;body>&lt;h2>Standup notes&lt;/h2>&lt;div data-kind=&quot;info&quot; data-callout=&quot;&quot; class=&quot;callout callout-info&quot;>&lt;p>Deploy freeze starts Friday; coordinate with the release channel.&lt;/p>&lt;/div>&lt;p>Current time in the office:&lt;/p>&lt;div data-clock=&quot;&quot; data-tz=&quot;America/New_York&quot;>&lt;/div>&lt;p>Wrap-up owed by end of week.&lt;/p>&lt;/body>&lt;/html>" style="width:100%;height:420px;border:1px solid #ccc;border-radius:6px;background:#fff"></iframe></div></div></section>
-<section style="margin:28px 0"><h2>cell-edit-basic</h2><p><em>In the comparison table, change the Cons cell 'cost' to 'licence cost'.</em> · <code>tests/e2e/corpus/schema/table.html</code></p><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>before</h4><iframe srcdoc="&lt;!--corpus stress=&quot;classed table -> native editable table&quot; editable=true editTarget=&quot;Pros&quot; neighbor=&quot;Cons&quot;-->
-&lt;!DOCTYPE html>&lt;html>&lt;head>&lt;meta charset=&quot;utf-8&quot;>&lt;title>Table&lt;/title>&lt;style>.cmp th{background:#eee}.cmp td{border:1px solid #ccc;padding:6px}&lt;/style>&lt;/head>&lt;body>
-&lt;article>&lt;h2>Comparison&lt;/h2>&lt;table class=&quot;cmp&quot;>&lt;thead>&lt;tr>&lt;th>Pros&lt;/th>&lt;th>Cons&lt;/th>&lt;/tr>&lt;/thead>&lt;tbody>&lt;tr>&lt;td>fast&lt;/td>&lt;td>cost&lt;/td>&lt;/tr>&lt;/tbody>&lt;/table>&lt;/article>
-&lt;/body>&lt;/html>
-" style="width:100%;height:420px;border:1px solid #ccc;border-radius:6px;background:#fff"></iframe></div><div style="flex:1;min-width:0"><h4>after</h4><iframe srcdoc="&lt;!DOCTYPE html>
-&lt;html>&lt;head>&lt;meta charset=&quot;utf-8&quot;>&lt;title>Table&lt;/title>&lt;style>.cmp th{background:#eee}.cmp td{border:1px solid #ccc;padding:6px}&lt;/style>&lt;/head>&lt;body>
-&lt;article>&lt;h2>Comparison&lt;/h2>&lt;table class=&quot;cmp&quot;>&lt;tbody>&lt;tr>&lt;th>Pros&lt;/th>&lt;th>Cons&lt;/th>&lt;/tr>&lt;tr>&lt;td>fast&lt;/td>&lt;td>licence cost&lt;/td>&lt;/tr>&lt;/tbody>&lt;/table>&lt;/article>
 
-&lt;/body>&lt;/html>" style="width:100%;height:420px;border:1px solid #ccc;border-radius:6px;background:#fff"></iframe></div></div></section>
-<section style="margin:28px 0"><h2>table-sort-desc</h2><p><em>Sort the comparison table's body rows by the first column descending.</em> · <code>tests/e2e/corpus/schema/table.html</code></p><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>before</h4><iframe srcdoc="&lt;!--corpus stress=&quot;classed table -> native editable table&quot; editable=true editTarget=&quot;Pros&quot; neighbor=&quot;Cons&quot;-->
-&lt;!DOCTYPE html>&lt;html>&lt;head>&lt;meta charset=&quot;utf-8&quot;>&lt;title>Table&lt;/title>&lt;style>.cmp th{background:#eee}.cmp td{border:1px solid #ccc;padding:6px}&lt;/style>&lt;/head>&lt;body>
-&lt;article>&lt;h2>Comparison&lt;/h2>&lt;table class=&quot;cmp&quot;>&lt;thead>&lt;tr>&lt;th>Pros&lt;/th>&lt;th>Cons&lt;/th>&lt;/tr>&lt;/thead>&lt;tbody>&lt;tr>&lt;td>fast&lt;/td>&lt;td>cost&lt;/td>&lt;/tr>&lt;/tbody>&lt;/table>&lt;/article>
-&lt;/body>&lt;/html>
-" style="width:100%;height:420px;border:1px solid #ccc;border-radius:6px;background:#fff"></iframe></div><div style="flex:1;min-width:0"><h4>after</h4><iframe srcdoc="&lt;!DOCTYPE html>
-&lt;html>&lt;head>&lt;meta charset=&quot;utf-8&quot;>&lt;title>Table&lt;/title>&lt;style>.cmp th{background:#eee}.cmp td{border:1px solid #ccc;padding:6px}&lt;/style>&lt;/head>&lt;body>
-&lt;article>&lt;h2>Comparison&lt;/h2>&lt;table class=&quot;cmp&quot;>&lt;tbody>&lt;tr>&lt;th>Pros&lt;/th>&lt;th>Cons&lt;/th>&lt;/tr>&lt;tr>&lt;td>fast&lt;/td>&lt;td>cost&lt;/td>&lt;/tr>&lt;/tbody>&lt;/table>&lt;/article>
+<h2 id="board-head">Status board</h2>
+<p><span class="dot ok" id="dot-api"></span>API — the pipeline is green and deploys are flowing.</p>
+<p><span class="dot warn" id="dot-queue"></span>Queue — backlog above normal, drained hourly.</p>
+<p><span class="dot down" id="dot-batch"></span>Batch — paused pending the storage migration.</p>
 
-&lt;/body>&lt;/html>" style="width:100%;height:420px;border:1px solid #ccc;border-radius:6px;background:#fff"></iframe></div></div></section></body></html>
+</div></div><div style="flex:1;min-width:0"><h4>after</h4><style>.pane-block-move-up-after{font:15px/1.6 sans-serif;color:#14171c;background:#fff;max-width:600px;margin:2rem auto}.pane-block-move-up-after .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}.pane-block-move-up-after .ok{background:#1a9c4b}.pane-block-move-up-after .warn{background:#d99114}.pane-block-move-up-after .down{background:#c9302c}</style><div class="pane-block-move-up-after" style="border:1px solid #ccc;border-radius:6px;padding:14px;max-height:480px;overflow:auto;background:#fff;color:#111">
+<h2>Status board</h2><p><span class="dot ok"></span>API — the pipeline is green and deploys are flowing.</p><p><span class="dot down"></span>Batch — paused pending the storage migration.</p><p><span class="dot warn"></span>Queue — backlog above normal, drained hourly.</p></div></div></div></section>
+<section style="margin:28px 0"><h2>list-task-add</h2><p><em>Add 'ship the retro notes' to the end of the first list.</em> · <code>tests/e2e/corpus/schema/lists.html</code></p><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>before</h4><style>.pane-list-task-add-before .ask>li{font-weight:600}.pane-list-task-add-before .ask .fu{color:#888;font-style:italic}</style><div class="pane-list-task-add-before" style="border:1px solid #ccc;border-radius:6px;padding:14px;max-height:480px;overflow:auto;background:#fff;color:#111"><!--corpus stress="nested + classed lists (li class survives, no collapse)" editable=true editTarget="alpha" neighbor="beta"-->
+
+<article><ul class="ask"><li>Item alpha<ul><li class="fu">nested note</li></ul></li><li>Item beta</li></ul></article>
+
+</div></div><div style="flex:1;min-width:0"><h4>after</h4><style>.pane-list-task-add-after .ask>li{font-weight:600}.pane-list-task-add-after .ask .fu{color:#888;font-style:italic}</style><div class="pane-list-task-add-after" style="border:1px solid #ccc;border-radius:6px;padding:14px;max-height:480px;overflow:auto;background:#fff;color:#111">
+
+<article><ul class="ask"><li><p>Item alpha</p><ul><li class="fu"><p>nested note</p></li></ul></li><li><p>Item beta</p></li></ul><p>ship the retro notes</p></article>
+
+</div></div></div></section>
+<section style="margin:28px 0"><h2>clock-tz-edit</h2><p><em>Switch the office clock to New York time.</em> · <code>verifier/golden/fixtures/callout-clock.html</code></p><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>before</h4><style>.pane-clock-tz-edit-before{font:15px/1.6 sans-serif;color:#16191f;background:#fff;max-width:620px;margin:2rem auto}</style><div class="pane-clock-tz-edit-before" style="border:1px solid #ccc;border-radius:6px;padding:14px;max-height:480px;overflow:auto;background:#fff;color:#111">
+
+<h2>Standup notes</h2>
+<div data-callout="" data-kind="info">
+<p>Deploy freeze starts Friday; coordinate with the release channel.</p>
+</div>
+<p>Current time in the office:</p>
+<div data-clock="" data-tz="America/Los_Angeles"></div>
+<p>Wrap-up owed by end of week.</p>
+
+</div></div><div style="flex:1;min-width:0"><h4>after</h4><style>.pane-clock-tz-edit-after{font:15px/1.6 sans-serif;color:#16191f;background:#fff;max-width:620px;margin:2rem auto}</style><div class="pane-clock-tz-edit-after" style="border:1px solid #ccc;border-radius:6px;padding:14px;max-height:480px;overflow:auto;background:#fff;color:#111">
+<h2>Standup notes</h2><div data-kind="info" data-callout="" class="callout callout-info"><p>Deploy freeze starts Friday; coordinate with the release channel.</p></div><p>Current time in the office:</p><div data-clock="" data-tz="America/New_York"></div><p>Wrap-up owed by end of week.</p></div></div></div></section>
+<section style="margin:28px 0"><h2>cell-edit-basic</h2><p><em>In the comparison table, change the Cons cell 'cost' to 'licence cost'.</em> · <code>tests/e2e/corpus/schema/table.html</code></p><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>before</h4><style>.pane-cell-edit-basic-before .cmp th{background:#eee}.pane-cell-edit-basic-before .cmp td{border:1px solid #ccc;padding:6px}</style><div class="pane-cell-edit-basic-before" style="border:1px solid #ccc;border-radius:6px;padding:14px;max-height:480px;overflow:auto;background:#fff;color:#111"><!--corpus stress="classed table -> native editable table" editable=true editTarget="Pros" neighbor="Cons"-->
+
+<article><h2>Comparison</h2><table class="cmp"><thead><tr><th>Pros</th><th>Cons</th></tr></thead><tbody><tr><td>fast</td><td>cost</td></tr></tbody></table></article>
+
+</div></div><div style="flex:1;min-width:0"><h4>after</h4><style>.pane-cell-edit-basic-after .cmp th{background:#eee}.pane-cell-edit-basic-after .cmp td{border:1px solid #ccc;padding:6px}</style><div class="pane-cell-edit-basic-after" style="border:1px solid #ccc;border-radius:6px;padding:14px;max-height:480px;overflow:auto;background:#fff;color:#111">
+
+<article><h2>Comparison</h2><table class="cmp"><tbody><tr><th>Pros</th><th>Cons</th></tr><tr><td>fast</td><td>licence cost</td></tr></tbody></table></article>
+
+</div></div></div></section>
+<section style="margin:28px 0"><h2>table-sort-desc</h2><p><em>Sort the comparison table's body rows by the first column descending.</em> · <code>tests/e2e/corpus/schema/table.html</code></p><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>before</h4><style>.pane-table-sort-desc-before .cmp th{background:#eee}.pane-table-sort-desc-before .cmp td{border:1px solid #ccc;padding:6px}</style><div class="pane-table-sort-desc-before" style="border:1px solid #ccc;border-radius:6px;padding:14px;max-height:480px;overflow:auto;background:#fff;color:#111"><!--corpus stress="classed table -> native editable table" editable=true editTarget="Pros" neighbor="Cons"-->
+
+<article><h2>Comparison</h2><table class="cmp"><thead><tr><th>Pros</th><th>Cons</th></tr></thead><tbody><tr><td>fast</td><td>cost</td></tr></tbody></table></article>
+
+</div></div><div style="flex:1;min-width:0"><h4>after</h4><style>.pane-table-sort-desc-after .cmp th{background:#eee}.pane-table-sort-desc-after .cmp td{border:1px solid #ccc;padding:6px}</style><div class="pane-table-sort-desc-after" style="border:1px solid #ccc;border-radius:6px;padding:14px;max-height:480px;overflow:auto;background:#fff;color:#111">
+
+<article><h2>Comparison</h2><table class="cmp"><tbody><tr><th>Pros</th><th>Cons</th></tr><tr><td>fast</td><td>cost</td></tr></tbody></table></article>
+
+</div></div></div></section></body></html>

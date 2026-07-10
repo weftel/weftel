@@ -11,6 +11,7 @@ import { readFileSync, appendFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { execSync } from "node:child_process";
 import { prepareDoc, serializeDoc, htmlToDoc, docToBody } from "../../client/engine";
+import { scopeCss } from "../../client/lib";
 import { frag } from "../engine-io";
 import { checkRoundtrip } from "../checks/roundtrip";
 import { checkValidity } from "../checks/validity";
@@ -97,9 +98,18 @@ if (reviewN && rendered.length) {
   // deterministic "random" sample: seeded by commit hash so a given tree reviews the same set
   const seed = [...commit].reduce((a, c) => a + c.charCodeAt(0), 0);
   const picks = [...rendered].sort((a, b) => ((seed * 31 + a.t.id.length) % 97) - ((seed * 31 + b.t.id.length) % 97)).slice(0, reviewN);
-  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
-  const cell = (label: string, html: string) => `<div style="flex:1;min-width:0"><h4>${label}</h4><iframe srcdoc="${esc(html)}" style="width:100%;height:420px;border:1px solid #ccc;border-radius:6px;background:#fff"></iframe></div>`;
-  const sections = picks.map(({ t, before, saved }) => `<section style="margin:28px 0"><h2>${t.id}</h2><p><em>${t.instruction}</em> · <code>${t.source}</code></p><div style="display:flex;gap:12px">${cell("before", before)}${cell("after", saved)}</div></section>`).join("\n");
+  // Panes are SCOPED DIVS, not iframes: weftel's live render strips script/iframe/object/
+  // embed (stripActive — own-files security model), so an iframe-based sheet reads as empty
+  // panes in the app. Each pane inlines the doc's body with its styles rewritten to the
+  // pane's class via the app's own scopeCss — legible in weftel AND a raw browser.
+  const cell = (taskId: string, label: string, html: string) => {
+    const t = document.createElement("template"); t.innerHTML = html;
+    const styles = Array.from(t.content.querySelectorAll("style")).map((s) => s.textContent || "").join("\n");
+    t.content.querySelectorAll("style,script,title,meta,link").forEach((e) => e.remove());
+    const cls = `pane-${taskId}-${label}`;
+    return `<div style="flex:1;min-width:0"><h4>${label}</h4><style>${scopeCss(styles, "." + cls)}</style><div class="${cls}" style="border:1px solid #ccc;border-radius:6px;padding:14px;max-height:480px;overflow:auto;background:#fff;color:#111">${t.innerHTML}</div></div>`;
+  };
+  const sections = picks.map(({ t, before, saved }) => `<section style="margin:28px 0"><h2>${t.id}</h2><p><em>${t.instruction}</em> · <code>${t.source}</code></p><div style="display:flex;gap:12px">${cell(t.id, "before", before)}${cell(t.id, "after", saved)}</div></section>`).join("\n");
   writeFileSync(join(REPO, "verifier/golden/review.html"), `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Golden review sheet</title></head><body style="font:15px/1.5 sans-serif;max-width:1100px;margin:2rem auto"><h1>Golden task review — ${commit}</h1>${sections}</body></html>`);
   console.log(`review sheet: verifier/golden/review.html (${picks.length} tasks)`);
 }

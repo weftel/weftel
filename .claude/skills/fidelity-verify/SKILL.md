@@ -80,5 +80,10 @@ diagnostic. The log is history; GOTCHAS is scar tissue.
 - **Corpus directive comments poison hand-rolled regex normalizers** (`->` inside attrs,
   literal `<style>` in the stress string). Always strip comments FIRST — copy
   corpus.spec.ts `visibleText` verbatim, don't re-derive it.
+- **Human-facing artifacts meant to be read IN WEFTEL must not rely on iframes** (or
+  script/object/embed): `stripActive` removes them from the live render with no
+  placeholder (#94), so an iframe-built page reads as empty panes in the app. Embed
+  content as scoped divs via `scopeCss` instead — see the review-sheet generator in
+  `verifier/golden/run.ts`.
 - **#83 xfail inventory lives in `verifier/expectations.ts`**, one explicit pin per
   fixture — never glob, never annotate fixtures themselves.
