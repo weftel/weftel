@@ -116,7 +116,13 @@ if (reviewN && rendered.length) {
     const styles = Array.from(t.content.querySelectorAll("style")).map((s) => s.textContent || "").join("\n");
     t.content.querySelectorAll("style,script,title,meta,link").forEach((e) => e.remove());
     const cls = `pane-${taskId}-${label}`;
-    return `<div style="flex:1;min-width:0"><h4>${label}</h4><style>${scopeCss(styles, "." + cls)}</style><div class="${cls}" style="border:1px solid #ccc;border-radius:6px;padding:14px;max-height:480px;overflow:auto;background:#fff;color:#111">${t.innerHTML}</div></div>`;
+    // Pane reset BEFORE the doc's own styles: panes render against browser defaults
+    // regardless of the app's dark canvas (#96 — the app fills undeclared colors from its
+    // dark theme, garbling light-styled tables). No !important: the reset only needs to
+    // beat the app's theme defaults (it does — the app double-scopes pane rules under
+    // .note-scope, and later-in-sheet doc styles still win over the reset by order).
+    const reset = `.${cls}{background:#fff}.${cls} :is(p,h1,h2,h3,h4,li,td,th,span,div,strong,em,code){color:#111}`;
+    return `<div style="flex:1;min-width:0"><h4>${label}</h4><style>${reset}\n${scopeCss(styles, "." + cls)}</style><div class="${cls}" style="border:1px solid #ccc;border-radius:6px;padding:14px;max-height:480px;overflow:auto;background:#fff;color:#111">${t.innerHTML}</div></div>`;
   };
   const sections = picks.map(({ t, before, saved }) => `<section style="margin:28px 0"><h2>${t.id}</h2><p><em>${t.instruction}</em> · <code>${t.source}</code></p><div style="display:flex;gap:12px">${cell(t.id, "before", before)}${cell(t.id, "after", saved)}</div></section>`).join("\n");
   writeFileSync(join(REPO, "verifier/golden/review.html"), `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Golden review sheet</title></head><body style="font:15px/1.5 sans-serif;max-width:1100px;margin:2rem auto"><h1>Golden task review — ${commit}</h1>${sections}</body></html>`);
