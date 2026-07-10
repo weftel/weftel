@@ -128,7 +128,12 @@ if (reviewN && rendered.length) {
     // order and self-themed docs render as themselves. Table chrome defaults included:
     // in-app, classed tables lose their class in the live DOM (#97 — resizable TableView
     // rebuilds the element), so class-scoped table rules die without a fallback.
-    const reset = `.${cls}{background:#fff;color:#111}.${cls} :is(p,h1,h2,h3,h4,li,td,th,span,div,strong,em,code){color:#111}.${cls} th{background:#f2f4f8}.${cls} :is(th,td){border:1px solid #c8cdd6}`;
+    // Descendant color is `inherit`, NOT a literal: a literal direct rule defeats the
+    // doc's INHERITED colors (adamw's body-level light text, .card li's light items) —
+    // direct always beats inheritance. `inherit` still overrides the app's dark-theme
+    // element rules while following whatever chain the doc set up; the doc's own direct
+    // rules (scoped, later) beat it by order.
+    const reset = `.${cls}{background:#fff;color:#111}.${cls} :is(p,h1,h2,h3,h4,li,td,th,span,div,strong,em,code){color:inherit}.${cls} th{background:#f2f4f8}.${cls} :is(th,td){border:1px solid #c8cdd6}`;
     return `<div style="flex:1;min-width:0"><h4>${label}</h4><style>${reset}\n${scopeCss(styles, "." + cls)}</style><div class="${cls}" style="border:1px solid #ccc;border-radius:6px;padding:14px;max-height:480px;overflow:auto">${t.innerHTML}</div></div>`;
   };
   // instructions are prose that may mention literal tags ("the <head> must not change") —
