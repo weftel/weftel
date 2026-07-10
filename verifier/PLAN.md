@@ -88,6 +88,14 @@ Runner: prepareDoc → htmlToDoc → apply op on headless `EditorState` → docT
 - Verifier correctness: unit tests for contrast math (known WCAG vectors), ids diffing, xfail/xpass accounting; Gate B parity spike against Playwright-captured saves.
 - Phase gate: `bun verifier/cli.ts` exit 0 with committed baseline; `bun verifier/golden/run.ts` exit 0, deterministic across two runs.
 
+## Gate-F retro addendum (2026-07-10)
+
+Ben's calibration pass caught 5 things; 4 are automatable and should shrink the human loop in Phase 2+:
+1. **Visual judge pass** (would have caught the item-outside-list bug AND the iframe-blank-panes bug): headless Chromium screenshots each golden before/after in BOTH renderers — the running app and a raw browser — and a multimodal judge grades "did the render change match the instruction; do the two renderers agree?" Non-gating until it re-detects today's two known findings, then promoted.
+2. **Task-power critic** (would have caught the 1-row sort): an agent pass asking per task "can this op's expectations pass without the claimed behavior working?"
+3. **Portfolio critic** (would have caught the small-edit skew): checks the task set spans the routing tiers (native op / local model / full agent).
+4. What stays human: product calls (e.g. killing the clock, #95) and arbitrating judge disagreements.
+
 ## Out of scope (next plan-mode sessions per playbook)
 
 - **Phase 2 tracer bullet:** `setText` end-to-end (MCP → validate → verify → structural diff → gate → surgical save) + the id-minting scheme the baseline red inventory motivates.
