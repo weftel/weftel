@@ -85,5 +85,10 @@ diagnostic. The log is history; GOTCHAS is scar tissue.
   placeholder (#94), so an iframe-built page reads as empty panes in the app. Embed
   content as scoped divs via `scopeCss` instead — see the review-sheet generator in
   `verifier/golden/run.ts`.
+- **Style-attr shorthands longhand-expand through the headless serialize path** (happy-dom
+  CSSOM: `border-top:4px solid X` → three longhand decls; flex → flex-grow/shrink/basis).
+  Never assert on shorthand strings in saved bytes — assert on stable VALUES (`#c9302c`).
+  Also a suspected contributor to the #93 first-save-normalization class on inline-styled
+  docs (T1 parses the authored string, T2 parses the expansion).
 - **#83 xfail inventory lives in `verifier/expectations.ts`**, one explicit pin per
   fixture — never glob, never annotate fixtures themselves.

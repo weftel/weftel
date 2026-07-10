@@ -7,11 +7,11 @@ const C = "tests/e2e/corpus";
 const ID_DROP = "#83: engine drops id on modeled nodes";
 
 export const TASKS: GoldenTask[] = [
-  { id: "cell-edit-basic", title: "rewrite one table cell", source: `${C}/schema/table.html`,
+  { id: "cell-edit-basic", tier: "assist", title: "rewrite one table cell", source: `${C}/schema/table.html`,
     instruction: "In the comparison table, change the Cons cell 'cost' to 'licence cost'.",
     op: { kind: "replaceText", find: "cost", replace: "licence cost" },
     expect: [{ kind: "savedContains", text: "licence cost" }, { kind: "tableDims", rows: 2, cols: 2 }, { kind: "savedContains", text: "fast" }] },
-  { id: "cell-edit-numeric", title: "change a numeric cell", source: `${C}/identity/ids-mixed.html`,
+  { id: "cell-edit-numeric", tier: "assist", title: "change a numeric cell", source: `${C}/identity/ids-mixed.html`,
     instruction: "Update the eu-west p99 from 184 to 121.",
     op: { kind: "replaceText", find: "184", replace: "121" },
     expect: [{ kind: "savedContains", text: "121" }, { kind: "savedNotContains", text: "184" }, { kind: "savedContains", text: "eu-west" }],
@@ -43,22 +43,22 @@ export const TASKS: GoldenTask[] = [
     op: { kind: "replaceText", find: "backlog above normal", replace: "backlog clearing" },
     expect: [{ kind: "savedContains", text: "backlog clearing" }, { kind: "countNodes", type: "decoSpan", equals: 3 }],
     expectFail: { checks: ["ids"], reason: ID_DROP, issue: "#83" } },
-  { id: "block-insert-para", title: "insert a paragraph after a heading", source: `${C}/identity/anchors-toc.html`,
+  { id: "block-insert-para", tier: "assist", title: "insert a paragraph after a heading", source: `${C}/identity/anchors-toc.html`,
     instruction: "Add a one-line summary sentence right after the Results heading.",
     op: { kind: "insertBlock", after: { type: "heading", textContains: "Results" }, html: "<p>Net: a quiet but solid quarter.</p>" },
     expect: [{ kind: "savedContains", text: "quiet but solid quarter" }, { kind: "savedContains", text: "Gross margin" }],
     expectFail: { checks: ["ids"], reason: ID_DROP, issue: "#83" } },
-  { id: "block-delete-section", title: "delete one section body", source: `${C}/identity/anchors-toc.html`,
+  { id: "block-delete-section", tier: "assist", title: "delete one section body", source: `${C}/identity/anchors-toc.html`,
     instruction: "Remove the Appendix body paragraph (keep the heading).",
     op: { kind: "deleteBlock", match: { type: "paragraph", textContains: "data room" } },
     expect: [{ kind: "savedNotContains", text: "data room" }, { kind: "savedContains", text: "Appendix" }],
     expectFail: { checks: ["ids"], reason: ID_DROP, issue: "#83" } },
-  { id: "block-move-up", title: "move a block above its predecessor", source: `${C}/identity/deco-dots.html`,
+  { id: "block-move-up", tier: "assist", title: "move a block above its predecessor", source: `${C}/identity/deco-dots.html`,
     instruction: "Move the Batch status line above the Queue line.",
     op: { kind: "moveBlock", match: { type: "paragraph", textContains: "Batch" }, to: "before", anchor: { type: "paragraph", textContains: "Queue" } },
     expect: [{ kind: "savedContains", text: "Batch" }, { kind: "savedContains", text: "Queue" }],
     expectFail: { checks: ["ids"], reason: ID_DROP, issue: "#83" } },
-  { id: "multi-block-restructure", title: "retitle + edit two spots", source: `${C}/identity/ids-mixed.html`,
+  { id: "multi-block-restructure", tier: "assist", title: "retitle + edit two spots", source: `${C}/identity/ids-mixed.html`,
     instruction: "Retitle 'Service metrics' to 'Reliability metrics' and note the review is closed.",
     op: { kind: "sequence", ops: [
       { kind: "replaceText", find: "Service metrics", replace: "Reliability metrics" },
@@ -66,23 +66,23 @@ export const TASKS: GoldenTask[] = [
     ] },
     expect: [{ kind: "savedContains", text: "Reliability metrics" }, { kind: "savedContains", text: "closed incident review" }],
     expectFail: { checks: ["ids"], reason: ID_DROP, issue: "#83" } },
-  { id: "table-sort-desc", title: "sort a real multi-row table", source: "verifier/golden/fixtures/roster-table.html",
+  { id: "table-sort-desc", tier: "assist", title: "sort a real multi-row table", source: "verifier/golden/fixtures/roster-table.html",
     instruction: "Sort the latency roster by p99 descending, slowest region first.",
     op: { kind: "sortTable", match: { type: "table" }, column: 1, order: "desc", numeric: true },
     expect: [{ kind: "columnOrder", match: { type: "table" }, column: 1, values: ["301", "184", "121", "92"] },
              { kind: "columnOrder", match: { type: "table" }, column: 0, values: ["ap-south", "eu-west", "us-west", "us-east"] },
              { kind: "tableDims", rows: 5, cols: 2 }] },
-  { id: "list-task-add", title: "append a real item INSIDE a list", source: `${C}/schema/lists.html`,
+  { id: "list-task-add", tier: "assist", title: "append a real item INSIDE a list", source: `${C}/schema/lists.html`,
     instruction: "Add 'ship the retro notes' to the end of the first list.",
     // gate-F review caught the original op inserting a paragraph AFTER the list —
     // appendItem lands a real <li> inside it, and the expectations now check structure.
     op: { kind: "appendItem", list: { type: "bulletList" }, text: "ship the retro notes" },
     expect: [{ kind: "nodeText", match: { type: "listItem", index: 3 }, equals: "ship the retro notes" }, { kind: "countNodes", type: "listItem", equals: 4 }] },
-  { id: "callout-kind-change", title: "flip a callout info→warn", source: "verifier/golden/fixtures/callout-clock.html",
+  { id: "callout-kind-change", tier: "assist", title: "flip a callout info→warn", source: "verifier/golden/fixtures/callout-clock.html",
     instruction: "Turn the deploy-freeze callout into a warning.",
     op: { kind: "setNodeAttr", match: { type: "callout" }, attrs: { kind: "warn" } },
     expect: [{ kind: "nodeAttr", match: { type: "callout" }, attr: "kind", equals: "warn" }, { kind: "savedContains", text: 'data-kind="warn"' }, { kind: "savedContains", text: "Deploy freeze" }] },
-  { id: "clock-tz-edit", title: "change the clock timezone", source: "verifier/golden/fixtures/callout-clock.html",
+  { id: "clock-tz-edit", tier: "assist", title: "change the clock timezone", source: "verifier/golden/fixtures/callout-clock.html",
     instruction: "Switch the office clock to New York time.",
     op: { kind: "setNodeAttr", match: { type: "clockBlock" }, attrs: { tz: "America/New_York" } },
     expect: [{ kind: "savedContains", text: 'data-tz="America/New_York"' }] },
@@ -100,7 +100,7 @@ export const TASKS: GoldenTask[] = [
     op: { kind: "replaceText", find: "held steady", replace: "held firm" },
     expect: [{ kind: "savedContains", text: "held firm" }],
     expectFail: { checks: ["ids"], reason: ID_DROP + " — sec ids + TOC anchors lost", issue: "#83" } },
-  { id: "id-delete-one-keep-rest", title: "delete one identified section", source: `${C}/identity/anchors-toc.html`,
+  { id: "id-delete-one-keep-rest", tier: "assist", title: "delete one identified section", source: `${C}/identity/anchors-toc.html`,
     instruction: "Delete the Appendix section heading entirely.",
     op: { kind: "deleteBlock", match: { type: "heading", textContains: "Appendix" } },
     deletes: ["sec-3"],
@@ -117,7 +117,7 @@ export const TASKS: GoldenTask[] = [
 
   // ---- representation-scale tasks (gate-F feedback: the set skewed small; these change
   // how content is REPRESENTED, the tier that routes to the full agent loop) ----
-  { id: "table-to-list", title: "representation change: table → bullet list", source: "verifier/golden/fixtures/roster-table.html",
+  { id: "table-to-list", tier: "delegate", title: "representation change: table → bullet list", source: "verifier/golden/fixtures/roster-table.html",
     instruction: "Replace the latency table with a bullet list, one 'region — p99 ms' line per row.",
     op: { kind: "sequence", ops: [
       { kind: "insertBlock", after: { type: "table" }, html: "<ul><li>eu-west — 184 ms</li><li>us-east — 92 ms</li><li>ap-south — 301 ms</li><li>us-west — 121 ms</li></ul>" },
@@ -125,7 +125,7 @@ export const TASKS: GoldenTask[] = [
     ] },
     expect: [{ kind: "countNodes", type: "table", equals: 0 }, { kind: "countNodes", type: "listItem", equals: 4 },
              { kind: "savedContains", text: "ap-south — 301 ms" }, { kind: "savedNotContains", text: "<table" }] },
-  { id: "prose-to-tasklist", title: "representation change: status paragraphs → checklist", source: `${C}/identity/deco-dots.html`,
+  { id: "prose-to-tasklist", tier: "delegate", title: "representation change: status paragraphs → checklist", source: `${C}/identity/deco-dots.html`,
     instruction: "Turn the three status lines into a checklist (API done, the other two unchecked).",
     op: { kind: "sequence", ops: [
       { kind: "insertBlock", after: { type: "paragraph", textContains: "Batch" }, html: '<ul class="contains-task-list" data-type="taskList"><li data-type="taskItem" data-checked="true">API green, deploys flowing</li><li data-type="taskItem" data-checked="false">Queue backlog to drain</li><li data-type="taskItem" data-checked="false">Batch storage migration</li></ul>' },
@@ -137,7 +137,23 @@ export const TASKS: GoldenTask[] = [
     expect: [{ kind: "countNodes", type: "taskItem", equals: 3 }, { kind: "savedContains", text: "storage migration" },
              { kind: "countNodes", type: "decoSpan", equals: 0 }],
     expectFail: { checks: ["ids"], reason: ID_DROP + " — board-head id (not op-deleted) still drops", issue: "#83" } },
-  { id: "card-restyle", title: "re-theme a styled card (multi-property, contrast-gated)", source: `${C}/styling-source/inline-only.html`,
+  { id: "table-to-statcards", tier: "delegate", title: "representation change: table → designed stat-card grid (HTML-expressive)", source: "verifier/golden/fixtures/roster-table.html",
+    instruction: "Redesign the latency roster as a stat-card grid — one card per region, the p99 as the big number, a health-colored accent bar (green fast, amber warm, red slow), fastest first.",
+    op: { kind: "sequence", ops: [
+      { kind: "insertBlock", after: { type: "table" }, html: '<div class="lat-grid" style="display:flex;gap:12px;flex-wrap:wrap">'
+        + '<div class="lat-card" style="flex:1;min-width:130px;background:#f6f8fb;border-radius:12px;padding:14px;border-top:4px solid #1a9c4b"><div style="font-size:26px;font-weight:700;color:#0f2e1c">92<span style="font-size:12px;color:#5a6572"> ms</span></div><div style="color:#3c4654">us-east</div></div>'
+        + '<div class="lat-card" style="flex:1;min-width:130px;background:#f6f8fb;border-radius:12px;padding:14px;border-top:4px solid #1a9c4b"><div style="font-size:26px;font-weight:700;color:#0f2e1c">121<span style="font-size:12px;color:#5a6572"> ms</span></div><div style="color:#3c4654">us-west</div></div>'
+        + '<div class="lat-card" style="flex:1;min-width:130px;background:#f6f8fb;border-radius:12px;padding:14px;border-top:4px solid #b45309"><div style="font-size:26px;font-weight:700;color:#0f2e1c">184<span style="font-size:12px;color:#5a6572"> ms</span></div><div style="color:#3c4654">eu-west</div></div>'
+        + '<div class="lat-card" style="flex:1;min-width:130px;background:#f6f8fb;border-radius:12px;padding:14px;border-top:4px solid #c9302c"><div style="font-size:26px;font-weight:700;color:#0f2e1c">301<span style="font-size:12px;color:#5a6572"> ms</span></div><div style="color:#3c4654">ap-south</div></div>'
+        + '</div>' },
+      { kind: "deleteBlock", match: { type: "table" } },
+    ] },
+    contrastGate: true,
+    expect: [{ kind: "countNodes", type: "table", equals: 0 }, { kind: "savedContains", text: "lat-grid" },
+             { kind: "countNodes", type: "styledBox", equals: 5 },
+             { kind: "savedContains", text: "#c9302c" },  // value not shorthand: the serializer longhand-expands style attrs
+             { kind: "savedContains", text: "ap-south" }, { kind: "savedContains", text: "us-east" }] },
+  { id: "card-restyle", tier: "assist", title: "re-theme a styled card (multi-property, contrast-gated)", source: `${C}/styling-source/inline-only.html`,
     instruction: "Re-theme the Revenue card from purple to a light indigo panel with dark readable text.",
     op: { kind: "setNodeAttr", match: { type: "styledBox", textContains: "Revenue" }, attrs: { style: "flex:1;background:#eef2ff;color:#111827;border-radius:12px;padding:18px" } },
     contrastGate: true,

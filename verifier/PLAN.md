@@ -91,7 +91,7 @@ Runner: prepareDoc → htmlToDoc → apply op on headless `EditorState` → docT
 ## Gate-F retro addendum (2026-07-10)
 
 Ben's calibration pass caught 5 things; 4 are automatable and should shrink the human loop in Phase 2+:
-1. **Visual judge pass** (would have caught the item-outside-list bug AND the iframe-blank-panes bug): headless Chromium screenshots each golden before/after in BOTH renderers — the running app and a raw browser — and a multimodal judge grades "did the render change match the instruction; do the two renderers agree?" Non-gating until it re-detects today's two known findings, then promoted.
+1. **Visual judge pass** (would have caught the item-outside-list bug AND the iframe-blank-panes bug): headless Chromium screenshots each golden before/after in BOTH renderers — the running app and a raw browser — and a multimodal judge grades "did the render change match the instruction; do the two renderers agree?" Non-gating until it re-detects today's two known findings, then promoted. Must render BOTH color schemes — the dark-mode-only #97 catch proved a light-only judge has blind spots.
 2. **Task-power critic** (would have caught the 1-row sort): an agent pass asking per task "can this op's expectations pass without the claimed behavior working?"
 3. **Portfolio critic** (would have caught the small-edit skew): checks the task set spans the routing tiers (native op / local model / full agent).
 4. What stays human: product calls (e.g. killing the clock, #95) and arbitrating judge disagreements.

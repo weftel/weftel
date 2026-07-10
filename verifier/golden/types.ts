@@ -32,9 +32,19 @@ export type Expectation =
   | { kind: "byteIdenticalRegion"; selector: string }   // e.g. frozen rich-block subtree, script
   | { kind: "markPreserved"; find: string; mark: string };
 
+// Task tiers — the set serves two masters and the tier makes each task's master explicit:
+//   substrate — corruption-class regression probes dressed as asks (nobody would delegate
+//               "bold this word"; the task exists because marks-across-nested-spans is
+//               where the engine historically corrupts). The safety floor.
+//   assist    — small real asks a user might hand off mid-edit (sort this, re-theme this).
+//   delegate  — multi-spot / representation-scale asks worth handing to the full agent
+//               loop; the tier that differentiates D1/D4 tournament variants.
+export type TaskTier = "substrate" | "assist" | "delegate";
+
 export interface GoldenTask {
   id: string;
   title: string;
+  tier?: TaskTier;                // default: substrate
   source: string;                 // path relative to repo root
   instruction: string;            // the human co-authoring ask
   op: Op;
