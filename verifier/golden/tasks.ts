@@ -1,10 +1,9 @@
 // The golden co-authoring task set (~20 tasks; see verifier/PLAN.md §Step 3). Instructions
-// double as the phase-2 AI prompts; ops are the deterministic stand-in. xfail pins on the
-// #83 id class mirror verifier/expectations.ts.
+// double as the phase-2 AI prompts; ops are the deterministic stand-in.
+// (#83 ids expectFail pins removed 2026-07-10 — preservation landed, all flipped xpass.)
 import type { GoldenTask } from "./types";
 
 const C = "tests/e2e/corpus";
-const ID_DROP = "#83: engine drops id on modeled nodes";
 
 export const TASKS: GoldenTask[] = [
   { id: "cell-edit-basic", tier: "assist", title: "rewrite one table cell", source: `${C}/schema/table.html`,
@@ -14,8 +13,7 @@ export const TASKS: GoldenTask[] = [
   { id: "cell-edit-numeric", tier: "assist", title: "change a numeric cell", source: `${C}/identity/ids-mixed.html`,
     instruction: "Update the eu-west p99 from 184 to 121.",
     op: { kind: "replaceText", find: "184", replace: "121" },
-    expect: [{ kind: "savedContains", text: "121" }, { kind: "savedNotContains", text: "184" }, { kind: "savedContains", text: "eu-west" }],
-    expectFail: { checks: ["ids"], reason: ID_DROP, issue: "#83" } },
+    expect: [{ kind: "savedContains", text: "121" }, { kind: "savedNotContains", text: "184" }, { kind: "savedContains", text: "eu-west" }] },
   { id: "prose-bold-range", title: "bold a phrase", source: `${C}/schema/marks-soup.html`,
     instruction: "Bold the word 'loose' in the badge line.",
     op: { kind: "wrapMark", find: "loose", mark: "bold" },
@@ -34,8 +32,7 @@ export const TASKS: GoldenTask[] = [
     // text — a real change no human could verify); #1d4ed8 on white ≈ 6.4:1, passes AA
     op: { kind: "wrapMark", find: "drained hourly", mark: "textStyle", attrs: { color: "#1d4ed8" } },
     contrastGate: true,
-    expect: [{ kind: "savedContains", text: "#1d4ed8" }],
-    expectFail: { checks: ["ids"], reason: ID_DROP, issue: "#83" } },
+    expect: [{ kind: "savedContains", text: "#1d4ed8" }] },
   { id: "styled-span-heavy-edit", title: "edit text beside a styled span", source: `${C}/schema/marks-soup.html`,
     instruction: "Change 'line' to 'row' in the badge line without disturbing the tag span.",
     op: { kind: "replaceText", find: " line.", replace: " row." },
@@ -43,31 +40,26 @@ export const TASKS: GoldenTask[] = [
   { id: "deco-span-survival", title: "edit beside decorative dots", source: `${C}/identity/deco-dots.html`,
     instruction: "Change 'backlog above normal' to 'backlog clearing'.",
     op: { kind: "replaceText", find: "backlog above normal", replace: "backlog clearing" },
-    expect: [{ kind: "savedContains", text: "backlog clearing" }, { kind: "countNodes", type: "decoSpan", equals: 3 }],
-    expectFail: { checks: ["ids"], reason: ID_DROP, issue: "#83" } },
+    expect: [{ kind: "savedContains", text: "backlog clearing" }, { kind: "countNodes", type: "decoSpan", equals: 3 }] },
   { id: "block-insert-para", tier: "assist", title: "insert a paragraph after a heading", source: `${C}/identity/anchors-toc.html`,
     instruction: "Add a one-line summary sentence right after the Results heading.",
     op: { kind: "insertBlock", after: { type: "heading", textContains: "Results" }, html: "<p>Net: a quiet but solid quarter.</p>" },
-    expect: [{ kind: "savedContains", text: "quiet but solid quarter" }, { kind: "savedContains", text: "Gross margin" }],
-    expectFail: { checks: ["ids"], reason: ID_DROP, issue: "#83" } },
+    expect: [{ kind: "savedContains", text: "quiet but solid quarter" }, { kind: "savedContains", text: "Gross margin" }] },
   { id: "block-delete-section", tier: "assist", title: "delete one section body", source: `${C}/identity/anchors-toc.html`,
     instruction: "Remove the Appendix body paragraph (keep the heading).",
     op: { kind: "deleteBlock", match: { type: "paragraph", textContains: "data room" } },
-    expect: [{ kind: "savedNotContains", text: "data room" }, { kind: "savedContains", text: "Appendix" }],
-    expectFail: { checks: ["ids"], reason: ID_DROP, issue: "#83" } },
+    expect: [{ kind: "savedNotContains", text: "data room" }, { kind: "savedContains", text: "Appendix" }] },
   { id: "block-move-up", tier: "assist", title: "move a block above its predecessor", source: `${C}/identity/deco-dots.html`,
     instruction: "Move the Batch status line above the Queue line.",
     op: { kind: "moveBlock", match: { type: "paragraph", textContains: "Batch" }, to: "before", anchor: { type: "paragraph", textContains: "Queue" } },
-    expect: [{ kind: "savedContains", text: "Batch" }, { kind: "savedContains", text: "Queue" }],
-    expectFail: { checks: ["ids"], reason: ID_DROP, issue: "#83" } },
+    expect: [{ kind: "savedContains", text: "Batch" }, { kind: "savedContains", text: "Queue" }] },
   { id: "multi-block-restructure", tier: "assist", title: "retitle + edit two spots", source: `${C}/identity/ids-mixed.html`,
     instruction: "Retitle 'Service metrics' to 'Reliability metrics' and note the review is closed.",
     op: { kind: "sequence", ops: [
       { kind: "replaceText", find: "Service metrics", replace: "Reliability metrics" },
       { kind: "replaceText", find: "incident review", replace: "closed incident review" },
     ] },
-    expect: [{ kind: "savedContains", text: "Reliability metrics" }, { kind: "savedContains", text: "closed incident review" }],
-    expectFail: { checks: ["ids"], reason: ID_DROP, issue: "#83" } },
+    expect: [{ kind: "savedContains", text: "Reliability metrics" }, { kind: "savedContains", text: "closed incident review" }] },
   { id: "table-sort-desc", tier: "assist", title: "sort a real multi-row table", source: "verifier/golden/fixtures/roster-table.html",
     instruction: "Sort the latency roster by p99 descending, slowest region first.",
     op: { kind: "sortTable", match: { type: "table" }, column: 1, order: "desc", numeric: true },
@@ -80,19 +72,14 @@ export const TASKS: GoldenTask[] = [
     // appendItem lands a real <li> inside it, and the expectations now check structure.
     op: { kind: "appendItem", list: { type: "bulletList" }, text: "ship the retro notes" },
     expect: [{ kind: "nodeText", match: { type: "listItem", index: 3 }, equals: "ship the retro notes" }, { kind: "countNodes", type: "listItem", equals: 4 }] },
-  { id: "callout-kind-change", tier: "assist", title: "flip a callout info→warn", source: "verifier/golden/fixtures/callout-clock.html",
+  { id: "callout-kind-change", tier: "assist", title: "flip a callout info→warn", source: "verifier/golden/fixtures/callout.html",
     instruction: "Turn the deploy-freeze callout into a warning.",
     op: { kind: "setNodeAttr", match: { type: "callout" }, attrs: { kind: "warn" } },
     expect: [{ kind: "nodeAttr", match: { type: "callout" }, attr: "kind", equals: "warn" }, { kind: "savedContains", text: 'data-kind="warn"' }, { kind: "savedContains", text: "Deploy freeze" }] },
-  { id: "clock-tz-edit", tier: "assist", title: "change the clock timezone", source: "verifier/golden/fixtures/callout-clock.html",
-    instruction: "Switch the office clock to New York time.",
-    op: { kind: "setNodeAttr", match: { type: "clockBlock" }, attrs: { tz: "America/New_York" } },
-    expect: [{ kind: "savedContains", text: 'data-tz="America/New_York"' }] },
   { id: "frozen-block-untouched", title: "edit prose beside a frozen svg", source: `${C}/identity/ids-mixed.html`,
     instruction: "Change 'every region' to 'each region'; leave the sparkline alone.",
     op: { kind: "replaceText", find: "every region", replace: "each region" },
-    expect: [{ kind: "savedContains", text: "each region" }, { kind: "byteIdenticalRegion", selector: "svg" }],
-    expectFail: { checks: ["ids"], reason: ID_DROP, issue: "#83" } },
+    expect: [{ kind: "savedContains", text: "each region" }, { kind: "byteIdenticalRegion", selector: "svg" }] },
   { id: "script-preservation-edit", title: "edit prose in a script-bearing doc", source: `${C}/security/script.html`,
     instruction: "Change 'shows content' to 'demonstrates content'; the doc's own script must survive byte-identical (own-files model).",
     op: { kind: "replaceText", find: "shows content", replace: "demonstrates content" },
@@ -100,18 +87,29 @@ export const TASKS: GoldenTask[] = [
   { id: "id-anchor-critical", title: "edit inside an anchored section", source: `${C}/identity/anchors-toc.html`,
     instruction: "Reword the lead paragraph under Summary.",
     op: { kind: "replaceText", find: "held steady", replace: "held firm" },
-    expect: [{ kind: "savedContains", text: "held firm" }],
-    expectFail: { checks: ["ids"], reason: ID_DROP + " — sec ids + TOC anchors lost", issue: "#83" } },
+    expect: [{ kind: "savedContains", text: "held firm" }] },
+  { id: "settext-by-id", tier: "assist", title: "id-addressed setText — the tracer op's reference semantics", source: `${C}/identity/anchors-toc.html`,
+    instruction: "Retitle the Summary section heading to 'Executive summary'.",
+    op: { kind: "setText", nodeId: "sec-1", text: "Executive summary" },
+    expect: [
+      { kind: "nodeText", match: { type: "heading", textContains: "Executive summary" }, equals: "Executive summary" },
+      { kind: "savedContains", text: 'id="sec-1"' },              // the addressed id persists…
+      { kind: "savedContains", text: 'href="#sec-1"' },           // …and the doc's own TOC anchor still targets it
+      { kind: "savedNotContains", text: ">Summary</h2>" }] },     // (the TOC link text legitimately keeps saying "Summary")
   { id: "id-delete-one-keep-rest", tier: "assist", title: "delete one identified section", source: `${C}/identity/anchors-toc.html`,
     instruction: "Delete the Appendix section heading entirely.",
     op: { kind: "deleteBlock", match: { type: "heading", textContains: "Appendix" } },
     deletes: ["sec-3"],
-    expect: [{ kind: "savedNotContains", text: "Appendix</h2>" }, { kind: "savedContains", text: "Results" }],
-    expectFail: { checks: ["ids"], reason: ID_DROP + " — today siblings drop too, not just the deleted sec-3", issue: "#83" } },
+    expect: [{ kind: "savedNotContains", text: "Appendix</h2>" }, { kind: "savedContains", text: "Results" }] },
   { id: "head-template-integrity", title: "small edit, shell byte-identical", source: `${C}/real-published/adamw.html`,
     instruction: "Fix one word; the <head>, styles and meta must not change.",
     op: { kind: "replaceText", find: "intuition", replace: "core intuition" },
-    expect: [{ kind: "savedContains", text: "core intuition" }, { kind: "byteIdenticalRegion", selector: "head" }] },
+    expect: [{ kind: "savedContains", text: "core intuition" }, { kind: "byteIdenticalRegion", selector: "head" }],
+    // Mirrors the verifier's adamw FIRST_SAVE_NORM pin: happy-dom's serialize path drops
+    // color-mix style attrs (style="" vs absent → T1≠T2 once). Headless-only — browser
+    // truth guarded by tests/e2e/style-shorthand.spec.ts. Surfaced here when the gate-J
+    // flip stopped mergeNestedSpanStyles from accidentally stabilizing the pass.
+    expectFail: { checks: ["roundtrip"], reason: "headless CSSOM drops color-mix style attrs (adamw badge spans); settles by S2", issue: "#102" } },
   { id: "classed-heading-class-survives", title: "element CSS keeps matching after a heading edit", source: `${C}/styling-source/element-selectors.html`,
     instruction: "Retitle 'Section' to 'Overview'; the h2/b element styles must keep applying.",
     op: { kind: "replaceText", find: "Section", replace: "Overview" },
@@ -137,8 +135,7 @@ export const TASKS: GoldenTask[] = [
     ] },
     deletes: ["dot-api", "dot-queue", "dot-batch"],
     expect: [{ kind: "countNodes", type: "taskItem", equals: 3 }, { kind: "savedContains", text: "storage migration" },
-             { kind: "countNodes", type: "decoSpan", equals: 0 }],
-    expectFail: { checks: ["ids"], reason: ID_DROP + " — board-head id (not op-deleted) still drops", issue: "#83" } },
+             { kind: "countNodes", type: "decoSpan", equals: 0 }] },
   { id: "table-to-statcards", tier: "delegate", title: "representation change: table → designed stat-card grid (HTML-expressive)", source: "verifier/golden/fixtures/roster-table.html",
     instruction: "Redesign the latency roster as a stat-card grid — one card per region, the p99 as the big number, a health-colored accent bar (green fast, amber warm, red slow), fastest first.",
     op: { kind: "sequence", ops: [

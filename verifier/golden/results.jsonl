@@ -24,3 +24,335 @@
 {"commit":"dd94486","id":"prose-to-tasklist","ok":true,"failures":[],"xfails":["ids: lost 1 id(s) region=modeled: board-head"]}
 {"commit":"dd94486","id":"table-to-statcards","ok":true,"failures":[],"xfails":[]}
 {"commit":"dd94486","id":"card-restyle","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"cell-edit-basic","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"cell-edit-numeric","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: metrics-head,panel-notes,metrics-table,col-p99,cell-eu"]}
+{"commit":"8e61de4","id":"prose-bold-range","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"prose-rewrite-across-marks","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"prose-edit-classed-heading","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"inline-style-color-change","ok":true,"failures":[],"xfails":["ids: lost 4 id(s) region=modeled: board-head,dot-api,dot-queue,dot-batch"]}
+{"commit":"8e61de4","id":"styled-span-heavy-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"deco-span-survival","ok":true,"failures":[],"xfails":["ids: lost 4 id(s) region=modeled: board-head,dot-api,dot-queue,dot-batch"]}
+{"commit":"8e61de4","id":"block-insert-para","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: top,sec-1,p-lead,sec-2,sec-3 · broken-anchor href=\"#…\" targets: sec-1,sec-2,sec-3,top"]}
+{"commit":"8e61de4","id":"block-delete-section","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: top,sec-1,p-lead,sec-2,sec-3 · broken-anchor href=\"#…\" targets: sec-1,sec-2,sec-3,top"]}
+{"commit":"8e61de4","id":"block-move-up","ok":true,"failures":[],"xfails":["ids: lost 4 id(s) region=modeled: board-head,dot-api,dot-queue,dot-batch"]}
+{"commit":"8e61de4","id":"multi-block-restructure","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: metrics-head,panel-notes,metrics-table,col-p99,cell-eu"]}
+{"commit":"8e61de4","id":"table-sort-desc","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"list-task-add","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"callout-kind-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"clock-tz-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"frozen-block-untouched","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: metrics-head,panel-notes,metrics-table,col-p99,cell-eu"]}
+{"commit":"8e61de4","id":"script-preservation-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"id-anchor-critical","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: top,sec-1,p-lead,sec-2,sec-3 · broken-anchor href=\"#…\" targets: sec-1,sec-2,sec-3,top"]}
+{"commit":"8e61de4","id":"id-delete-one-keep-rest","ok":true,"failures":[],"xfails":["ids: lost 4 id(s) region=modeled: top,sec-1,p-lead,sec-2 · broken-anchor href=\"#…\" targets: sec-1,sec-2,top"]}
+{"commit":"8e61de4","id":"head-template-integrity","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"classed-heading-class-survives","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"table-to-list","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"prose-to-tasklist","ok":true,"failures":[],"xfails":["ids: lost 1 id(s) region=modeled: board-head"]}
+{"commit":"8e61de4","id":"table-to-statcards","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"card-restyle","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"cell-edit-basic","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"cell-edit-numeric","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: metrics-head,panel-notes,metrics-table,col-p99,cell-eu"]}
+{"commit":"8e61de4","id":"prose-bold-range","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"prose-rewrite-across-marks","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"prose-edit-classed-heading","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"inline-style-color-change","ok":true,"failures":[],"xfails":["ids: lost 4 id(s) region=modeled: board-head,dot-api,dot-queue,dot-batch"]}
+{"commit":"8e61de4","id":"styled-span-heavy-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"deco-span-survival","ok":true,"failures":[],"xfails":["ids: lost 4 id(s) region=modeled: board-head,dot-api,dot-queue,dot-batch"]}
+{"commit":"8e61de4","id":"block-insert-para","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: top,sec-1,p-lead,sec-2,sec-3 · broken-anchor href=\"#…\" targets: sec-1,sec-2,sec-3,top"]}
+{"commit":"8e61de4","id":"block-delete-section","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: top,sec-1,p-lead,sec-2,sec-3 · broken-anchor href=\"#…\" targets: sec-1,sec-2,sec-3,top"]}
+{"commit":"8e61de4","id":"block-move-up","ok":true,"failures":[],"xfails":["ids: lost 4 id(s) region=modeled: board-head,dot-api,dot-queue,dot-batch"]}
+{"commit":"8e61de4","id":"multi-block-restructure","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: metrics-head,panel-notes,metrics-table,col-p99,cell-eu"]}
+{"commit":"8e61de4","id":"table-sort-desc","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"list-task-add","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"callout-kind-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"frozen-block-untouched","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: metrics-head,panel-notes,metrics-table,col-p99,cell-eu"]}
+{"commit":"8e61de4","id":"script-preservation-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"id-anchor-critical","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: top,sec-1,p-lead,sec-2,sec-3 · broken-anchor href=\"#…\" targets: sec-1,sec-2,sec-3,top"]}
+{"commit":"8e61de4","id":"id-delete-one-keep-rest","ok":true,"failures":[],"xfails":["ids: lost 4 id(s) region=modeled: top,sec-1,p-lead,sec-2 · broken-anchor href=\"#…\" targets: sec-1,sec-2,top"]}
+{"commit":"8e61de4","id":"head-template-integrity","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"classed-heading-class-survives","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"table-to-list","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"prose-to-tasklist","ok":true,"failures":[],"xfails":["ids: lost 1 id(s) region=modeled: board-head"]}
+{"commit":"8e61de4","id":"table-to-statcards","ok":true,"failures":[],"xfails":[]}
+{"commit":"8e61de4","id":"card-restyle","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"cell-edit-basic","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"cell-edit-numeric","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"prose-bold-range","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"prose-rewrite-across-marks","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"prose-edit-classed-heading","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"inline-style-color-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"styled-span-heavy-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"deco-span-survival","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"block-insert-para","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"block-delete-section","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"block-move-up","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"multi-block-restructure","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"table-sort-desc","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"list-task-add","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"callout-kind-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"frozen-block-untouched","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"script-preservation-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"id-anchor-critical","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"id-delete-one-keep-rest","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"head-template-integrity","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"classed-heading-class-survives","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"table-to-list","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"prose-to-tasklist","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"table-to-statcards","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"card-restyle","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"cell-edit-basic","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"cell-edit-numeric","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"prose-bold-range","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"prose-rewrite-across-marks","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"prose-edit-classed-heading","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"inline-style-color-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"styled-span-heavy-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"deco-span-survival","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"block-insert-para","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"block-delete-section","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"block-move-up","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"multi-block-restructure","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"table-sort-desc","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"list-task-add","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"callout-kind-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"frozen-block-untouched","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"script-preservation-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"id-anchor-critical","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"id-delete-one-keep-rest","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"head-template-integrity","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"classed-heading-class-survives","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"table-to-list","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"prose-to-tasklist","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"table-to-statcards","ok":true,"failures":[],"xfails":[]}
+{"commit":"314a1fe","id":"card-restyle","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"cell-edit-basic","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"cell-edit-numeric","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"prose-bold-range","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"prose-rewrite-across-marks","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"prose-edit-classed-heading","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"inline-style-color-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"styled-span-heavy-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"deco-span-survival","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"block-insert-para","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"block-delete-section","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"block-move-up","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"multi-block-restructure","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"table-sort-desc","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"list-task-add","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"callout-kind-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"frozen-block-untouched","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"script-preservation-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"id-anchor-critical","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"id-delete-one-keep-rest","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"head-template-integrity","ok":false,"failures":["roundtrip: tree changed across save+reparse (T1 ≠ T2 in canonical form)"],"xfails":[]}
+{"commit":"1f76a4e","id":"classed-heading-class-survives","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"table-to-list","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"prose-to-tasklist","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"table-to-statcards","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"card-restyle","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"cell-edit-basic","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"cell-edit-numeric","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"prose-bold-range","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"prose-rewrite-across-marks","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"prose-edit-classed-heading","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"inline-style-color-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"styled-span-heavy-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"deco-span-survival","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"block-insert-para","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"block-delete-section","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"block-move-up","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"multi-block-restructure","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"table-sort-desc","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"list-task-add","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"callout-kind-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"frozen-block-untouched","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"script-preservation-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"id-anchor-critical","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"id-delete-one-keep-rest","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"head-template-integrity","ok":false,"failures":["roundtrip: tree changed across save+reparse (T1 ≠ T2 in canonical form)"],"xfails":[]}
+{"commit":"1f76a4e","id":"classed-heading-class-survives","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"table-to-list","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"prose-to-tasklist","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"table-to-statcards","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"card-restyle","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"cell-edit-basic","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"cell-edit-numeric","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"prose-bold-range","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"prose-rewrite-across-marks","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"prose-edit-classed-heading","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"inline-style-color-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"styled-span-heavy-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"deco-span-survival","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"block-insert-para","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"block-delete-section","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"block-move-up","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"multi-block-restructure","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"table-sort-desc","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"list-task-add","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"callout-kind-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"frozen-block-untouched","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"script-preservation-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"id-anchor-critical","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"id-delete-one-keep-rest","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"head-template-integrity","ok":true,"failures":[],"xfails":["roundtrip: tree changed across save+reparse (T1 ≠ T2 in canonical form)"]}
+{"commit":"1f76a4e","id":"classed-heading-class-survives","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"table-to-list","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"prose-to-tasklist","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"table-to-statcards","ok":true,"failures":[],"xfails":[]}
+{"commit":"1f76a4e","id":"card-restyle","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"cell-edit-basic","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"cell-edit-numeric","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"prose-bold-range","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"prose-rewrite-across-marks","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"prose-edit-classed-heading","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"inline-style-color-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"styled-span-heavy-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"deco-span-survival","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"block-insert-para","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"block-delete-section","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"block-move-up","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"multi-block-restructure","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"table-sort-desc","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"list-task-add","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"callout-kind-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"frozen-block-untouched","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"script-preservation-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"id-anchor-critical","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"settext-by-id","ok":false,"failures":["expect savedNotContains: still contains \">Summary<\""],"xfails":[]}
+{"commit":"56a9e0a","id":"id-delete-one-keep-rest","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"head-template-integrity","ok":true,"failures":[],"xfails":["roundtrip: tree changed across save+reparse (T1 ≠ T2 in canonical form)"]}
+{"commit":"56a9e0a","id":"classed-heading-class-survives","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"table-to-list","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"prose-to-tasklist","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"table-to-statcards","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"card-restyle","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"cell-edit-basic","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"cell-edit-numeric","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"prose-bold-range","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"prose-rewrite-across-marks","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"prose-edit-classed-heading","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"inline-style-color-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"styled-span-heavy-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"deco-span-survival","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"block-insert-para","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"block-delete-section","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"block-move-up","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"multi-block-restructure","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"table-sort-desc","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"list-task-add","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"callout-kind-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"frozen-block-untouched","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"script-preservation-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"id-anchor-critical","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"settext-by-id","ok":false,"failures":["expect savedNotContains: still contains \">Summary<\""],"xfails":[]}
+{"commit":"56a9e0a","id":"id-delete-one-keep-rest","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"head-template-integrity","ok":true,"failures":[],"xfails":["roundtrip: tree changed across save+reparse (T1 ≠ T2 in canonical form)"]}
+{"commit":"56a9e0a","id":"classed-heading-class-survives","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"table-to-list","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"prose-to-tasklist","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"table-to-statcards","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"card-restyle","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"cell-edit-basic","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"cell-edit-numeric","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"prose-bold-range","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"prose-rewrite-across-marks","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"prose-edit-classed-heading","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"inline-style-color-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"styled-span-heavy-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"deco-span-survival","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"block-insert-para","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"block-delete-section","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"block-move-up","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"multi-block-restructure","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"table-sort-desc","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"list-task-add","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"callout-kind-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"frozen-block-untouched","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"script-preservation-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"id-anchor-critical","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"settext-by-id","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"id-delete-one-keep-rest","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"head-template-integrity","ok":true,"failures":[],"xfails":["roundtrip: tree changed across save+reparse (T1 ≠ T2 in canonical form)"]}
+{"commit":"56a9e0a","id":"classed-heading-class-survives","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"table-to-list","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"prose-to-tasklist","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"table-to-statcards","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"card-restyle","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"cell-edit-basic","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"cell-edit-numeric","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"prose-bold-range","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"prose-rewrite-across-marks","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"prose-edit-classed-heading","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"inline-style-color-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"styled-span-heavy-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"deco-span-survival","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"block-insert-para","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"block-delete-section","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"block-move-up","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"multi-block-restructure","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"table-sort-desc","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"list-task-add","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"callout-kind-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"frozen-block-untouched","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"script-preservation-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"id-anchor-critical","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"settext-by-id","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"id-delete-one-keep-rest","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"head-template-integrity","ok":true,"failures":[],"xfails":["roundtrip: tree changed across save+reparse (T1 ≠ T2 in canonical form)"]}
+{"commit":"56a9e0a","id":"classed-heading-class-survives","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"table-to-list","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"prose-to-tasklist","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"table-to-statcards","ok":true,"failures":[],"xfails":[]}
+{"commit":"56a9e0a","id":"card-restyle","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"cell-edit-basic","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"cell-edit-numeric","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"prose-bold-range","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"prose-rewrite-across-marks","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"prose-edit-classed-heading","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"inline-style-color-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"styled-span-heavy-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"deco-span-survival","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"block-insert-para","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"block-delete-section","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"block-move-up","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"multi-block-restructure","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"table-sort-desc","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"list-task-add","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"callout-kind-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"frozen-block-untouched","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"script-preservation-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"id-anchor-critical","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"settext-by-id","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"id-delete-one-keep-rest","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"head-template-integrity","ok":true,"failures":[],"xfails":["roundtrip: tree changed across save+reparse (T1 ≠ T2 in canonical form)"]}
+{"commit":"73f8da3","id":"classed-heading-class-survives","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"table-to-list","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"prose-to-tasklist","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"table-to-statcards","ok":true,"failures":[],"xfails":[]}
+{"commit":"73f8da3","id":"card-restyle","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"cell-edit-basic","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"cell-edit-numeric","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"prose-bold-range","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"prose-rewrite-across-marks","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"prose-edit-classed-heading","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"inline-style-color-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"styled-span-heavy-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"deco-span-survival","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"block-insert-para","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"block-delete-section","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"block-move-up","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"multi-block-restructure","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"table-sort-desc","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"list-task-add","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"callout-kind-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"frozen-block-untouched","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"script-preservation-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"id-anchor-critical","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"settext-by-id","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"id-delete-one-keep-rest","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"head-template-integrity","ok":true,"failures":[],"xfails":["roundtrip: tree changed across save+reparse (T1 ≠ T2 in canonical form)"]}
+{"commit":"29c1b7f","id":"classed-heading-class-survives","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"table-to-list","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"prose-to-tasklist","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"table-to-statcards","ok":true,"failures":[],"xfails":[]}
+{"commit":"29c1b7f","id":"card-restyle","ok":true,"failures":[],"xfails":[]}

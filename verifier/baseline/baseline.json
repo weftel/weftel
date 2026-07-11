@@ -1,7 +1,7 @@
 {
- "when": "2026-07-10T22:11:13.333Z",
- "commit": "c2815d4",
- "files": 35,
+ "when": "2026-07-11T02:56:06.550Z",
+ "commit": "314a1fe",
+ "files": 36,
  "results": [
   {
    "file": "tests/e2e/corpus/control/canary-pure-svg.html",
@@ -38,8 +38,7 @@
   {
    "file": "tests/e2e/corpus/identity/anchors-toc.html",
    "check": "ids",
-   "state": "xfail",
-   "detail": "lost 5 id(s) region=modeled: top,sec-1,p-lead,sec-2,sec-3 · broken-anchor href=\"#…\" targets: sec-1,sec-2,sec-3,top"
+   "state": "pass"
   },
   {
    "file": "tests/e2e/corpus/identity/anchors-toc.html",
@@ -61,8 +60,7 @@
   {
    "file": "tests/e2e/corpus/identity/deco-dots.html",
    "check": "ids",
-   "state": "xfail",
-   "detail": "lost 4 id(s) region=modeled: board-head,dot-api,dot-queue,dot-batch"
+   "state": "pass"
   },
   {
    "file": "tests/e2e/corpus/identity/deco-dots.html",
@@ -84,8 +82,7 @@
   {
    "file": "tests/e2e/corpus/identity/ids-mixed.html",
    "check": "ids",
-   "state": "xfail",
-   "detail": "lost 5 id(s) region=modeled: metrics-head,panel-notes,metrics-table,col-p99,cell-eu"
+   "state": "pass"
   },
   {
    "file": "tests/e2e/corpus/identity/ids-mixed.html",
@@ -140,6 +137,28 @@
    "detail": "2 judged, 0 skipped"
   },
   {
+   "file": "tests/e2e/corpus/provenance/clock-migration.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/provenance/clock-migration.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/provenance/clock-migration.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/provenance/clock-migration.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "5 judged, 0 skipped"
+  },
+  {
    "file": "tests/e2e/corpus/provenance/entity-heavy.html",
    "check": "roundtrip",
    "state": "pass"
@@ -175,8 +194,7 @@
   {
    "file": "tests/e2e/corpus/real-career/decision-thesis.html",
    "check": "ids",
-   "state": "xfail",
-   "detail": "lost 5 id(s) region=modeled: w0v,w1v,w2v,bars,winnerNote"
+   "state": "pass"
   },
   {
    "file": "tests/e2e/corpus/real-career/decision-thesis.html",
@@ -221,8 +239,7 @@
   {
    "file": "tests/e2e/corpus/real-career/saronic-slides.html",
    "check": "ids",
-   "state": "xfail",
-   "detail": "lost 1 id(s) region=modeled: :$p · lost data-*: data-bespoke-marp-osc=page"
+   "state": "pass"
   },
   {
    "file": "tests/e2e/corpus/real-career/saronic-slides.html",
@@ -787,9 +804,9 @@
   }
  ],
  "counts": {
-  "pass": 118,
+  "pass": 127,
   "fail": 9,
-  "xfail": 12,
+  "xfail": 7,
   "xpass": 0,
   "skip": 1,
   "error": 0

@@ -135,16 +135,27 @@ const ItalicTagged = Italic.extend({
 // FULL_PARSE: carry `class` through the round-trip on native nodes + marks ProseMirror would
 // otherwise strip it from, so classed prose (<h3 class>, <li class>, <ul class>, <strong
 // class>) keeps rendering via the scoped doc sheet and saves its classes back verbatim.
+// #83: `id` and author `data-*` ride along on the NODE types — dropping them severed a
+// doc's own wiring (getElementById hooks, #anchor targets, data-sort). NODES ONLY, never
+// marks: ProseMirror splits a marked range at every overlapping-mark boundary, so a mark
+// carrying an id would render it duplicated across the split elements — save-time id
+// duplication is a corruption, not preservation. An id on an inline formatting element
+// (<strong id>) stays out of scope; ids on prose/table/list structure is the real class.
+const PRESERVE_NODE_TYPES = ["paragraph", "heading", "bulletList", "orderedList", "listItem", "blockquote", "codeBlock", "horizontalRule", "table", "tableRow", "tableHeader", "tableCell"];
+const PRESERVE_MARK_TYPES = ["bold", "italic", "code", "strike", "link"];
+// keepOnSplit:false on all three — Enter at the end of <p class="lead" id="intro"> must
+// start a CLEAN paragraph: carrying the class made fresh typing inherit the previous
+// line's look, and a carried id would silently mint a duplicate.
+export const idAttr = () => ({ id: { default: null, keepOnSplit: false, parseHTML: (el: any) => el.getAttribute("id"), renderHTML: (a: any) => (a.id ? { id: a.id } : {}) } });
 const PreserveAttrs = Extension.create({
   name: "preserveClassAttr",
   addGlobalAttributes() {
     if (!FULL_PARSE) return [];
-    return [{
-      types: ["paragraph", "heading", "bulletList", "orderedList", "listItem", "blockquote", "codeBlock", "horizontalRule", "table", "tableRow", "tableHeader", "tableCell", "bold", "italic", "code", "strike", "link"],
-      // keepOnSplit:false — Enter at the end of <p class="lead"> must start a CLEAN
-      // paragraph; carrying the class made fresh typing inherit the previous line's look.
-      attributes: { class: { default: null, keepOnSplit: false, parseHTML: (el: any) => el.getAttribute("class"), renderHTML: (attrs: any) => (attrs.class ? { class: attrs.class } : {}) } },
-    }];
+    const classAttr = { class: { default: null, keepOnSplit: false, parseHTML: (el: any) => el.getAttribute("class"), renderHTML: (attrs: any) => (attrs.class ? { class: attrs.class } : {}) } };
+    return [
+      { types: [...PRESERVE_NODE_TYPES, ...PRESERVE_MARK_TYPES], attributes: classAttr },
+      { types: PRESERVE_NODE_TYPES, attributes: { ...idAttr(), data: { ...dataAttrs().data, keepOnSplit: false } } },
+    ];
   },
 });
 
@@ -169,11 +180,13 @@ const sboxMd = { markdown: { serialize(state: any, node: any) {
 // safe on the live editable surface — and silently dropping them broke script-driven docs on save
 // (F32: the tabs no longer switched because every panel's data-p was gone). The exclusion list is
 // ONLY the editor's own structural <div> markers — those that a *different* node would re-claim on
-// reload (so echoing one back would flip a styled div into a rich/clock/callout block) or
+// reload (so echoing one back would flip a styled div into a rich/callout block) or
 // that we strip ourselves (data-sbox). Generic names a doc legitimately uses as its own hooks
 // (data-type, data-id, data-src, data-state, …) are USER CONTENT and must round-trip — keeping them
-// here was the whole point. (The app's companion-keyed nodes need data-clock/callout to
-// match, so a lone data-kind/data-tz on a styled div is unambiguous user content.)
+// here was the whole point. (The app's companion-keyed callout needs data-callout to
+// match, so a lone data-kind on a styled div is unambiguous user content. data-clock stays
+// excluded post-#95: it's a legacy app marker consumed by the prepareDoc migration, never
+// user content — echoing one back from a styled div would resurrect a removed block.)
 export const APP_DATA_HOOKS = new Set(["data-sbox", "data-rich-block", "data-clock", "data-callout"]);
 const dataAttrs = () => ({
   data: {
@@ -189,17 +202,26 @@ const dataAttrs = () => ({
 const sboxAttrs = () => ({
   style: { default: null, parseHTML: (el: any) => el.getAttribute("style"), renderHTML: (a: any) => (a.style ? { style: a.style } : {}) },
   class: { default: null, parseHTML: (el: any) => el.getAttribute("class"), renderHTML: (a: any) => (a.class ? { class: a.class } : {}) },
+  ...idAttr(),
   ...dataAttrs(),
 });
+// #83: identity attrs are ELEMENT-IDENTITY signals, same as class/style. A doc's own script
+// wires itself through <span id="w0v">, <div id="rows"></div>, <span data-hook> — elements
+// with no class or style at all. Without a schema home they flatten on parse and the wiring
+// is severed (the "renders empty after one edit" repro). The styled-family parse rules below
+// claim identity-carrying elements too.
+const hasAuthorData = (el: any) => Array.from(el.attributes || []).some((a: any) => { const n = (a.name || "").toLowerCase(); return n.startsWith("data-") && !APP_DATA_HOOKS.has(n); });
+const hasIdentity = (el: any) => !!(el.getAttribute("id") || hasAuthorData(el));
 export const StyledBox = Node.create({
   name: "styledBox", group: "block", content: "block+", defining: true,
   addAttributes() { return sboxAttrs(); },
   // Legacy (FULL_PARSE off): only an inline-styled, class-free div. FULL_PARSE: any div with a
-  // class or style AND block children — its look comes from the scoped doc sheet / inline style.
+  // class, style, or identity attr (#83) AND block children — its look comes from the scoped
+  // doc sheet / inline style; a bare <div id> is a script/anchor hook that must keep element-hood.
   parseHTML() { return [{ tag: "div", getAttrs: (el: any) => {
     const cls = el.getAttribute("class"); const sty = el.getAttribute("style");
     if (!FULL_PARSE) return (!cls && sty) ? {} : false;
-    return ((cls || sty) && hasBlockChild(el)) ? {} : false;
+    return ((cls || sty || hasIdentity(el)) && hasBlockChild(el)) ? {} : false;
   } }]; },
   renderHTML({ HTMLAttributes }: any) { return ["div", { ...HTMLAttributes, "data-sbox": "" }, 0]; },
   addStorage() { return sboxMd; },
@@ -213,7 +235,7 @@ export const StyledInlineBox = Node.create({
   parseHTML() { return [{ tag: "div", priority: 60, getAttrs: (el: any) => {
     if (!FULL_PARSE) return false;
     const cls = el.getAttribute("class"); const sty = el.getAttribute("style");
-    return ((cls || sty) && !hasBlockChild(el)) ? {} : false;
+    return ((cls || sty || hasIdentity(el)) && !hasBlockChild(el)) ? {} : false;
   } }]; },
   renderHTML({ HTMLAttributes }: any) { return ["div", { ...HTMLAttributes, "data-sbox": "" }, 0]; },
   addStorage() { return sboxMd; },
@@ -228,7 +250,7 @@ export const StyledSpan = Node.create({
   name: "styledSpan", inline: true, group: "inline", content: "inline*", defining: true,
   addAttributes() { return sboxAttrs(); },
   parseHTML() { return [{ tag: "span", priority: 65, getAttrs: (el: any) => {
-    if (!FULL_PARSE || !el.getAttribute("class")) return false;          // style-only → mark
+    if (!FULL_PARSE || !(el.getAttribute("class") || hasIdentity(el))) return false; // style-only → mark; identity (#83) → element
     if (!el.children.length && !(el.textContent || "").trim()) return false; // empty → DecoSpan
     return {};
   } }]; },
@@ -248,7 +270,7 @@ export const DecoSpan = Node.create({
   addAttributes() { return sboxAttrs(); },
   parseHTML() { return [{ tag: "span", priority: 70, getAttrs: (el: any) => {
     if (el.children.length || (el.textContent || "").trim()) return false;
-    return (el.getAttribute("class") || el.getAttribute("style")) ? {} : false;
+    return (el.getAttribute("class") || el.getAttribute("style") || hasIdentity(el)) ? {} : false;
   } }]; },
   renderHTML({ HTMLAttributes }: any) { return ["span", HTMLAttributes]; },
   addStorage() { return { markdown: { serialize(state: any, node: any) {
@@ -256,7 +278,7 @@ export const DecoSpan = Node.create({
     // emit any preserved data-* too (symmetry with the HTML path; the sibling styled nodes serialize
     // theirs via DOMSerializer) so a decorative span's hooks survive a .md round-trip as well
     const dataStr = a.data ? Object.keys(a.data).map((k) => " " + k + '="' + escapeAttr(a.data[k]) + '"').join("") : "";
-    state.write("<span" + (a.class ? ' class="' + escapeAttr(a.class) + '"' : "") + (a.style ? ' style="' + escapeAttr(a.style) + '"' : "") + dataStr + "></span>");
+    state.write("<span" + (a.id ? ' id="' + escapeAttr(a.id) + '"' : "") + (a.class ? ' class="' + escapeAttr(a.class) + '"' : "") + (a.style ? ' style="' + escapeAttr(a.style) + '"' : "") + dataStr + "></span>");
   } } }; },
 });
 
@@ -274,6 +296,7 @@ export const ImageNode = Node.create({
     src: { default: "" },
     alt: { default: null, renderHTML: (a: any) => (a.alt ? { alt: a.alt } : {}) },
     width: { default: null, renderHTML: (a: any) => (a.width ? { width: a.width } : {}) },
+    ...idAttr(),
   }; },
   parseHTML() { return [{ tag: "img[src]", getAttrs: (el: any) => ({ src: el.getAttribute("src") || "", alt: el.getAttribute("alt"), width: el.getAttribute("width") }) }]; },
   renderHTML({ HTMLAttributes }: any) { return ["img", HTMLAttributes]; },
@@ -304,22 +327,13 @@ export const RichBlock = Node.create({
   renderHTML({ node }: any) { const d = document.createElement("div"); d.setAttribute("data-rich-block", ""); d.innerHTML = node.attrs.html; return d; },
 });
 
-// Auth-free dynamic block — proves the live-component mechanism without any login.
-export const ClockBlock = Node.create({
-  name: "clockBlock", group: "block", atom: true, selectable: true, draggable: true,
-  addAttributes() { return { tz: { default: "local" } }; },
-  addStorage() { return { markdown: { serialize(state: any, node: any) { state.write(`<div data-clock data-tz="${escapeAttr(node.attrs.tz)}"></div>`); state.closeBlock(node); } } }; },
-  parseHTML() { return [{ tag: "div[data-clock]", getAttrs: (el: any) => ({ tz: el.getAttribute("data-tz") || "local" }) }]; },
-  renderHTML({ node }: any) { return ["div", { "data-clock": "", "data-tz": node.attrs.tz }]; },
-});
-
 // Callout: a styled, editable container (info/warn/tip). Holds real prose, so it's a
 // content node, not an atom. Serializes to an HTML <div data-callout> with a blank line
 // before/after the inner content so markdown-it re-parses the inside as markdown on load
 // (the div wrapper round-trips via parseHTML).
 export const Callout = Node.create({
   name: "callout", group: "block", content: "block+", defining: true,
-  addAttributes() { return { kind: { default: "info", parseHTML: (el: any) => el.getAttribute("data-kind") || "info", renderHTML: (a: any) => ({ "data-kind": a.kind }) } }; },
+  addAttributes() { return { kind: { default: "info", parseHTML: (el: any) => el.getAttribute("data-kind") || "info", renderHTML: (a: any) => ({ "data-kind": a.kind }) }, ...idAttr() }; },
   addStorage() {
     return { markdown: { serialize(state: any, node: any) {
       state.write(`<div data-callout data-kind="${escapeAttr(node.attrs.kind)}">\n\n`);
@@ -452,8 +466,8 @@ const TaskListMd = TaskList.extend({
 // handleClick routes clicks itself.
 const DEFAULT_LINK_OPTS = { openOnClick: false, HTMLAttributes: { target: null, rel: null } } as any;
 
-// The four node views the live editor injects (verifier passes none — schema-only).
-export type EngineNodeViews = { image?: any; richBlock?: any; clockBlock?: any; callout?: any };
+// The three node views the live editor injects (verifier passes none — schema-only).
+export type EngineNodeViews = { image?: any; richBlock?: any; callout?: any };
 
 // The single source of truth for the schema, shared by the live editor and every headless
 // consumer. Order is load-bearing — byte-identical to the editor's historical array. The
@@ -468,12 +482,15 @@ export function engineExtensions(opts: { linkOpts?: any; nodeViews?: EngineNodeV
     FULL_PARSE ? StarterKit.configure({ bold: false, italic: false, hardBreak: false, link: linkOpts }) : StarterKit.configure({ hardBreak: false, link: linkOpts }),
     HardBreakMd, // F42: replaces StarterKit's hardBreak so softbreaks round-trip as "\n", not "\\\n"
     ...(FULL_PARSE ? [BoldTagged, ItalicTagged, PreserveAttrs] : []),
-    StyledTextStyle, Color, StyledHighlight.configure({ multicolor: true }), InlineStyle,
+    // #93: mergeNestedSpanStyles defaults TRUE and MUTATES a nested span's style attr at
+    // parse (child gains the parent's color) — a save-time rewrite of user-authored styles
+    // (F40-class) and the first-save-normalization source. Off: nested spans parse verbatim.
+    StyledTextStyle.configure({ mergeNestedSpanStyles: false }), Color, StyledHighlight.configure({ multicolor: true }), InlineStyle,
     TaskListMd, TaskItem.configure({ nested: true }), TaskInputRule, MarkdownListFix,
     Table.configure({ resizable: true }), TableRow, TableHeader, TableCell,
     withView(Callout, nv.callout),
     StyledInlineBox, StyledBox, StyledSpan, DecoSpan,
-    withView(ImageNode, nv.image), withView(RichBlock, nv.richBlock), withView(ClockBlock, nv.clockBlock),
+    withView(ImageNode, nv.image), withView(RichBlock, nv.richBlock),
   ];
 }
 
@@ -497,7 +514,6 @@ const STRUCTURAL_TAGS = new Set(["DIV", "ARTICLE", "MAIN", "SECTION", "BODY", "H
 function isolateRich(el: HTMLElement, doc: Document) {
   Array.from(el.children).forEach((c) => {
     const child = c as HTMLElement;
-    if (child.hasAttribute("data-clock")) return;                                           // dynamic block — leave for its node
     if (subtreeEditable(child)) return;                                                     // no unmodelable element anywhere — keep editable
     if (STRUCTURAL_TAGS.has(child.tagName)) { isolateRich(child, doc); return; }            // block wrapper (classed or not) — descend, isolate only the leaves
     const wrap = doc.createElement("div"); wrap.setAttribute("data-rich-block", "");        // unmodelable leaf / unsplittable text element — freeze whole
@@ -555,6 +571,16 @@ export function prepareDoc(raw: string): PreparedDoc {
       p.appendChild(a); el.replaceWith(p);
     } else { el.remove(); }
   });
+  // The Clock block (PoC dynamic block) was removed (#95). A note saved earlier may still
+  // carry <div data-clock data-tz="X">; with no clockBlock node to claim it, degrade it in
+  // place to a small visible paragraph so the marker stays readable and deletable instead
+  // of crashing or vanishing (same policy as data-calendar above).
+  doc.querySelectorAll("div[data-clock]").forEach((el) => {
+    const tz = el.getAttribute("data-tz") || "local";
+    const p = doc.createElement("p");
+    p.textContent = "clock (removed feature) · " + tz;
+    el.replaceWith(p);
+  });
   const container = frameContainer(doc);
   // F39: record the container's identity (only when it's a real wrapper, not body) so own-frame
   // detection can probe whether IT carried the page frame (max-width + margin:auto) the editor stripped.
@@ -586,11 +612,11 @@ export function prepareDoc(raw: string): PreparedDoc {
   // the EDITABLE content without clobbering the chrome (live-only; the original <style> still
   // round-trips verbatim through the template's head).
   const scopedCss = FULL_PARSE ? scopeCss(Array.from(doc.querySelectorAll("style")).map((s) => s.textContent || "").join("\n"), ".note-scope") : "";
-  const hasMarkers = !!container.querySelector("[data-rich-block],[data-clock]");
+  const hasMarkers = !!container.querySelector("[data-rich-block]");
   if (FULL_PARSE) {
     // Re-derive rich blocks from CONTENT, not stale markers: drop every data-rich-block wrapper
     // (from a prior save / md-to-redesigned output — these often pin a whole <article> atomic),
-    // keep dynamic markers (data-clock), then recursively isolate ONLY the minimal
+    // then recursively isolate ONLY the minimal
     // unmodelable subtrees (svg/img/…). A single nested svg no longer freezes the whole document;
     // everything else parses into editable nodes rendered by the scoped doc sheet.
     container.querySelectorAll("[data-rich-block]").forEach((rb) => {
@@ -604,7 +630,7 @@ export function prepareDoc(raw: string): PreparedDoc {
     // element so it's preserved atomic rather than flattened.
     Array.from(container.children).forEach((child) => {
       const el = child as HTMLElement;
-      if (el.hasAttribute("data-rich-block") || el.hasAttribute("data-clock")) return;
+      if (el.hasAttribute("data-rich-block")) return;
       if (PROSE_TAGS.has(el.tagName)) return;
       const wrap = doc.createElement("div"); wrap.setAttribute("data-rich-block", "");
       el.replaceWith(wrap); wrap.appendChild(el);

@@ -27,7 +27,7 @@ import { shouldRequestGhost, joinGhost } from "./lib";
 // ancestor of the cursor, no ghost is offered.
 const SUPPRESS_ANCESTORS = new Set([
   "codeBlock", "richBlock", "styledBox", "styledInlineBox", "styledSpan", "decoSpan",
-  "clockBlock", "callout",
+  "callout",
 ]);
 
 // Map the cursor's ancestor chain to one supported block label (or null). Prefers the most

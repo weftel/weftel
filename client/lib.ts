@@ -641,32 +641,6 @@ export function parseFormatIntent(intent: string): FormatOp | null {
   return null;
 }
 
-// A CLOCK instruction → an IANA timezone for the node's `tz` attr (so "change clock to PT" edits
-// the existing block, never spawns a second one). Common abbreviations + a few city names; a raw
-// IANA zone typed directly ("America/Sao_Paulo") is accepted too. Longest alias match wins so
-// "pacific" isn't shadowed by an incidental "pt". null → unrecognized (editor.ts shows a hint).
-const TZ_ALIASES: Record<string, string> = {
-  pt: "America/Los_Angeles", pst: "America/Los_Angeles", pdt: "America/Los_Angeles", pacific: "America/Los_Angeles", la: "America/Los_Angeles",
-  mt: "America/Denver", mst: "America/Denver", mdt: "America/Denver", mountain: "America/Denver", denver: "America/Denver",
-  ct: "America/Chicago", cst: "America/Chicago", cdt: "America/Chicago", central: "America/Chicago", chicago: "America/Chicago",
-  et: "America/New_York", est: "America/New_York", edt: "America/New_York", eastern: "America/New_York", nyc: "America/New_York", "new york": "America/New_York",
-  utc: "UTC", gmt: "UTC", zulu: "UTC", z: "UTC",
-  london: "Europe/London", uk: "Europe/London", paris: "Europe/Paris", berlin: "Europe/Berlin", cet: "Europe/Paris",
-  tokyo: "Asia/Tokyo", japan: "Asia/Tokyo", jst: "Asia/Tokyo",
-  india: "Asia/Kolkata", ist: "Asia/Kolkata", delhi: "Asia/Kolkata",
-  sydney: "Australia/Sydney", aest: "Australia/Sydney",
-  local: "local",
-};
-export function parseClockTz(intent: string): string | null {
-  const t = (intent || "").toLowerCase();
-  let best: string | null = null, bestLen = 0;
-  for (const k in TZ_ALIASES) {
-    if (new RegExp("\\b" + k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b").test(t) && k.length > bestLen) { best = TZ_ALIASES[k]; bestLen = k.length; }
-  }
-  if (!best) { const iana = (intent || "").match(/\b[A-Z][A-Za-z]+\/[A-Za-z_]+\b/); if (iana) best = iana[0]; }
-  return best;
-}
-
 // A CALLOUT instruction → its kind attr (info/tip/warn), so "make this a warning" recolors the
 // existing callout in place. null → unrecognized (the kinds the editor renders are info/tip/warn).
 // Guard: an AUTHORING request ("write a tip about X") is content, not a kind change — bow out so it
@@ -724,17 +698,14 @@ export function cleanProseResult(s: string): string {
 export type CmdkRoute =
   | { kind: "table"; op: TableOp }
   | { kind: "callout"; calloutKind: "info" | "tip" | "warn" }
-  | { kind: "clock"; tz: string }
   | { kind: "format"; op: FormatOp }
   | { kind: "ai"; mode: "rich" | "prose" | "author" }
-  | { kind: "hint"; target: "clock" | "callout" | "table" };
+  | { kind: "hint"; target: "callout" | "table" };
 export function routeCmdkIntent(ctx: { kind: string; inTable?: boolean; inCallout?: boolean }, intent: string): CmdkRoute {
   // 1. In/on a native block → its structural/attr op takes priority (no model call, can't duplicate).
   if (ctx.inTable) { const op = parseTableIntent(intent); if (op) return { kind: "table", op }; }
   if (ctx.inCallout) { const k = parseCalloutKind(intent); if (k) return { kind: "callout", calloutKind: k }; }
-  // 2. Node-selected dynamic atoms (clock): attr edit, or a hint if unrecognized.
-  if (ctx.kind === "clock") { const tz = parseClockTz(intent); return tz ? { kind: "clock", tz } : { kind: "hint", target: "clock" }; }
-  // 3. A callout as the PRIMARY target with no matching native instruction → hint, NOT generation
+  // 2. A callout as the PRIMARY target with no matching native instruction → hint, NOT generation
   //    (generation BESIDE an existing block is the duplication failure we're avoiding; a callout's
   //    prose stays rewritable by selecting the cell text). A table (next line) differs.
   if (ctx.kind === "callout") { const k = parseCalloutKind(intent); return k ? { kind: "callout", calloutKind: k } : { kind: "hint", target: "callout" }; }
@@ -745,8 +716,8 @@ export function routeCmdkIntent(ctx: { kind: string; inTable?: boolean; inCallou
   // can't be rewritten any other way, and the apply step REPLACES the table node in place — so there
   // is no duplication risk (the reason a callout still hints rather than generates beside itself).
   if (ctx.kind === "table") { const op = parseTableIntent(intent); return op ? { kind: "table", op } : { kind: "ai", mode: "rich" }; }
-  // 4. Prose selection: a formatting command → real marks; anything else → model rewrite.
+  // 3. Prose selection: a formatting command → real marks; anything else → model rewrite.
   if (ctx.kind === "prose") { const op = parseFormatIntent(intent); return op ? { kind: "format", op } : { kind: "ai", mode: "prose" }; }
-  // 5. Rich block → model (pure HTML); bare caret → model author.
+  // 4. Rich block → model (pure HTML); bare caret → model author.
   return { kind: "ai", mode: ctx.kind === "rich" ? "rich" : "author" };
 }

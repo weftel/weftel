@@ -4,22 +4,10 @@
 // expectations on the saved output. Every task also runs the four fidelity checks on its
 // edited doc (ids with `deletes` exemptions; contrast hard-gates when `contrastGate`).
 
-export interface NodeMatch {
-  type?: string;          // PM node type name (e.g. "heading", "table", "callout")
-  textContains?: string;  // node whose text content contains this
-  index?: number;         // nth match (default 0)
-}
-
-export type Op =
-  | { kind: "replaceText"; find: string; replace: string }
-  | { kind: "setNodeAttr"; match: NodeMatch; attrs: Record<string, any> }
-  | { kind: "insertBlock"; after: NodeMatch; html: string }
-  | { kind: "appendItem"; list: NodeMatch; text: string }   // append a real <li> INSIDE a list
-  | { kind: "deleteBlock"; match: NodeMatch }
-  | { kind: "moveBlock"; match: NodeMatch; to: "before" | "after"; anchor: NodeMatch }
-  | { kind: "sortTable"; match: NodeMatch; column: number; order: "asc" | "desc"; numeric?: boolean }
-  | { kind: "wrapMark"; find: string; mark: string; attrs?: Record<string, any> }
-  | { kind: "sequence"; ops: Op[] };
+// NodeMatch/Op live in client/ops.ts since gate K (one semantics source for the golden
+// runner AND the MCP tool layer); re-exported here so golden-internal imports don't churn.
+export type { NodeMatch, Op } from "../../client/ops";
+import type { NodeMatch, Op } from "../../client/ops";
 
 export type Expectation =
   | { kind: "savedContains"; text: string }

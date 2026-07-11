@@ -9,23 +9,20 @@
 //     baseline/baseline.json (`bun verifier/cli.ts --update-baseline`) in the same commit.
 import type { Xfail } from "./types";
 
-// #83 class: the engine drops `id` on modeled nodes — `id` is absent from the
-// PreserveAttrs (client/engine.ts) and sboxAttrs allowlists; ids survive only inside
-// frozen data-rich-block subtrees. Fixing this (an id scheme) is Layer-1 / phase-2 work.
-const ID_DROP = "engine drops id on modeled nodes (#83: id absent from PreserveAttrs/sboxAttrs allowlists)";
-// First-save normalization class: parse→save changes the tree ONCE (T1 ≠ T2) then settles
-// (S3 === S2 everywhere). Known contributor: TipTap TextStyle mergeNestedSpanStyles:true
-// mutates nested span styles at parse (see tests/unit/engine.test.ts gate-B notes). The
-// browser corpus harness tolerates one settle pass; tree-identity on first round-trip is
-// pinned red until phase 2 decides fix-vs-spec.
-const FIRST_SAVE_NORM = "first-save normalization: T1≠T2 once, settles by S2 (mergeNestedSpanStyles / span reorder class)";
+// First-save normalization class, RE-SCOPED at gate J (2026-07-10): the
+// mergeNestedSpanStyles value mutation is FIXED (TextStyle.configure flip; browser guard
+// in tests/e2e/style-shorthand.spec.ts). What remains is style-ATTR-STRING instability:
+//   • headless: happy-dom CSSOM reformats style strings (spacing/trailing-;) and DROPS
+//     modern fns (color-mix/var) entirely — verifier-side limitation, values proven intact
+//     in Chromium by the style-shorthand spec;
+//   • browser: first save normalizes styled-box style strings (hex→rgb, spacing) — #102,
+//     value-preserving, settles once.
+// Pinned red until #102 lands a getAttribute-passthrough render (never CSSOM).
+const FIRST_SAVE_NORM = "first-save style-string normalization: T1≠T2 once then settles — headless CSSOM reformat/modern-fn loss + browser hex→rgb rewrite (#102)";
 
+// (#83 ids pins removed 2026-07-10: id/data-* preservation + identity-signal parse rules
+// landed in client/engine.ts — all 5 pins flipped to xpass on the same run.)
 export const EXPECTED_FAIL: Xfail[] = [
-  { file: "tests/e2e/corpus/identity/anchors-toc.html", check: "ids", reason: ID_DROP + " — also breaks the doc's own #anchor TOC", issue: "#83" },
-  { file: "tests/e2e/corpus/identity/deco-dots.html", check: "ids", reason: ID_DROP, issue: "#83" },
-  { file: "tests/e2e/corpus/identity/ids-mixed.html", check: "ids", reason: ID_DROP + " (frozen svg-label id survives — the control)", issue: "#83" },
-  { file: "tests/e2e/corpus/real-career/decision-thesis.html", check: "ids", reason: ID_DROP + " — real doc loses script-hook ids w0v,w1v,w2v,bars,winnerNote", issue: "#83" },
-  { file: "tests/e2e/corpus/real-career/saronic-slides.html", check: "ids", reason: ID_DROP + " — also loses data-bespoke-marp-osc (data-* preserved only on styled-box family)", issue: "#83" },
   { file: "tests/e2e/corpus/provenance/ai-card.html", check: "roundtrip", reason: FIRST_SAVE_NORM, issue: "#93" },
   { file: "tests/e2e/corpus/real-career/decision-thesis.html", check: "roundtrip", reason: FIRST_SAVE_NORM, issue: "#93" },
   { file: "tests/e2e/corpus/real-career/project-deep-dives.html", check: "roundtrip", reason: FIRST_SAVE_NORM, issue: "#93" },

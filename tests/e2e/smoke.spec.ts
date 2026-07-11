@@ -376,6 +376,23 @@ test("enter after a classed paragraph yields an unclassed paragraph", async ({ p
   expect(out).toMatch(/<p>fresh line<\/p>/);                // no inherited class
 });
 
+// #83: same invariant for `id` — Enter at the end of an id-carrying heading must start a
+// CLEAN block (a carried id would silently mint a duplicate), while the heading keeps its id.
+test("enter after an id-carrying heading yields an id-less block; the id round-trips", async ({ page }) => {
+  await openNote(page, "ids.html", '<!DOCTYPE html><html><head><meta charset="utf-8"><title>i</title></head><body><article><h2 id="sec-1">Section one</h2><p>body</p></article></body></html>\n');
+  await page.evaluate(() => {
+    const e = (window as any).__editor;
+    let end = -1; e.state.doc.descendants((n: any, p: number) => { if (n.type.name === "heading") end = p + 1 + n.content.size; return true; });
+    e.chain().focus().setTextSelection(end).run(); e.view.focus();
+  });
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("fresh line");
+  const out: string = await page.evaluate(() => (window as any).__serialize());
+  expect(out).toContain('id="sec-1"');                       // preserved through the round-trip
+  expect((out.match(/id="sec-1"/g) || []).length).toBe(1);   // …and never duplicated
+  expect(out).toMatch(/<p>fresh line<\/p>/);
+});
+
 // Classed spans are inline NODES, not marks: as marks, adjacent same-class spans MERGED
 // (two pills → one) and a span containing bold/code SPLIT into fragments (breaking flex
 // layouts). Element identity must survive the round-trip exactly.
@@ -707,30 +724,18 @@ test("⌘K format intent applies a real mark (not literal markdown)", async ({ p
   await expect(page.locator(".cmdk.show")).toHaveCount(0); // closed after applying
 });
 
-test("⌘K clock intent edits the node's tz — exactly one clock, no duplicate", async ({ page }) => {
-  test.skip(!AI_EDIT_ENABLED, "⌘K UI gated on AI_EDIT_ENABLED (F23) — deterministic, no model call");
-  await openNote(page, "clock.md", "# clock\n\n");
-  // insert a clock, then node-select it (a ⌘K target)
-  await page.evaluate(() => {
-    const e = (window as any).__editor;
-    e.chain().focus("end").insertContent({ type: "clockBlock", attrs: { tz: "local" } }).run();
-    let pos = -1; e.state.doc.descendants((n: any, p: number) => { if (n.type.name === "clockBlock") pos = p; });
-    e.commands.setNodeSelection(pos);
-  });
-  await expect(page.locator(".ProseMirror [data-clock]")).toHaveCount(1);
-  await page.keyboard.press("Meta+k");
-  const input = page.locator(".cmdk input");
-  await expect(input).toBeVisible();
-  await input.fill("change clock to PT");
-  await input.press("Enter");
-  // STILL exactly one clock (no second block emitted beside it) …
-  await expect(page.locator(".ProseMirror [data-clock]")).toHaveCount(1);
-  // … and the SAME node now carries the PT zone, in the editor and in the saved bytes
-  const tz = await page.evaluate(() => { let v = ""; (window as any).__editor.state.doc.descendants((n: any) => { if (n.type.name === "clockBlock") v = n.attrs.tz; }); return v; });
-  expect(tz).toBe("America/Los_Angeles");
+// #95: the Clock block was removed. A legacy note carrying <div data-clock> must open without
+// crashing, degrade the marker to visible inert text (readable + deletable), and never write
+// the dead marker back into the file.
+test("legacy data-clock marker degrades to visible text in the live editor (#95)", async ({ page }) => {
+  await openNote(page, "legacy-clock.html",
+    '<!DOCTYPE html><html><head><meta charset="utf-8"><title>t</title></head><body>' +
+    '<h2>Standup</h2><div data-clock data-tz="America/Los_Angeles"></div><p>after</p></body></html>');
+  await expect(page.locator(".ProseMirror")).toContainText("clock (removed feature) · America/Los_Angeles");
+  await expect(page.locator(".ProseMirror [data-clock]")).toHaveCount(0);
   const out: string = await page.evaluate(() => (window as any).__serialize());
-  expect((out.match(/data-clock/g) || []).length).toBe(1);     // one clock in the file
-  expect(out).toContain('data-tz="America/Los_Angeles"');
+  expect(out).toContain("clock (removed feature) · America/Los_Angeles");
+  expect(out).not.toContain("data-clock");
 });
 
 // AI apply pipeline: a node-selected rich (frozen) block, rewritten by ⌘K, must REPLACE that one

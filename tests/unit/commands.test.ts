@@ -33,14 +33,22 @@ afterEach(() => { (globalThis as any).fetch = realFetch; });
 
 // ───────────────────────── clipboard stub ─────────────────────────
 let clipText: string | null = null;
+// happy-dom's GlobalRegistrator (registered by engine/ops/mcp test files that may run
+// FIRST in a full-suite pass) defines globalThis.navigator as a readonly accessor —
+// plain assignment throws. defineProperty sidesteps it in both directions.
+function setGlobalNavigator(v: any) {
+  try { Object.defineProperty(globalThis, "navigator", { value: v, configurable: true, writable: true }); }
+  catch { (globalThis as any).navigator = v; }
+}
 function installClipboard() {
   clipText = null;
   const writeText = async (t: string) => { clipText = t; };
   const nav: any = (globalThis as any).navigator;
   if (nav && typeof nav === "object") {
-    try { nav.clipboard = { writeText }; return; } catch { /* read-only navigator → replace below */ }
+    try { Object.defineProperty(nav, "clipboard", { value: { writeText }, configurable: true }); return; } catch { /* frozen navigator → replace whole */ }
+    try { nav.clipboard = { writeText }; return; } catch { /* read-only prop → replace whole */ }
   }
-  (globalThis as any).navigator = { clipboard: { writeText } };
+  setGlobalNavigator({ clipboard: { writeText } });
 }
 
 // ───────────────────────── helpers ─────────────────────────
@@ -215,14 +223,14 @@ test("copyPath writes ctx.entry.path to the clipboard, no server call", async ()
 
 test("copyPath fails gracefully when no clipboard API is present", async () => {
   const saved = (globalThis as any).navigator;
-  (globalThis as any).navigator = { /* no clipboard */ };
+  setGlobalNavigator({ /* no clipboard */ });
   try {
     const { ctx } = makeCtx(fileEntry);
     const r = await cmd("copyPath").run(ctx);
     expect(r.ok).toBe(false);
     expect(r.error).toBeTruthy();
   } finally {
-    (globalThis as any).navigator = saved;
+    setGlobalNavigator(saved);
   }
 });
 

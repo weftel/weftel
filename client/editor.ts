@@ -2,7 +2,6 @@
 //
 //   ProseBlock   fluid text (md/html)
 //   RichBlock    arbitrary HTML, verbatim + atomic (div[data-rich-block])
-//   ClockBlock    live dynamic app (node view)
 //
 // Safety: lossless html round-trip (full <head>/shell preserved; unmodelable
 // top-level elements wrapped, never flattened); sequence-guarded autosave with a
@@ -13,8 +12,9 @@ import { Markdown } from "tiptap-markdown";
 import Placeholder from "@tiptap/extension-placeholder";
 import Suggestion from "@tiptap/suggestion";
 import { stripActive, escapeAttr, nativeInsertable, collectSvgTextLeaves, collectSvgTextRuns, collectHtmlTextLeaves, collectHtmlTextRuns, tidyInsertHtml, buildTree, countFiles, buildInteractSrcdoc, sanitizeRelNotePath, routeCmdkIntent, type FormatOp, type TableOp, type TreeNode } from "./lib"; // [AI:cmdk] intent router
-import { DOMSerializer } from "@tiptap/pm/model";
+import { DOMSerializer, Fragment } from "@tiptap/pm/model";
 import { FULL_PARSE, prepareDoc, serializeDoc, engineExtensions } from "./engine"; // shared round-trip engine: schema + parse/serialize (see client/engine.ts)
+import { idDupePositions, fnv1a64 } from "./ops"; // [#83] id-uniqueness core + the hash the proposal preconditions use
 import { diffApprove } from "./diff-viewer"; // [AI:diff-gate]
 import { Plugin, TextSelection } from "@tiptap/pm/state";
 import { mountGhostCompletion } from "./ghost-completion"; // [AI:ghost] Tab ghost-text controller
@@ -488,20 +488,6 @@ function appHead(title: string, onSettings?: () => void): HTMLElement {
   return head;
 }
 
-// Clock NodeView (schema lives in engine.ts): the live ticking face.
-const clockView = ({ node }: any) => {
-      const dom = document.createElement("div"); dom.className = "app-block"; dom.setAttribute("data-clock", ""); dom.contentEditable = "false";
-      // [AI:cmdk] render the node's tz attr (so a ⌘K "change clock to PT" edit is actually visible),
-      // label the zone in the head, and fall back to local time if the zone is invalid/unsupported.
-      const tz = node.attrs.tz && node.attrs.tz !== "local" ? String(node.attrs.tz) : "";
-      dom.appendChild(appHead("Clock" + (tz ? " · " + tz : "")));
-      const face = document.createElement("div"); face.style.cssText = "font:600 38px ui-monospace,Menlo,monospace;letter-spacing:.04em;text-align:center;padding:26px 0;color:var(--accent-ink)";
-      dom.appendChild(face);
-      const tick = () => { try { face.textContent = new Date().toLocaleTimeString([], tz ? { timeZone: tz } : undefined); } catch { face.textContent = new Date().toLocaleTimeString(); } };
-      tick(); const iv = setInterval(tick, 1000);
-      return { dom, stopEvent: () => true, ignoreMutation: () => true, destroy: () => clearInterval(iv) };
-    };
-
 // Callout NodeView chrome (schema lives in engine.ts): icon column + editable body.
 const CALLOUT_KINDS: Record<string, { icon: string; label: string }> = {
   info: { icon: "ℹ", label: "Info" }, tip: { icon: "✦", label: "Tip" }, warn: { icon: "▲", label: "Warning" },
@@ -552,7 +538,6 @@ const SLASH_ITEMS: SlashItem[] = [
   { title: "Code block", group: "Writing", hint: "```", aliases: "pre monospace", run: (e, r) => del(e, r).toggleCodeBlock().run() },
   { title: "Divider", group: "Writing", hint: "---", aliases: "hr rule separator", run: (e, r) => del(e, r).setHorizontalRule().run() },
   { title: "Rich HTML block", group: "Embeds", aliases: "html custom design", run: (e, r) => { del(e, r).run(); slashHooks.insertEmbed?.("rich"); } },
-  { title: "Clock", group: "Embeds", aliases: "time live", run: (e, r) => { del(e, r).run(); slashHooks.insertEmbed?.("clock"); } },
   ...(AI_EDIT_ENABLED ? [{ title: "Write with AI…", group: "AI", aliases: "generate cmdk diagram ask", run: (e: any, r: any) => { del(e, r).run(); slashHooks.askAI?.(); } } as SlashItem] : []),
 ];
 function filterSlash(query: string): SlashItem[] {
@@ -638,12 +623,32 @@ if (note && mount) {
   // file's own target/rel round-trip verbatim. openOnClick off — handleClick below routes
   // clicks properly (relative note links navigate IN-APP; web links open a tab).
   const linkOpts = { openOnClick: false, HTMLAttributes: { target: null, rel: null } } as any;
+  // #83 id-uniqueness policy (editor-only, contributes no schema): a human paste/duplicate
+  // must not clone identity — when a transaction increases an id's count, occurrences after
+  // the first lose the id (nulled, never re-minted). Author duplicates loaded from disk are
+  // untouched (pure loads never save, and their count doesn't change). Core is pure +
+  // unit-tested in client/ops.ts.
+  const IdDedupe = Extension.create({
+    name: "idDedupe",
+    addProseMirrorPlugins() {
+      return [new Plugin({
+        appendTransaction(trs: any, oldState: any, newState: any) {
+          if (!trs.some((t: any) => t.docChanged)) return null;
+          const dupes = idDupePositions(oldState.doc, newState.doc);
+          if (!dupes.length) return null;
+          const tr = newState.tr;
+          dupes.forEach((pos: number) => { const n = newState.doc.nodeAt(pos); if (n) tr.setNodeMarkup(pos, undefined, { ...n.attrs, id: null }, n.marks); });
+          return tr;
+        },
+      })];
+    },
+  });
   const extensions: any[] = [
     // The schema comes from the SHARED engine (client/engine.ts) — identical for the live
-    // editor and the headless verifier. Only the four NodeViews (browser display/behavior)
+    // editor and the headless verifier. Only the three NodeViews (browser display/behavior)
     // are injected here; the trailing extensions are UI-only and contribute no schema.
-    ...engineExtensions({ linkOpts, nodeViews: { image: imageView, richBlock: richView, clockBlock: clockView, callout: calloutView } }),
-    SlashMenu, TabKeys, EscapeTrap,
+    ...engineExtensions({ linkOpts, nodeViews: { image: imageView, richBlock: richView, callout: calloutView } }),
+    IdDedupe, SlashMenu, TabKeys, EscapeTrap,
     Placeholder.configure({ placeholder: ({ node }: any) => (node.type.name === "heading" ? "Heading" : "Write, or press \u201c/\u201d for commands\u2026"), showOnlyCurrent: true }),
   ];
   let content = note.content;
@@ -1009,6 +1014,95 @@ if (note && mount) {
     try { sent = navigator.sendBeacon("/save", new Blob([JSON.stringify({ file: note.file, content: out })], { type: "application/json" })); } catch {}
     if (!sent) { e.preventDefault(); (e as any).returnValue = ""; }
   });
+  // -------- co-authoring proposal gate (phase-2 tracer; see mcp/PLAN.md gate M) --------
+  // The MCP layer proposes node ops; THIS TAB is the single writer: it re-validates the
+  // op against the LIVE doc, shows the rendered gate, applies as ONE PM transaction
+  // (persisting a provisional id iff the op minted one), saves through the normal path,
+  // and only reports "approved" after the save returns — approved always means bytes on
+  // disk. A failed save leaves the proposal pending; ttl expiry surfaces approval_timeout.
+  if (note.format === "html") {
+    const PROPOSAL_POLL_MS = 2000, IDLE_GUARD_MS = 1500;
+    let lastInput = 0;
+    editor.view.dom.addEventListener("beforeinput", () => { lastInput = Date.now(); });
+    const queue: any[] = [];            // FIFO, one gate at a time (diffApprove owns ↵/Esc)
+    const queued = new Set<string>();
+    let gateBusy = false;
+    const decide = (id: string, state: string, reason?: string, newVersion?: string) =>
+      fetch("/api/proposal-decision", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, state, reason, newVersion }) }).then(() => {}, () => {});
+    // Precondition ladder vs the LIVE doc: (1) persisted id, then text-drift check;
+    // (2/3) no id in the live doc (provisional): all blocks matching nodeType+textHash —
+    // unique match wins, ties broken by the structural path; (4) nothing → stale with
+    // agent-readable re-read guidance. baseVersion alone is deliberately NOT a hard gate:
+    // unsaved user edits elsewhere must not strand a still-valid node op.
+    const locate = (t: any): { pos: number; node: any } | { stale: string } => {
+      const doc = editor!.state.doc;
+      let byId: { pos: number; node: any } | null = null;
+      doc.descendants((n: any, pos: number) => { if (!byId && n.attrs && n.attrs.id === t.nodeId) byId = { pos, node: n }; return !byId; });
+      if (byId) {
+        const b = byId as { pos: number; node: any };
+        if (fnv1a64(b.node.textContent) !== t.textHash) return { stale: 'text_drifted: the block\'s text changed since read ("' + (b.node.textContent || "").slice(0, 60) + '") — re-read and re-propose' };
+        return b;
+      }
+      const hits: { pos: number; node: any; path: number[] }[] = [];
+      const walk = (parent: any, base: number, path: number[]) => {
+        parent.forEach((child: any, offset: number, index: number) => {
+          if (!child.isBlock) return;
+          const pos = base + offset;
+          hits.push({ pos, node: child, path: [...path, index] });
+          walk(child, pos + 1, [...path, index]);
+        });
+      };
+      walk(doc, 0, []);
+      const matches = hits.filter((h) => h.node.type.name === t.nodeType && fnv1a64(h.node.textContent) === t.textHash);
+      if (matches.length === 1) return matches[0];
+      const byPath = matches.find((h) => h.path.join(".") === (t.path || []).join("."));
+      if (byPath) return byPath;
+      return { stale: "node_not_found: the target block changed or was deleted since the doc was read — call weftel_read_doc again and retry" };
+    };
+    async function processNext(): Promise<void> {
+      if (gateBusy || !queue.length || !editor) return;
+      if (Date.now() - lastInput < IDLE_GUARD_MS) { setTimeout(processNext, IDLE_GUARD_MS); return; } // don't steal ↵/Esc mid-thought
+      gateBusy = true;
+      const p = queue.shift()!;
+      try {
+        const loc: any = locate(p.target);
+        if (loc.stale) { await decide(p.id, "stale", loc.stale); return; }
+        // Panes recomputed from the LIVE node — the gate shows truth even when the user
+        // edited elsewhere; the proposal's headless-rendered html is only a fallback. A
+        // single-node op trivially renders one changed hunk (the D3 hunk↔op invariant).
+        const ser = DOMSerializer.fromSchema(editor.schema);
+        const before = ((ser.serializeNode(loc.node) as HTMLElement).outerHTML || p.beforeNodeHtml) as string;
+        const afterNode = loc.node.type.create({ ...loc.node.attrs, id: loc.node.attrs.id ?? p.target.nodeId }, p.op.text ? editor.schema.text(p.op.text) : null, loc.node.marks);
+        const after = ((ser.serializeNode(afterNode) as HTMLElement).outerHTML || p.afterNodeHtml) as string;
+        const res = await diffApprove(before, after, "prose", { title: "Claude proposes an edit", summary: p.summary, css: RICH_STYLES });
+        if (!res.accepted) { await decide(p.id, "rejected", "human_rejected: the user declined this change — do not retry the same edit; ask what they'd prefer"); return; }
+        // Re-locate (the doc may have shifted while the gate was open), then ONE transaction:
+        // persist-on-touch id + content replace — indistinguishable from a human edit downstream.
+        const loc2: any = locate(p.target);
+        if (loc2.stale) { await decide(p.id, "stale", loc2.stale); return; }
+        const tr = editor.state.tr;
+        if ("id" in loc2.node.attrs && loc2.node.attrs.id == null) tr.setNodeMarkup(loc2.pos, undefined, { ...loc2.node.attrs, id: p.target.nodeId });
+        tr.replaceWith(loc2.pos + 1, loc2.pos + 1 + loc2.node.content.size, p.op.text ? editor.schema.text(p.op.text) : Fragment.empty);
+        editor.view.dispatch(tr);
+        markEdited();
+        const ok = await flushSave();
+        if (ok) { await decide(p.id, "approved", undefined, fnv1a64(serialize())); flash("Claude's edit applied"); }
+      } finally { gateBusy = false; processNext(); }
+    }
+    const pollProposals = async () => {
+      if (!editor) return;
+      try {
+        const r = await fetch("/api/proposals?file=" + encodeURIComponent(note.file)).then((x) => x.json());
+        for (const p of r.proposals || []) if (!queued.has(p.id)) { queued.add(p.id); queue.push(p); }
+        processNext();
+      } catch {}
+    };
+    pollProposals(); // immediate: register liveness the moment the tab opens, not 2s later
+    setInterval(pollProposals, PROPOSAL_POLL_MS);
+    window.addEventListener("focus", pollProposals);
+    window.addEventListener("beforeunload", () => { try { navigator.sendBeacon("/api/proposals-bye", new Blob([JSON.stringify({ file: note.file })], { type: "application/json" })); } catch {} });
+  }
+
   // navigate helper: flush first; if the save fails, stay put so edits aren't lost
   async function go(href: string) { const ok = await flushSave(); if (!ok) { flash("save failed — staying so you don't lose edits", false); return; } location.href = href; }
 
@@ -1030,7 +1124,6 @@ if (note && mount) {
   // the model ONLY for genuine generation (rewrite prose / author content / rebuild an HTML block).
   const CMDK_HINT: Record<string, string> = {
     rich: "edit this HTML block — e.g. “make the grid 6×6”",
-    clock: "change the clock — “PT”, “Tokyo”, “UTC”",
     callout: "recolor this callout — “make it a warning / tip / info”",
     table: "edit this table — “add a row”, “delete column”, “toggle header”",
     author: "write — a paragraph, list, table, or diagram (HTML when it helps)",
@@ -1056,7 +1149,6 @@ if (note && mount) {
     if (sel.node) {                                          // a block node is selected (atom) — target it directly
       const n = sel.node.type.name;
       if (n === "richBlock") tgt = { kind: "rich", nodeType: n, pos: sel.from, html: sel.node.attrs.html };
-      else if (n === "clockBlock") tgt = { kind: "clock", nodeType: n, pos: sel.from };
       else if (n === "callout") tgt = { kind: "callout", nodeType: n, pos: sel.from, calloutPos: sel.from };
       else if (n === "table") tgt = { kind: "table", tableAnchor: sel.from + 1 };
     }
@@ -1218,11 +1310,10 @@ if (note && mount) {
     //    row — it no longer falls through to generation. Unrecognized native instructions → a hint
     //    (never generation, which is what used to duplicate the block).
     const TABLE_HINT = "try “add a row”, “delete column”, “toggle header”";
-    const HINT_FOR: Record<string, string> = { clock: "name a zone — “PT”, “UTC”, “Tokyo”…", callout: "try “make it a warning / tip / info”", table: TABLE_HINT };
+    const HINT_FOR: Record<string, string> = { callout: "try “make it a warning / tip / info”", table: TABLE_HINT };
     const route = routeCmdkIntent({ kind: t.kind, inTable: t.inTable, inCallout: t.inCallout }, intent);
     if (route.kind === "table") { runTableOp(t.tableAnchor, route.op); markEdited(); closeCmdk(); flash("table updated"); return; }
     if (route.kind === "callout") { if (setNodeAttrsAt(t.calloutPos, "callout", { kind: route.calloutKind })) { markEdited(); closeCmdk(); flash("callout → " + route.calloutKind); } return; }
-    if (route.kind === "clock") { if (setNodeAttrsAt(t.pos, "clockBlock", { tz: route.tz })) { markEdited(); closeCmdk(); flash("clock → " + route.tz); } return; }
     if (route.kind === "format") { applyFormat(t, route.op); markEdited(); closeCmdk(); flash("formatted"); return; }
     if (route.kind === "hint") { cmdkHint.textContent = HINT_FOR[route.target]; return; }
 
@@ -1319,8 +1410,7 @@ if (note && mount) {
   // ============================ insert menu ============================
   function insertBlock(kind: string) {
     if (!editor) return;
-    if (kind === "clock") { editor.chain().focus().insertContent({ type: "clockBlock", attrs: { tz: "local" } }).run(); markEdited(); }
-    else if (kind === "rich") { const hint = AI_EDIT_ENABLED ? "empty rich block — ⌘K to fill it with AI" : "empty rich block — paste or write HTML here"; editor.chain().focus().insertContent('<div data-rich-block><div style="padding:16px;border:1px dashed var(--border-strong);border-radius:8px;text-align:center;color:var(--muted)">' + hint + '</div></div>').run(); markEdited(); }
+    if (kind === "rich") { const hint = AI_EDIT_ENABLED ? "empty rich block — ⌘K to fill it with AI" : "empty rich block — paste or write HTML here"; editor.chain().focus().insertContent('<div data-rich-block><div style="padding:16px;border:1px dashed var(--border-strong);border-radius:8px;text-align:center;color:var(--muted)">' + hint + '</div></div>').run(); markEdited(); }
   }
 
   // ============================ edit / interact mode (resolves boundary K5) ============================
@@ -1415,7 +1505,7 @@ if (note && mount) {
   if (AI_EDIT_ENABLED) slashHooks.askAI = () => openCmdk();
   slashHooks.insertEmbed = (k: string) => insertBlock(k);
   document.getElementById("insertchip")?.addEventListener("click", () => {
-    const k = window.prompt("Insert block: type 'clock' or 'rich'", "clock");
+    const k = window.prompt("Insert block: type 'rich'", "rich");
     if (k) insertBlock(k.trim().toLowerCase());
   });
   // title from first H1 if present
