@@ -4,7 +4,7 @@ import { test, expect } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 if (typeof (globalThis as any).document === "undefined") GlobalRegistrator.register();
 
-import { stripActive, spliceBody, proseModelable, editableModelable, subtreeEditable, scopeCss, filterInlineStyle, escapeAttr, mdLite, buildTree, countFiles, sanitizeRelNotePath, tidySaveHtml, hasInteractiveScript, hasOwnStyling, buildInteractSrcdoc, BASE_NOTE_CSS, isSvgTextLeaf, collectSvgTextLeaves, svgDirectTextRuns, collectSvgTextRuns, isHtmlTextLeaf, collectHtmlTextLeaves, htmlDirectTextRuns, collectHtmlTextRuns, inForeignObject, parseFormatIntent, parseClockTz, parseCalloutKind, parseTableIntent, stripCodeFence, cleanProseResult, routeCmdkIntent } from "../../client/lib";
+import { stripActive, spliceBody, proseModelable, editableModelable, subtreeEditable, scopeCss, filterInlineStyle, escapeAttr, mdLite, buildTree, countFiles, sanitizeRelNotePath, tidySaveHtml, hasInteractiveScript, hasOwnStyling, buildInteractSrcdoc, BASE_NOTE_CSS, isSvgTextLeaf, collectSvgTextLeaves, svgDirectTextRuns, collectSvgTextRuns, isHtmlTextLeaf, collectHtmlTextLeaves, htmlDirectTextRuns, collectHtmlTextRuns, inForeignObject, parseFormatIntent, parseCalloutKind, parseTableIntent, stripCodeFence, cleanProseResult, routeCmdkIntent } from "../../client/lib";
 
 // ───────────────────────── spliceBody — the $-corruption bug ─────────────────────────
 const TOKEN = "%%NOTE_BODY%%";
@@ -493,16 +493,6 @@ test("parseFormatIntent: a content REWRITE is not a format command (→ null, fa
   expect(parseFormatIntent("")).toBe(null);
 });
 
-test("parseClockTz: 'change clock to PT' → America/Los_Angeles (and other zones)", () => {
-  expect(parseClockTz("change clock to PT")).toBe("America/Los_Angeles");
-  expect(parseClockTz("pacific time")).toBe("America/Los_Angeles");
-  expect(parseClockTz("show UTC")).toBe("UTC");
-  expect(parseClockTz("set it to Tokyo")).toBe("Asia/Tokyo");
-  expect(parseClockTz("eastern")).toBe("America/New_York");
-  expect(parseClockTz("America/Sao_Paulo")).toBe("America/Sao_Paulo"); // raw IANA accepted
-  expect(parseClockTz("make it spin")).toBe(null);                     // unrecognized → hint, no AI
-});
-
 test("parseCalloutKind: maps to info/tip/warn, else null", () => {
   expect(parseCalloutKind("make it a warning")).toBe("warn");
   expect(parseCalloutKind("turn this into a tip")).toBe("tip");
@@ -561,9 +551,7 @@ test("routeCmdkIntent: callout kind change wins in-callout; authoring does not m
   expect(routeCmdkIntent({ kind: "author", inCallout: true }, "write a tip about deploys")).toEqual({ kind: "ai", mode: "author" });
 });
 
-test("routeCmdkIntent: node-selected atoms + plain prose/rich/author route as before", () => {
-  expect(routeCmdkIntent({ kind: "clock" }, "change to PT")).toEqual({ kind: "clock", tz: "America/Los_Angeles" });
-  expect(routeCmdkIntent({ kind: "clock" }, "make it spin")).toEqual({ kind: "hint", target: "clock" });
+test("routeCmdkIntent: node-selected callout + plain prose/rich/author route as before", () => {
   expect(routeCmdkIntent({ kind: "callout" }, "rewrite the text")).toEqual({ kind: "hint", target: "callout" });
   expect(routeCmdkIntent({ kind: "prose" }, "bold this")).toEqual({ kind: "format", op: { op: "bold" } });
   expect(routeCmdkIntent({ kind: "prose" }, "make it more concise")).toEqual({ kind: "ai", mode: "prose" });

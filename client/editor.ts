@@ -2,7 +2,6 @@
 //
 //   ProseBlock   fluid text (md/html)
 //   RichBlock    arbitrary HTML, verbatim + atomic (div[data-rich-block])
-//   ClockBlock    live dynamic app (node view)
 //
 // Safety: lossless html round-trip (full <head>/shell preserved; unmodelable
 // top-level elements wrapped, never flattened); sequence-guarded autosave with a
@@ -488,20 +487,6 @@ function appHead(title: string, onSettings?: () => void): HTMLElement {
   return head;
 }
 
-// Clock NodeView (schema lives in engine.ts): the live ticking face.
-const clockView = ({ node }: any) => {
-      const dom = document.createElement("div"); dom.className = "app-block"; dom.setAttribute("data-clock", ""); dom.contentEditable = "false";
-      // [AI:cmdk] render the node's tz attr (so a ⌘K "change clock to PT" edit is actually visible),
-      // label the zone in the head, and fall back to local time if the zone is invalid/unsupported.
-      const tz = node.attrs.tz && node.attrs.tz !== "local" ? String(node.attrs.tz) : "";
-      dom.appendChild(appHead("Clock" + (tz ? " · " + tz : "")));
-      const face = document.createElement("div"); face.style.cssText = "font:600 38px ui-monospace,Menlo,monospace;letter-spacing:.04em;text-align:center;padding:26px 0;color:var(--accent-ink)";
-      dom.appendChild(face);
-      const tick = () => { try { face.textContent = new Date().toLocaleTimeString([], tz ? { timeZone: tz } : undefined); } catch { face.textContent = new Date().toLocaleTimeString(); } };
-      tick(); const iv = setInterval(tick, 1000);
-      return { dom, stopEvent: () => true, ignoreMutation: () => true, destroy: () => clearInterval(iv) };
-    };
-
 // Callout NodeView chrome (schema lives in engine.ts): icon column + editable body.
 const CALLOUT_KINDS: Record<string, { icon: string; label: string }> = {
   info: { icon: "ℹ", label: "Info" }, tip: { icon: "✦", label: "Tip" }, warn: { icon: "▲", label: "Warning" },
@@ -552,7 +537,6 @@ const SLASH_ITEMS: SlashItem[] = [
   { title: "Code block", group: "Writing", hint: "```", aliases: "pre monospace", run: (e, r) => del(e, r).toggleCodeBlock().run() },
   { title: "Divider", group: "Writing", hint: "---", aliases: "hr rule separator", run: (e, r) => del(e, r).setHorizontalRule().run() },
   { title: "Rich HTML block", group: "Embeds", aliases: "html custom design", run: (e, r) => { del(e, r).run(); slashHooks.insertEmbed?.("rich"); } },
-  { title: "Clock", group: "Embeds", aliases: "time live", run: (e, r) => { del(e, r).run(); slashHooks.insertEmbed?.("clock"); } },
   ...(AI_EDIT_ENABLED ? [{ title: "Write with AI…", group: "AI", aliases: "generate cmdk diagram ask", run: (e: any, r: any) => { del(e, r).run(); slashHooks.askAI?.(); } } as SlashItem] : []),
 ];
 function filterSlash(query: string): SlashItem[] {
@@ -642,7 +626,7 @@ if (note && mount) {
     // The schema comes from the SHARED engine (client/engine.ts) — identical for the live
     // editor and the headless verifier. Only the four NodeViews (browser display/behavior)
     // are injected here; the trailing extensions are UI-only and contribute no schema.
-    ...engineExtensions({ linkOpts, nodeViews: { image: imageView, richBlock: richView, clockBlock: clockView, callout: calloutView } }),
+    ...engineExtensions({ linkOpts, nodeViews: { image: imageView, richBlock: richView, callout: calloutView } }),
     SlashMenu, TabKeys, EscapeTrap,
     Placeholder.configure({ placeholder: ({ node }: any) => (node.type.name === "heading" ? "Heading" : "Write, or press \u201c/\u201d for commands\u2026"), showOnlyCurrent: true }),
   ];
@@ -1030,7 +1014,6 @@ if (note && mount) {
   // the model ONLY for genuine generation (rewrite prose / author content / rebuild an HTML block).
   const CMDK_HINT: Record<string, string> = {
     rich: "edit this HTML block — e.g. “make the grid 6×6”",
-    clock: "change the clock — “PT”, “Tokyo”, “UTC”",
     callout: "recolor this callout — “make it a warning / tip / info”",
     table: "edit this table — “add a row”, “delete column”, “toggle header”",
     author: "write — a paragraph, list, table, or diagram (HTML when it helps)",
@@ -1056,7 +1039,6 @@ if (note && mount) {
     if (sel.node) {                                          // a block node is selected (atom) — target it directly
       const n = sel.node.type.name;
       if (n === "richBlock") tgt = { kind: "rich", nodeType: n, pos: sel.from, html: sel.node.attrs.html };
-      else if (n === "clockBlock") tgt = { kind: "clock", nodeType: n, pos: sel.from };
       else if (n === "callout") tgt = { kind: "callout", nodeType: n, pos: sel.from, calloutPos: sel.from };
       else if (n === "table") tgt = { kind: "table", tableAnchor: sel.from + 1 };
     }
@@ -1218,11 +1200,10 @@ if (note && mount) {
     //    row — it no longer falls through to generation. Unrecognized native instructions → a hint
     //    (never generation, which is what used to duplicate the block).
     const TABLE_HINT = "try “add a row”, “delete column”, “toggle header”";
-    const HINT_FOR: Record<string, string> = { clock: "name a zone — “PT”, “UTC”, “Tokyo”…", callout: "try “make it a warning / tip / info”", table: TABLE_HINT };
+    const HINT_FOR: Record<string, string> = { callout: "try “make it a warning / tip / info”", table: TABLE_HINT };
     const route = routeCmdkIntent({ kind: t.kind, inTable: t.inTable, inCallout: t.inCallout }, intent);
     if (route.kind === "table") { runTableOp(t.tableAnchor, route.op); markEdited(); closeCmdk(); flash("table updated"); return; }
     if (route.kind === "callout") { if (setNodeAttrsAt(t.calloutPos, "callout", { kind: route.calloutKind })) { markEdited(); closeCmdk(); flash("callout → " + route.calloutKind); } return; }
-    if (route.kind === "clock") { if (setNodeAttrsAt(t.pos, "clockBlock", { tz: route.tz })) { markEdited(); closeCmdk(); flash("clock → " + route.tz); } return; }
     if (route.kind === "format") { applyFormat(t, route.op); markEdited(); closeCmdk(); flash("formatted"); return; }
     if (route.kind === "hint") { cmdkHint.textContent = HINT_FOR[route.target]; return; }
 
@@ -1319,8 +1300,7 @@ if (note && mount) {
   // ============================ insert menu ============================
   function insertBlock(kind: string) {
     if (!editor) return;
-    if (kind === "clock") { editor.chain().focus().insertContent({ type: "clockBlock", attrs: { tz: "local" } }).run(); markEdited(); }
-    else if (kind === "rich") { const hint = AI_EDIT_ENABLED ? "empty rich block — ⌘K to fill it with AI" : "empty rich block — paste or write HTML here"; editor.chain().focus().insertContent('<div data-rich-block><div style="padding:16px;border:1px dashed var(--border-strong);border-radius:8px;text-align:center;color:var(--muted)">' + hint + '</div></div>').run(); markEdited(); }
+    if (kind === "rich") { const hint = AI_EDIT_ENABLED ? "empty rich block — ⌘K to fill it with AI" : "empty rich block — paste or write HTML here"; editor.chain().focus().insertContent('<div data-rich-block><div style="padding:16px;border:1px dashed var(--border-strong);border-radius:8px;text-align:center;color:var(--muted)">' + hint + '</div></div>').run(); markEdited(); }
   }
 
   // ============================ edit / interact mode (resolves boundary K5) ============================
@@ -1415,7 +1395,7 @@ if (note && mount) {
   if (AI_EDIT_ENABLED) slashHooks.askAI = () => openCmdk();
   slashHooks.insertEmbed = (k: string) => insertBlock(k);
   document.getElementById("insertchip")?.addEventListener("click", () => {
-    const k = window.prompt("Insert block: type 'clock' or 'rich'", "clock");
+    const k = window.prompt("Insert block: type 'rich'", "rich");
     if (k) insertBlock(k.trim().toLowerCase());
   });
   // title from first H1 if present

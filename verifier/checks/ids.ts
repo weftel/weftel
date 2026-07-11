@@ -24,8 +24,10 @@ const idsIn = (root: ParentNode) => Array.from(root.querySelectorAll("[id]")).ma
 const dataIn = (root: ParentNode) => {
   const out: string[] = [];
   root.querySelectorAll("*").forEach((e) => {
-    // data-kind / data-tz are APP-OWNED companions when they ride the app's own block
-    // markers (data-callout / data-clock) — an op legitimately edits them. A LONE
+    // data-kind is an APP-OWNED companion when it rides the app's own callout marker
+    // (data-callout) — an op legitimately edits it. data-tz riding a LEGACY data-clock
+    // marker is app-owned too: the #95 migration consumes the whole marker on load (the tz
+    // survives as visible text), so its data-* must not count as lost user content. A LONE
     // data-kind/data-tz on any other element is user content and must survive.
     const companion = (n: string) =>
       (n === "data-kind" && e.hasAttribute("data-callout")) || (n === "data-tz" && e.hasAttribute("data-clock"));

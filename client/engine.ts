@@ -169,11 +169,13 @@ const sboxMd = { markdown: { serialize(state: any, node: any) {
 // safe on the live editable surface — and silently dropping them broke script-driven docs on save
 // (F32: the tabs no longer switched because every panel's data-p was gone). The exclusion list is
 // ONLY the editor's own structural <div> markers — those that a *different* node would re-claim on
-// reload (so echoing one back would flip a styled div into a rich/clock/callout block) or
+// reload (so echoing one back would flip a styled div into a rich/callout block) or
 // that we strip ourselves (data-sbox). Generic names a doc legitimately uses as its own hooks
 // (data-type, data-id, data-src, data-state, …) are USER CONTENT and must round-trip — keeping them
-// here was the whole point. (The app's companion-keyed nodes need data-clock/callout to
-// match, so a lone data-kind/data-tz on a styled div is unambiguous user content.)
+// here was the whole point. (The app's companion-keyed callout needs data-callout to
+// match, so a lone data-kind on a styled div is unambiguous user content. data-clock stays
+// excluded post-#95: it's a legacy app marker consumed by the prepareDoc migration, never
+// user content — echoing one back from a styled div would resurrect a removed block.)
 export const APP_DATA_HOOKS = new Set(["data-sbox", "data-rich-block", "data-clock", "data-callout"]);
 const dataAttrs = () => ({
   data: {
@@ -302,15 +304,6 @@ export const RichBlock = Node.create({
     return editableModelable(el.innerHTML, FULL_PARSE) ? false : null;
   } }]; },
   renderHTML({ node }: any) { const d = document.createElement("div"); d.setAttribute("data-rich-block", ""); d.innerHTML = node.attrs.html; return d; },
-});
-
-// Auth-free dynamic block — proves the live-component mechanism without any login.
-export const ClockBlock = Node.create({
-  name: "clockBlock", group: "block", atom: true, selectable: true, draggable: true,
-  addAttributes() { return { tz: { default: "local" } }; },
-  addStorage() { return { markdown: { serialize(state: any, node: any) { state.write(`<div data-clock data-tz="${escapeAttr(node.attrs.tz)}"></div>`); state.closeBlock(node); } } }; },
-  parseHTML() { return [{ tag: "div[data-clock]", getAttrs: (el: any) => ({ tz: el.getAttribute("data-tz") || "local" }) }]; },
-  renderHTML({ node }: any) { return ["div", { "data-clock": "", "data-tz": node.attrs.tz }]; },
 });
 
 // Callout: a styled, editable container (info/warn/tip). Holds real prose, so it's a
@@ -452,8 +445,8 @@ const TaskListMd = TaskList.extend({
 // handleClick routes clicks itself.
 const DEFAULT_LINK_OPTS = { openOnClick: false, HTMLAttributes: { target: null, rel: null } } as any;
 
-// The four node views the live editor injects (verifier passes none — schema-only).
-export type EngineNodeViews = { image?: any; richBlock?: any; clockBlock?: any; callout?: any };
+// The three node views the live editor injects (verifier passes none — schema-only).
+export type EngineNodeViews = { image?: any; richBlock?: any; callout?: any };
 
 // The single source of truth for the schema, shared by the live editor and every headless
 // consumer. Order is load-bearing — byte-identical to the editor's historical array. The
@@ -473,7 +466,7 @@ export function engineExtensions(opts: { linkOpts?: any; nodeViews?: EngineNodeV
     Table.configure({ resizable: true }), TableRow, TableHeader, TableCell,
     withView(Callout, nv.callout),
     StyledInlineBox, StyledBox, StyledSpan, DecoSpan,
-    withView(ImageNode, nv.image), withView(RichBlock, nv.richBlock), withView(ClockBlock, nv.clockBlock),
+    withView(ImageNode, nv.image), withView(RichBlock, nv.richBlock),
   ];
 }
 
@@ -497,7 +490,6 @@ const STRUCTURAL_TAGS = new Set(["DIV", "ARTICLE", "MAIN", "SECTION", "BODY", "H
 function isolateRich(el: HTMLElement, doc: Document) {
   Array.from(el.children).forEach((c) => {
     const child = c as HTMLElement;
-    if (child.hasAttribute("data-clock")) return;                                           // dynamic block — leave for its node
     if (subtreeEditable(child)) return;                                                     // no unmodelable element anywhere — keep editable
     if (STRUCTURAL_TAGS.has(child.tagName)) { isolateRich(child, doc); return; }            // block wrapper (classed or not) — descend, isolate only the leaves
     const wrap = doc.createElement("div"); wrap.setAttribute("data-rich-block", "");        // unmodelable leaf / unsplittable text element — freeze whole
@@ -555,6 +547,16 @@ export function prepareDoc(raw: string): PreparedDoc {
       p.appendChild(a); el.replaceWith(p);
     } else { el.remove(); }
   });
+  // The Clock block (PoC dynamic block) was removed (#95). A note saved earlier may still
+  // carry <div data-clock data-tz="X">; with no clockBlock node to claim it, degrade it in
+  // place to a small visible paragraph so the marker stays readable and deletable instead
+  // of crashing or vanishing (same policy as data-calendar above).
+  doc.querySelectorAll("div[data-clock]").forEach((el) => {
+    const tz = el.getAttribute("data-tz") || "local";
+    const p = doc.createElement("p");
+    p.textContent = "clock (removed feature) · " + tz;
+    el.replaceWith(p);
+  });
   const container = frameContainer(doc);
   // F39: record the container's identity (only when it's a real wrapper, not body) so own-frame
   // detection can probe whether IT carried the page frame (max-width + margin:auto) the editor stripped.
@@ -586,11 +588,11 @@ export function prepareDoc(raw: string): PreparedDoc {
   // the EDITABLE content without clobbering the chrome (live-only; the original <style> still
   // round-trips verbatim through the template's head).
   const scopedCss = FULL_PARSE ? scopeCss(Array.from(doc.querySelectorAll("style")).map((s) => s.textContent || "").join("\n"), ".note-scope") : "";
-  const hasMarkers = !!container.querySelector("[data-rich-block],[data-clock]");
+  const hasMarkers = !!container.querySelector("[data-rich-block]");
   if (FULL_PARSE) {
     // Re-derive rich blocks from CONTENT, not stale markers: drop every data-rich-block wrapper
     // (from a prior save / md-to-redesigned output — these often pin a whole <article> atomic),
-    // keep dynamic markers (data-clock), then recursively isolate ONLY the minimal
+    // then recursively isolate ONLY the minimal
     // unmodelable subtrees (svg/img/…). A single nested svg no longer freezes the whole document;
     // everything else parses into editable nodes rendered by the scoped doc sheet.
     container.querySelectorAll("[data-rich-block]").forEach((rb) => {
@@ -604,7 +606,7 @@ export function prepareDoc(raw: string): PreparedDoc {
     // element so it's preserved atomic rather than flattened.
     Array.from(container.children).forEach((child) => {
       const el = child as HTMLElement;
-      if (el.hasAttribute("data-rich-block") || el.hasAttribute("data-clock")) return;
+      if (el.hasAttribute("data-rich-block")) return;
       if (PROSE_TAGS.has(el.tagName)) return;
       const wrap = doc.createElement("div"); wrap.setAttribute("data-rich-block", "");
       el.replaceWith(wrap); wrap.appendChild(el);

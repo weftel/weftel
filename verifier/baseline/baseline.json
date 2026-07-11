@@ -1,7 +1,7 @@
 {
- "when": "2026-07-10T22:11:13.333Z",
- "commit": "c2815d4",
- "files": 35,
+ "when": "2026-07-11T02:32:33.979Z",
+ "commit": "8e61de4",
+ "files": 36,
  "results": [
   {
    "file": "tests/e2e/corpus/control/canary-pure-svg.html",
@@ -138,6 +138,28 @@
    "state": "pass",
    "advisory": true,
    "detail": "2 judged, 0 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/provenance/clock-migration.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/provenance/clock-migration.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/provenance/clock-migration.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/provenance/clock-migration.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "5 judged, 0 skipped"
   },
   {
    "file": "tests/e2e/corpus/provenance/entity-heavy.html",
@@ -787,7 +809,7 @@
   }
  ],
  "counts": {
-  "pass": 118,
+  "pass": 122,
   "fail": 9,
   "xfail": 12,
   "xpass": 0,

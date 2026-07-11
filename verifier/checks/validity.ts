@@ -9,8 +9,6 @@ import type { CheckResult } from "../types";
 import { frag } from "../engine-io";
 
 const schema = getSchema(engineExtensions());
-// IANA-ish tz sanity: "Area/City" (allow underscores/hyphens/nested), or "local"
-const TZ_RE = /^(local|[A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)+)$/;
 const CALLOUT_KINDS = new Set(["info", "tip", "warn"]);
 
 export function checkValidity(file: string, raw: string, t2: any, s1: string): CheckResult[] {
@@ -23,10 +21,10 @@ export function checkValidity(file: string, raw: string, t2: any, s1: string): C
   }
 
   const f = frag(s1);
-  f.querySelectorAll("div[data-clock]").forEach((el) => {
-    const tz = el.getAttribute("data-tz") || "local";
-    if (!TZ_RE.test(tz)) out.push({ file, check: "validity", state: "fail", detail: `clock block has implausible tz "${tz}"` });
-  });
+  // #95: the Clock block was removed; prepareDoc migrates any legacy <div data-clock> marker to
+  // a visible paragraph BEFORE parse, so a marker surviving into saved bytes means the migration
+  // regressed (the next load would drop it as an unknown node).
+  if (f.querySelector("div[data-clock]")) out.push({ file, check: "validity", state: "fail", detail: "legacy data-clock marker survived into saved bytes (removed-block migration regressed)" });
   f.querySelectorAll("div[data-callout]").forEach((el) => {
     const kind = el.getAttribute("data-kind") || "";
     if (!CALLOUT_KINDS.has(kind)) out.push({ file, check: "validity", state: "fail", detail: `callout block has unknown kind "${kind}"` });
