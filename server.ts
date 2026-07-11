@@ -16,6 +16,7 @@ import { createHash } from "node:crypto";
 // streamAI() below delegates to the selected provider (CloudProvider by default, which wraps
 // the Agent SDK exactly as before) instead of calling query() directly here.
 import { getProvider, modelInfo } from "./server/providers";
+import { proposals } from "./server/proposals"; // co-authoring proposal queue (phase-2 tracer)
 
 // [AI:cmdk] In-app AI edit (⌘K) — DEFAULT ON in committed code (launch #88: the headline feature
 // must be visible on a fresh clone, no dev.sh). Env override still works: `AI_EDIT_ENABLED=0` drops
@@ -496,6 +497,26 @@ Bun.serve({
         if (!existsSync(p)) return json({ ok: false, error: "no such note (use create)" }, 404);
         try { atomicWrite(p, String(body.content ?? "")); return json({ ok: true }); } catch (e) { return json({ ok: false, error: fsErrMsg(e) }, 500); }
       }
+      // ——— co-authoring proposal queue (phase-2 tracer; server/proposals.ts) ———
+      // The MCP process proposes; the open editor tab polls, gates, applies, and decides.
+      // The server only relays — it never applies ops or writes files for a proposal
+      // (the editor is the single writer while a tab is open).
+      if (url.pathname === "/api/propose") {
+        const p = resolve(String(body.file || ""));
+        if (!okNotePath(p)) return json({ ok: false, error: "path not allowed" }, 403);
+        if (!existsSync(p)) return json({ ok: false, error: "no such note" }, 404);
+        if (!body.op || body.op.kind !== "setText") return json({ ok: false, error: "unsupported op kind (tracer speaks setText only)" }, 400);
+        const r = proposals.propose({ file: p, op: body.op, baseVersion: String(body.baseVersion || ""), target: body.target, summary: String(body.summary || ""), beforeNodeHtml: String(body.beforeNodeHtml || ""), afterNodeHtml: String(body.afterNodeHtml || ""), verify: body.verify || [], ttlMs: body.ttlMs });
+        return r.ok ? json(r) : json(r, 409);
+      }
+      if (url.pathname === "/api/proposal-decision") {
+        const ok = proposals.decide(String(body.id || ""), body.state, body.reason ? String(body.reason) : undefined, body.newVersion ? String(body.newVersion) : undefined);
+        return json({ ok });
+      }
+      if (url.pathname === "/api/proposals-bye") {
+        proposals.bye(resolve(String(body.file || "")));
+        return json({ ok: true });
+      }
       if (url.pathname === "/create") {
         const p = resolve(String(body.file || ""));
         if (!okNotePath(p)) return json({ ok: false, error: "path not allowed" }, 403);
@@ -722,6 +743,18 @@ Bun.serve({
     // [AI:firstrun] Connection state for the "connect your Claude / point at Ollama" first-run banner —
     // whether each ENABLED AI feature's provider is actually reachable (no inference, cheap probe).
     if (url.pathname === "/api/ai-status") return json(await aiStatus());
+
+    // Co-authoring proposals: the editor's 2s poll (records tab liveness as a side effect)
+    // and the MCP process's per-proposal poll. Vault-confined like every file route.
+    if (url.pathname === "/api/proposals") {
+      const p = resolve(url.searchParams.get("file") || "");
+      if (!okNotePath(p)) return json({ proposals: [] });
+      return json({ proposals: proposals.forFile(p) });
+    }
+    if (url.pathname === "/api/proposal") {
+      const found = proposals.get(url.searchParams.get("id") || "");
+      return found ? json({ ok: true, proposal: found }) : json({ ok: false, error: "unknown proposal (expired, pruned, or the server restarted)" }, 404);
+    }
 
     // Preflight for in-doc note links: lets the client explain a dead link in place
     // instead of navigating to a welcome screen.
