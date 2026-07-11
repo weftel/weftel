@@ -139,7 +139,18 @@ if (reviewN && rendered.length) {
   // instructions are prose that may mention literal tags ("the <head> must not change") —
   // escape or the browser eats them as markup
   const escText = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const sections = picks.map(({ t, before, saved }) => `<section style="margin:28px 0"><h2>${t.id}</h2><p><em>${escText(t.instruction)}</em> · <code>${t.source}</code></p><div style="display:flex;gap:12px">${cell(t.id, "before", before)}${cell(t.id, "after", saved)}</div></section>`).join("\n");
+  // reviewer aids for small/buried edits: an op-summary line ("what the script did"), and a
+  // DISPLAY-ONLY <mark> on replaced text in the after pane (the graded bytes are untouched;
+  // best-effort string match — skipped if the text isn't found in a text position).
+  const opBits = (o: any): string[] => o.kind === "sequence" ? o.ops.flatMap(opBits)
+    : [o.kind === "replaceText" ? `replaceText “${o.find}” → “${o.replace}”` : o.kind + (o.attrs ? " " + JSON.stringify(o.attrs) : "")];
+  const replacements = (o: any): string[] => o.kind === "sequence" ? o.ops.flatMap(replacements)
+    : (o.kind === "replaceText" && o.replace ? [o.replace] : []);
+  const sections = picks.map(({ t, before, saved }) => {
+    let display = saved;
+    for (const r of replacements(t.op)) display = display.replace(new RegExp(`(>[^<]*)(${r.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`), `$1<mark style="background:#fff3bf;color:#111">$2</mark>`);
+    return `<section style="margin:28px 0"><h2>${t.id}</h2><p><em>${escText(t.instruction)}</em> · <code>${t.source}</code></p><p style="font-size:13px;color:#6b7280">op: <code>${escText(opBits(t.op).join(" · "))}</code>${t.expectFail ? ` · <span style="color:#b45309">xfail: ${escText(t.expectFail.reason)}</span>` : ""}</p><div style="display:flex;gap:12px">${cell(t.id, "before", before)}${cell(t.id, "after", display)}</div></section>`;
+  }).join("\n");
   writeFileSync(join(REPO, "verifier/golden/review.html"), `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Golden review sheet</title></head><body style="font:15px/1.5 sans-serif;max-width:1100px;margin:2rem auto"><h1>Golden task review — ${commit}</h1>${sections}</body></html>`);
   console.log(`review sheet: verifier/golden/review.html (${picks.length} tasks)`);
 }
