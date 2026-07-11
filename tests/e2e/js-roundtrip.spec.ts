@@ -123,8 +123,11 @@ async function openDoc(page: Page, path: string): Promise<string[]> {
   page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource|ERR_|net::|favicon/i.test(m.text())) errors.push(m.text()); });
   page.on("pageerror", (e) => errors.push("PAGEERROR: " + String(e)));
   await page.goto("/?file=" + encodeURIComponent(path));
+  await page.waitForFunction(() => (window as any).__editor && (window as any).__serialize && (window as any).__setMode);
+  // K5: interactive docs auto-open in INTERACT mode (sandboxed iframe, editor hidden). These
+  // tests exercise the EDIT round-trip — switch via the test seam before waiting on visibility (#100).
+  await page.evaluate(() => (window as any).__setMode("edit"));
   await page.waitForSelector(".ProseMirror");
-  await page.waitForFunction(() => (window as any).__editor && (window as any).__serialize);
   return errors;
 }
 const serialize = (page: Page) => page.evaluate(() => (window as any).__serialize() as string);
