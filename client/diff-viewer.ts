@@ -40,6 +40,9 @@ export interface DiffApproveOpts {
   css?: string;
   // Overridable labels (the caller knows whether this is a rewrite, an insertion, …).
   title?: string;
+  // One muted line under the header stating the exact change ("setText on <h2 id=…>:
+  // 'Old' → 'New'") — the co-authoring gate's intent line. Omit ⇒ no line.
+  summary?: string;
   // Follow-up refine: when provided, the gate shows an input where the user can refine the
   // proposed change ("make the ocean bigger") without leaving the gate. The gate hands back the
   // CURRENT proposal + the instruction; the caller re-runs the model and returns the new proposed
@@ -188,6 +191,7 @@ export function diffApprove(
             '<span class="dgate-k dgate-k-chg">changed</span>' +
           '</span>' +
         '</div>' +
+        (opts.summary ? '<div class="dgate-summary"></div>' : '') +
         '<div class="dgate-body"></div>' +
         (canRefine
           ? '<div class="dgate-refine">' +
@@ -206,6 +210,7 @@ export function diffApprove(
 
     const titleLabel = opts.title || (mode === "author" ? "Review insertion" : mode === "prose" ? "Review rewrite" : "Review change");
     (root.querySelector(".dgate-title") as HTMLElement).textContent = titleLabel;
+    if (opts.summary) (root.querySelector(".dgate-summary") as HTMLElement).textContent = opts.summary;
     const body = root.querySelector(".dgate-body") as HTMLElement;
     const applyBtn = root.querySelector(".dgate-apply") as HTMLButtonElement;
     const refineInput = root.querySelector(".dgate-refine-input") as HTMLInputElement | null;
@@ -376,6 +381,7 @@ function injectStyle(): void {
   .dgate-panel{display:flex;flex-direction:column;width:min(760px,92vw);max-height:86vh;background:#fff;color:#1c1c1e;
     border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.4);overflow:hidden}
   .dgate-head{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid #ececef}
+  .dgate-summary{font-size:12px;color:#6b6b76;padding:8px 18px 0}
   .dgate-title{font-weight:650;font-size:15px}
   .dgate-legend{margin-left:auto;display:flex;gap:10px;font-size:11px;color:#6b6b76}
   .dgate-k{display:inline-flex;align-items:center;gap:5px}
@@ -428,6 +434,7 @@ function injectStyle(): void {
     .dgate-refine-input{background:#26262c;border-color:#3a3a42;color:#ececef}
     .dgate-refine-status{color:#a0a0aa}
     .dgate-empty{color:#a0a0aa}
+    .dgate-summary{color:#a0a0aa}
   }`;
   document.head.appendChild(st);
 }

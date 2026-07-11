@@ -12,9 +12,9 @@ import { Markdown } from "tiptap-markdown";
 import Placeholder from "@tiptap/extension-placeholder";
 import Suggestion from "@tiptap/suggestion";
 import { stripActive, escapeAttr, nativeInsertable, collectSvgTextLeaves, collectSvgTextRuns, collectHtmlTextLeaves, collectHtmlTextRuns, tidyInsertHtml, buildTree, countFiles, buildInteractSrcdoc, sanitizeRelNotePath, routeCmdkIntent, type FormatOp, type TableOp, type TreeNode } from "./lib"; // [AI:cmdk] intent router
-import { DOMSerializer } from "@tiptap/pm/model";
+import { DOMSerializer, Fragment } from "@tiptap/pm/model";
 import { FULL_PARSE, prepareDoc, serializeDoc, engineExtensions } from "./engine"; // shared round-trip engine: schema + parse/serialize (see client/engine.ts)
-import { idDupePositions } from "./ops"; // [#83] id-uniqueness core (pure, unit-tested)
+import { idDupePositions, fnv1a64 } from "./ops"; // [#83] id-uniqueness core + the hash the proposal preconditions use
 import { diffApprove } from "./diff-viewer"; // [AI:diff-gate]
 import { Plugin, TextSelection } from "@tiptap/pm/state";
 import { mountGhostCompletion } from "./ghost-completion"; // [AI:ghost] Tab ghost-text controller
@@ -1014,6 +1014,94 @@ if (note && mount) {
     try { sent = navigator.sendBeacon("/save", new Blob([JSON.stringify({ file: note.file, content: out })], { type: "application/json" })); } catch {}
     if (!sent) { e.preventDefault(); (e as any).returnValue = ""; }
   });
+  // -------- co-authoring proposal gate (phase-2 tracer; see mcp/PLAN.md gate M) --------
+  // The MCP layer proposes node ops; THIS TAB is the single writer: it re-validates the
+  // op against the LIVE doc, shows the rendered gate, applies as ONE PM transaction
+  // (persisting a provisional id iff the op minted one), saves through the normal path,
+  // and only reports "approved" after the save returns — approved always means bytes on
+  // disk. A failed save leaves the proposal pending; ttl expiry surfaces approval_timeout.
+  if (note.format === "html") {
+    const PROPOSAL_POLL_MS = 2000, IDLE_GUARD_MS = 1500;
+    let lastInput = 0;
+    editor.view.dom.addEventListener("beforeinput", () => { lastInput = Date.now(); });
+    const queue: any[] = [];            // FIFO, one gate at a time (diffApprove owns ↵/Esc)
+    const queued = new Set<string>();
+    let gateBusy = false;
+    const decide = (id: string, state: string, reason?: string, newVersion?: string) =>
+      fetch("/api/proposal-decision", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, state, reason, newVersion }) }).then(() => {}, () => {});
+    // Precondition ladder vs the LIVE doc: (1) persisted id, then text-drift check;
+    // (2/3) no id in the live doc (provisional): all blocks matching nodeType+textHash —
+    // unique match wins, ties broken by the structural path; (4) nothing → stale with
+    // agent-readable re-read guidance. baseVersion alone is deliberately NOT a hard gate:
+    // unsaved user edits elsewhere must not strand a still-valid node op.
+    const locate = (t: any): { pos: number; node: any } | { stale: string } => {
+      const doc = editor!.state.doc;
+      let byId: { pos: number; node: any } | null = null;
+      doc.descendants((n: any, pos: number) => { if (!byId && n.attrs && n.attrs.id === t.nodeId) byId = { pos, node: n }; return !byId; });
+      if (byId) {
+        const b = byId as { pos: number; node: any };
+        if (fnv1a64(b.node.textContent) !== t.textHash) return { stale: 'text_drifted: the block\'s text changed since read ("' + (b.node.textContent || "").slice(0, 60) + '") — re-read and re-propose' };
+        return b;
+      }
+      const hits: { pos: number; node: any; path: number[] }[] = [];
+      const walk = (parent: any, base: number, path: number[]) => {
+        parent.forEach((child: any, offset: number, index: number) => {
+          if (!child.isBlock) return;
+          const pos = base + offset;
+          hits.push({ pos, node: child, path: [...path, index] });
+          walk(child, pos + 1, [...path, index]);
+        });
+      };
+      walk(doc, 0, []);
+      const matches = hits.filter((h) => h.node.type.name === t.nodeType && fnv1a64(h.node.textContent) === t.textHash);
+      if (matches.length === 1) return matches[0];
+      const byPath = matches.find((h) => h.path.join(".") === (t.path || []).join("."));
+      if (byPath) return byPath;
+      return { stale: "node_not_found: the target block changed or was deleted since the doc was read — call weftel_read_doc again and retry" };
+    };
+    async function processNext(): Promise<void> {
+      if (gateBusy || !queue.length || !editor) return;
+      if (Date.now() - lastInput < IDLE_GUARD_MS) { setTimeout(processNext, IDLE_GUARD_MS); return; } // don't steal ↵/Esc mid-thought
+      gateBusy = true;
+      const p = queue.shift()!;
+      try {
+        const loc: any = locate(p.target);
+        if (loc.stale) { await decide(p.id, "stale", loc.stale); return; }
+        // Panes recomputed from the LIVE node — the gate shows truth even when the user
+        // edited elsewhere; the proposal's headless-rendered html is only a fallback. A
+        // single-node op trivially renders one changed hunk (the D3 hunk↔op invariant).
+        const ser = DOMSerializer.fromSchema(editor.schema);
+        const before = ((ser.serializeNode(loc.node) as HTMLElement).outerHTML || p.beforeNodeHtml) as string;
+        const afterNode = loc.node.type.create({ ...loc.node.attrs, id: loc.node.attrs.id ?? p.target.nodeId }, p.op.text ? editor.schema.text(p.op.text) : null, loc.node.marks);
+        const after = ((ser.serializeNode(afterNode) as HTMLElement).outerHTML || p.afterNodeHtml) as string;
+        const res = await diffApprove(before, after, "prose", { title: "Claude proposes an edit", summary: p.summary, css: RICH_STYLES });
+        if (!res.accepted) { await decide(p.id, "rejected", "human_rejected: the user declined this change — do not retry the same edit; ask what they'd prefer"); return; }
+        // Re-locate (the doc may have shifted while the gate was open), then ONE transaction:
+        // persist-on-touch id + content replace — indistinguishable from a human edit downstream.
+        const loc2: any = locate(p.target);
+        if (loc2.stale) { await decide(p.id, "stale", loc2.stale); return; }
+        const tr = editor.state.tr;
+        if ("id" in loc2.node.attrs && loc2.node.attrs.id == null) tr.setNodeMarkup(loc2.pos, undefined, { ...loc2.node.attrs, id: p.target.nodeId });
+        tr.replaceWith(loc2.pos + 1, loc2.pos + 1 + loc2.node.content.size, p.op.text ? editor.schema.text(p.op.text) : Fragment.empty);
+        editor.view.dispatch(tr);
+        markEdited();
+        const ok = await flushSave();
+        if (ok) { await decide(p.id, "approved", undefined, fnv1a64(serialize())); flash("Claude's edit applied"); }
+      } finally { gateBusy = false; processNext(); }
+    }
+    const pollProposals = async () => {
+      if (!editor) return;
+      try {
+        const r = await fetch("/api/proposals?file=" + encodeURIComponent(note.file)).then((x) => x.json());
+        for (const p of r.proposals || []) if (!queued.has(p.id)) { queued.add(p.id); queue.push(p); }
+        processNext();
+      } catch {}
+    };
+    setInterval(pollProposals, PROPOSAL_POLL_MS);
+    window.addEventListener("focus", pollProposals);
+    window.addEventListener("beforeunload", () => { try { navigator.sendBeacon("/api/proposals-bye", new Blob([JSON.stringify({ file: note.file })], { type: "application/json" })); } catch {} });
+  }
+
   // navigate helper: flush first; if the save fails, stay put so edits aren't lost
   async function go(href: string) { const ok = await flushSave(); if (!ok) { flash("save failed — staying so you don't lose edits", false); return; } location.href = href; }
 
