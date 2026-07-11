@@ -10,7 +10,7 @@ import { getSchema } from "@tiptap/core";
 import { Node as PMNode } from "@tiptap/pm/model";
 import { EditorState } from "@tiptap/pm/state";
 import { engineExtensions, htmlToDoc, docToBody } from "../../client/engine";
-import { fnv1a64, docVersionOf, mintIds, idDupePositions } from "../../client/ops";
+import { fnv1a64, docVersionOf, mintIds, idDupePositions, findById, applyOp, validateOp, outline } from "../../client/ops";
 
 const schema = getSchema(engineExtensions());
 const toDoc = (html: string) => PMNode.fromJSON(schema, htmlToDoc(html));
@@ -112,4 +112,58 @@ test("idDupePositions: pre-existing author duplicates are untouched; distinct id
   expect(idDupePositions(dupes, dupes)).toHaveLength(0);           // load: count unchanged
   const clean = toDoc('<p id="a">a</p><p id="b">b</p>');
   expect(idDupePositions(clean, clean)).toHaveLength(0);
+});
+
+// ————— gate K: id-addressed layer (findById / setText / validateOp / outline) —————
+
+const RAW = '<h2 id="sec-1">Title</h2><p>lead paragraph</p><p>second</p>';
+
+test("findById: persisted id direct; provisional id via the minted map", () => {
+  const doc = toDoc(RAW);
+  expect(findById(doc, "sec-1")?.node.type.name).toBe("heading");
+  expect(findById(doc, "w-zzzz")).toBeNull();
+  const minted = mintIds(doc, docVersionOf(RAW));
+  const [pos, mid] = [...minted.entries()][0];
+  const hit = findById(doc, mid, minted);
+  expect(hit?.pos).toBe(pos);
+});
+
+test("setText: replaces inline content; a provisional id persists in the SAME transaction", () => {
+  const doc = toDoc(RAW);
+  const minted = mintIds(doc, docVersionOf(RAW));
+  const target = [...minted.values()][0];                          // first id-less block (the lead <p>)
+  const after = applyOp(doc, { kind: "setText", nodeId: target, text: "rewritten" }, minted);
+  const saved = docToBody(after.toJSON());
+  expect(saved).toContain(`id="${target}"`);                       // persist-on-touch
+  expect(saved).toContain(">rewritten</p>");
+  expect(saved).toContain('id="sec-1"');                           // untouched author id intact
+  expect((saved.match(/w-/g) || []).length).toBe(1);               // ONLY the touched node gained an id
+});
+
+test("setText: addressing an author id works without a minted map", () => {
+  const after = applyOp(toDoc(RAW), { kind: "setText", nodeId: "sec-1", text: "New title" });
+  expect(docToBody(after.toJSON())).toContain('<h2 id="sec-1">New title</h2>');
+});
+
+test("validateOp: agent-readable rejections — node_not_found and kind_incompatible", () => {
+  const doc = toDoc('<div class="card" id="box"><p id="p1">inner</p></div>');
+  const missing = validateOp(doc, { kind: "setText", nodeId: "nope", text: "x" });
+  expect(missing).toMatchObject({ ok: false, code: "node_not_found" });
+  const container = validateOp(doc, { kind: "setText", nodeId: "box", text: "x" });
+  expect(container).toMatchObject({ ok: false, code: "kind_incompatible" });
+  expect((container as any).message).toContain("styledBox");
+  expect(validateOp(doc, { kind: "setText", nodeId: "p1", text: "x" })).toEqual({ ok: true });
+});
+
+test("outline: document-order blocks with paths, hashes, pristine flags", () => {
+  const doc = toDoc(RAW);
+  const o = outline(doc, docVersionOf(RAW));
+  expect(o.map((b) => b.kind)).toEqual(["heading", "paragraph", "paragraph"]);
+  expect(o[0]).toMatchObject({ id: "sec-1", authorId: true, pristine: false, depth: 0, path: [0] });
+  expect(o[1].authorId).toBe(false);
+  expect(o[1].id).toMatch(/^w-[0-9a-z]{4}$/);
+  expect(o[1].textHash).toBe(fnv1a64("lead paragraph"));
+  // deterministic across parses
+  const o2 = outline(toDoc(RAW), docVersionOf(RAW));
+  expect(o2.map((b) => b.id)).toEqual(o.map((b) => b.id));
 });

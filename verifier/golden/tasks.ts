@@ -88,6 +88,14 @@ export const TASKS: GoldenTask[] = [
     instruction: "Reword the lead paragraph under Summary.",
     op: { kind: "replaceText", find: "held steady", replace: "held firm" },
     expect: [{ kind: "savedContains", text: "held firm" }] },
+  { id: "settext-by-id", tier: "assist", title: "id-addressed setText — the tracer op's reference semantics", source: `${C}/identity/anchors-toc.html`,
+    instruction: "Retitle the Summary section heading to 'Executive summary'.",
+    op: { kind: "setText", nodeId: "sec-1", text: "Executive summary" },
+    expect: [
+      { kind: "nodeText", match: { type: "heading", textContains: "Executive summary" }, equals: "Executive summary" },
+      { kind: "savedContains", text: 'id="sec-1"' },              // the addressed id persists…
+      { kind: "savedContains", text: 'href="#sec-1"' },           // …and the doc's own TOC anchor still targets it
+      { kind: "savedNotContains", text: ">Summary</h2>" }] },     // (the TOC link text legitimately keeps saying "Summary")
   { id: "id-delete-one-keep-rest", tier: "assist", title: "delete one identified section", source: `${C}/identity/anchors-toc.html`,
     instruction: "Delete the Appendix section heading entirely.",
     op: { kind: "deleteBlock", match: { type: "heading", textContains: "Appendix" } },
