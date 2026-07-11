@@ -5,6 +5,10 @@ import { test, expect, describe, afterAll } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+// Bun's NATIVE fetch, immune to happy-dom's GlobalRegistrator: when the whole unit suite
+// runs, engine/ops tests register happy-dom first, whose patched global fetch enforces a
+// browser same-origin policy and blocks localhost integration calls.
+import { fetch } from "bun";
 import { ProposalQueue } from "../../server/proposals";
 
 const TARGET = { nodeId: "w-abcd", authorId: false, nodeType: "paragraph", path: [1], textHash: "x", preview: "lead" };
