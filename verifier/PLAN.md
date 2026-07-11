@@ -88,6 +88,13 @@ Runner: prepareDoc → htmlToDoc → apply op on headless `EditorState` → docT
 - Verifier correctness: unit tests for contrast math (known WCAG vectors), ids diffing, xfail/xpass accounting; Gate B parity spike against Playwright-captured saves.
 - Phase gate: `bun verifier/cli.ts` exit 0 with committed baseline; `bun verifier/golden/run.ts` exit 0, deterministic across two runs.
 
+## Gate F: SIGNED OFF — Ben, 2026-07-10
+
+Full review of all 26 tasks + rendered before/afters in both renderers (weftel dark mode +
+Chrome). 15 flags raised, 14 actionable → 5 board issues (#94–#98), the rest encoded as
+harness fixes (appendItem, innermost-match resolver, delta contrast gate, tier system,
+reviewer aids). Remaining human gate: G (invoke /fidelity-verify in a fresh session).
+
 ## Gate-F retro addendum (2026-07-10)
 
 Ben's calibration pass caught 5 things; 4 are automatable and should shrink the human loop in Phase 2+:
