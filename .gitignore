@@ -14,3 +14,4 @@ blob-report/
 tests/e2e/corpus/real-career/
 tests/e2e/corpus/_shots/
 tests/e2e/.vault/corpus__*
+verifier/golden/_visual/

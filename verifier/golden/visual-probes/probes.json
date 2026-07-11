@@ -1,0 +1,18 @@
+[
+  {
+    "id": "iframe-panes",
+    "kind": "renderer_disagreement",
+    "instruction": "No edit — the doc must simply READ the same in both renderers. The two checklist panes carry the release steps and the rollback plan.",
+    "before": "iframe-panes.html",
+    "after": "iframe-panes.html",
+    "mustFlag": "renderersAgree=false — the app strips iframes (stripActive, #94) so both panes render EMPTY in weftel while the raw browser shows the checklist content"
+  },
+  {
+    "id": "item-outside-list",
+    "kind": "instruction_mismatch",
+    "instruction": "Add 'ship the retro notes' as a fourth item INSIDE the action-items bullet list.",
+    "before": "item-outside-list.before.html",
+    "after": "item-outside-list.after.html",
+    "mustFlag": "instructionMatch=false — the text was appended as a paragraph AFTER the list, not as a list item (the gate-F catch)"
+  }
+]
