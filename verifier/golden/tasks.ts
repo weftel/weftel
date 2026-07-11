@@ -96,7 +96,12 @@ export const TASKS: GoldenTask[] = [
   { id: "head-template-integrity", title: "small edit, shell byte-identical", source: `${C}/real-published/adamw.html`,
     instruction: "Fix one word; the <head>, styles and meta must not change.",
     op: { kind: "replaceText", find: "intuition", replace: "core intuition" },
-    expect: [{ kind: "savedContains", text: "core intuition" }, { kind: "byteIdenticalRegion", selector: "head" }] },
+    expect: [{ kind: "savedContains", text: "core intuition" }, { kind: "byteIdenticalRegion", selector: "head" }],
+    // Mirrors the verifier's adamw FIRST_SAVE_NORM pin: happy-dom's serialize path drops
+    // color-mix style attrs (style="" vs absent → T1≠T2 once). Headless-only — browser
+    // truth guarded by tests/e2e/style-shorthand.spec.ts. Surfaced here when the gate-J
+    // flip stopped mergeNestedSpanStyles from accidentally stabilizing the pass.
+    expectFail: { checks: ["roundtrip"], reason: "headless CSSOM drops color-mix style attrs (adamw badge spans); settles by S2", issue: "#102" } },
   { id: "classed-heading-class-survives", title: "element CSS keeps matching after a heading edit", source: `${C}/styling-source/element-selectors.html`,
     instruction: "Retitle 'Section' to 'Overview'; the h2/b element styles must keep applying.",
     op: { kind: "replaceText", find: "Section", replace: "Overview" },

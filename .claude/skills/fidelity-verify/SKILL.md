@@ -67,10 +67,12 @@ diagnostic. The log is history; GOTCHAS is scar tissue.
   diagnostic: `bun -e` probe reading both accessors on the failing span. Never resolve
   styles via CSSOM in verifier code — parse the raw attribute string (see checks/css.ts).
 - **TipTap TextStyle defaults `mergeNestedSpanStyles: true`** — parse MUTATES a nested
-  span's style attr (child gains parent's color). Source of the "first-save
-  normalization" xfail class (T1≠T2 once, settles by S2) and a browser-side save
-  mutation of user styles. Fast diagnostic: word-diff engine save vs
-  `tests/e2e/.vault/corpus_idem__*` artifact — divergence confined to nested styled spans.
+  span's style attr (child gains parent's color). FIXED at phase-2 gate J
+  (`StyledTextStyle.configure({ mergeNestedSpanStyles: false })` in engineExtensions;
+  browser guard: tests/e2e/style-shorthand.spec.ts). The surviving first-save xfail class
+  is style-STRING normalization only: headless happy-dom CSSOM reformats + drops modern
+  fns; the browser rewrites styled-box strings hex→rgb once (#102). Fast diagnostic:
+  word-diff engine save vs `tests/e2e/.vault/corpus_idem__*` artifact.
 - **happy-dom drops whitespace-only text nodes in frozen (rich-block) subtrees** — frozen
   byte-identity holds only modulo `>\s+<` collapse headless; the browser path is
   byte-faithful (tests/e2e/js-roundtrip.spec.ts). Compare with the `norm()` helper in

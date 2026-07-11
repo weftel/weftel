@@ -58,6 +58,16 @@ Scope per issue: delete ClockBlock from `client/engine.ts` (node, engineExtensio
 - Spike as spec: `tests/e2e/style-shorthand.spec.ts` — authored `style="border-top:4px solid #c9302c;flex:1"` on a styled box, one unrelated edit, assert `window.__serialize()` keeps the shorthand verbatim in real Chromium. Expands → engine fix follow-up (style attrs via getAttribute passthrough, never CSSOM). Headless-only → keep GOTCHAS pin, spec stays as regression guard.
 **J:** pins removed/re-pinned honestly, baseline refreshed, verdict recorded in `mcp/PLAN.md` + comment on #93.
 
+> **Gate-J verdict (2026-07-10):** flip landed — the #93 value mutation (nested span gains
+> parent color) is gone in real Chromium (guard: `tests/e2e/style-shorthand.spec.ts`).
+> ZERO of the 7 roundtrip pins xpassed: the surviving T1≠T2 class is style-STRING
+> instability, re-scoped and re-pinned — headless happy-dom CSSOM reformats strings and
+> drops modern fns (color-mix survives in Chromium, proven); the browser separately
+> rewrites styled-box strings hex→rgb on first save (**#102**, pre-existing, F40-class,
+> pinned live via test.fail). Fix direction for #102: getAttribute-passthrough render,
+> never CSSOM. One golden pin added (head-template-integrity on adamw — the flip stopped
+> mergeNestedSpanStyles from accidentally stabilizing the headless pass).
+
 ### Step 3 — hoist ops: `client/ops.ts` — **Gate K** (parallel with J, L)
 Move `schema`, `findNode` (innermost-match comment intact), `findText`, `topLevelBlock`, `applyOp` from `verifier/golden/ops.ts` (which becomes a re-export shim; `Op`/`NodeMatch` move to ops.ts, golden/types.ts re-exports). Header mirrors the engine invariant: imports only `./engine` + `@tiptap/*`, never `./editor`.
 New in `client/ops.ts`: `Op` gains `{ kind: "setText"; nodeId: string; text: string }`; `fnv1a64`, `docVersionOf(rawBytes)`, `OutlineBlock { id, authorId, kind, depth, path, text≤120, textHash, pristine }`, `mintIds`, `outline`, `findById(doc, id, minted?)`, `validateOp`. setText semantics (documented in the tool description): replaces the block's entire inline content with plain unmarked text — richer ops are Phase 3. Add a golden task doing setText-by-id on `anchors-toc.html`.

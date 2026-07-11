@@ -482,7 +482,10 @@ export function engineExtensions(opts: { linkOpts?: any; nodeViews?: EngineNodeV
     FULL_PARSE ? StarterKit.configure({ bold: false, italic: false, hardBreak: false, link: linkOpts }) : StarterKit.configure({ hardBreak: false, link: linkOpts }),
     HardBreakMd, // F42: replaces StarterKit's hardBreak so softbreaks round-trip as "\n", not "\\\n"
     ...(FULL_PARSE ? [BoldTagged, ItalicTagged, PreserveAttrs] : []),
-    StyledTextStyle, Color, StyledHighlight.configure({ multicolor: true }), InlineStyle,
+    // #93: mergeNestedSpanStyles defaults TRUE and MUTATES a nested span's style attr at
+    // parse (child gains the parent's color) — a save-time rewrite of user-authored styles
+    // (F40-class) and the first-save-normalization source. Off: nested spans parse verbatim.
+    StyledTextStyle.configure({ mergeNestedSpanStyles: false }), Color, StyledHighlight.configure({ multicolor: true }), InlineStyle,
     TaskListMd, TaskItem.configure({ nested: true }), TaskInputRule, MarkdownListFix,
     Table.configure({ resizable: true }), TableRow, TableHeader, TableCell,
     withView(Callout, nv.callout),
