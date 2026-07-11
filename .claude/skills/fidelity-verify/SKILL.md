@@ -92,5 +92,10 @@ diagnostic. The log is history; GOTCHAS is scar tissue.
   Never assert on shorthand strings in saved bytes — assert on stable VALUES (`#c9302c`).
   Also a suspected contributor to the #93 first-save-normalization class on inline-styled
   docs (T1 parses the authored string, T2 parses the expansion).
+- **happy-dom's GlobalRegistrator replaces `globalThis.fetch`** with a browser-policed one
+  (OPTIONS preflight + same-origin policy) — any process that imports `verifier/engine-io`
+  (the MCP server, mixed unit-test runs) silently loses plain HTTP to localhost with a
+  misleading "unreachable"/CORS error. Fix: `import { fetch } from "bun"` for real HTTP.
+  Hit twice on 2026-07-10 (tests/unit/proposals full-suite run; mcp/tools pipeline).
 - **#83 xfail inventory lives in `verifier/expectations.ts`**, one explicit pin per
   fixture — never glob, never annotate fixtures themselves.

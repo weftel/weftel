@@ -1097,6 +1097,7 @@ if (note && mount) {
         processNext();
       } catch {}
     };
+    pollProposals(); // immediate: register liveness the moment the tab opens, not 2s later
     setInterval(pollProposals, PROPOSAL_POLL_MS);
     window.addEventListener("focus", pollProposals);
     window.addEventListener("beforeunload", () => { try { navigator.sendBeacon("/api/proposals-bye", new Blob([JSON.stringify({ file: note.file })], { type: "application/json" })); } catch {} });
