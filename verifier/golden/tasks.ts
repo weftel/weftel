@@ -29,10 +29,12 @@ export const TASKS: GoldenTask[] = [
     op: { kind: "replaceText", find: "Background", replace: "Founding story" },
     expect: [{ kind: "nodeText", match: { type: "heading" }, equals: "Founding story" }, { kind: "savedContains", text: 'class="card"' }] },
   { id: "inline-style-color-change", title: "change a text color (contrast-gated)", source: `${C}/identity/deco-dots.html`,
-    instruction: "Set 'drained hourly' in dark slate so it stands out — and keep it readable (AA).",
-    op: { kind: "wrapMark", find: "drained hourly", mark: "textStyle", attrs: { color: "#1f2937" } },
+    instruction: "Set 'drained hourly' in deep blue so it stands out — and keep it readable (AA).",
+    // deep blue, not dark slate: the reviewed change must be VISIBLE (dark slate ≈ body
+    // text — a real change no human could verify); #1d4ed8 on white ≈ 6.4:1, passes AA
+    op: { kind: "wrapMark", find: "drained hourly", mark: "textStyle", attrs: { color: "#1d4ed8" } },
     contrastGate: true,
-    expect: [{ kind: "savedContains", text: "#1f2937" }],
+    expect: [{ kind: "savedContains", text: "#1d4ed8" }],
     expectFail: { checks: ["ids"], reason: ID_DROP, issue: "#83" } },
   { id: "styled-span-heavy-edit", title: "edit text beside a styled span", source: `${C}/schema/marks-soup.html`,
     instruction: "Change 'line' to 'row' in the badge line without disturbing the tag span.",

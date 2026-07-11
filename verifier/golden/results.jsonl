@@ -1,26 +1,26 @@
-{"commit":"7b2f78e","id":"cell-edit-basic","ok":true,"failures":[],"xfails":[]}
-{"commit":"7b2f78e","id":"cell-edit-numeric","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: metrics-head,panel-notes,metrics-table,col-p99,cell-eu"]}
-{"commit":"7b2f78e","id":"prose-bold-range","ok":true,"failures":[],"xfails":[]}
-{"commit":"7b2f78e","id":"prose-rewrite-across-marks","ok":true,"failures":[],"xfails":[]}
-{"commit":"7b2f78e","id":"prose-edit-classed-heading","ok":true,"failures":[],"xfails":[]}
-{"commit":"7b2f78e","id":"inline-style-color-change","ok":true,"failures":[],"xfails":["ids: lost 4 id(s) region=modeled: board-head,dot-api,dot-queue,dot-batch"]}
-{"commit":"7b2f78e","id":"styled-span-heavy-edit","ok":true,"failures":[],"xfails":[]}
-{"commit":"7b2f78e","id":"deco-span-survival","ok":true,"failures":[],"xfails":["ids: lost 4 id(s) region=modeled: board-head,dot-api,dot-queue,dot-batch"]}
-{"commit":"7b2f78e","id":"block-insert-para","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: top,sec-1,p-lead,sec-2,sec-3 · broken-anchor href=\"#…\" targets: sec-1,sec-2,sec-3,top"]}
-{"commit":"7b2f78e","id":"block-delete-section","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: top,sec-1,p-lead,sec-2,sec-3 · broken-anchor href=\"#…\" targets: sec-1,sec-2,sec-3,top"]}
-{"commit":"7b2f78e","id":"block-move-up","ok":true,"failures":[],"xfails":["ids: lost 4 id(s) region=modeled: board-head,dot-api,dot-queue,dot-batch"]}
-{"commit":"7b2f78e","id":"multi-block-restructure","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: metrics-head,panel-notes,metrics-table,col-p99,cell-eu"]}
-{"commit":"7b2f78e","id":"table-sort-desc","ok":true,"failures":[],"xfails":[]}
-{"commit":"7b2f78e","id":"list-task-add","ok":true,"failures":[],"xfails":[]}
-{"commit":"7b2f78e","id":"callout-kind-change","ok":true,"failures":[],"xfails":[]}
-{"commit":"7b2f78e","id":"clock-tz-edit","ok":true,"failures":[],"xfails":[]}
-{"commit":"7b2f78e","id":"frozen-block-untouched","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: metrics-head,panel-notes,metrics-table,col-p99,cell-eu"]}
-{"commit":"7b2f78e","id":"script-preservation-edit","ok":true,"failures":[],"xfails":[]}
-{"commit":"7b2f78e","id":"id-anchor-critical","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: top,sec-1,p-lead,sec-2,sec-3 · broken-anchor href=\"#…\" targets: sec-1,sec-2,sec-3,top"]}
-{"commit":"7b2f78e","id":"id-delete-one-keep-rest","ok":true,"failures":[],"xfails":["ids: lost 4 id(s) region=modeled: top,sec-1,p-lead,sec-2 · broken-anchor href=\"#…\" targets: sec-1,sec-2,top"]}
-{"commit":"7b2f78e","id":"head-template-integrity","ok":true,"failures":[],"xfails":[]}
-{"commit":"7b2f78e","id":"classed-heading-class-survives","ok":true,"failures":[],"xfails":[]}
-{"commit":"7b2f78e","id":"table-to-list","ok":true,"failures":[],"xfails":[]}
-{"commit":"7b2f78e","id":"prose-to-tasklist","ok":true,"failures":[],"xfails":["ids: lost 1 id(s) region=modeled: board-head"]}
-{"commit":"7b2f78e","id":"table-to-statcards","ok":true,"failures":[],"xfails":[]}
-{"commit":"7b2f78e","id":"card-restyle","ok":true,"failures":[],"xfails":[]}
+{"commit":"dd94486","id":"cell-edit-basic","ok":true,"failures":[],"xfails":[]}
+{"commit":"dd94486","id":"cell-edit-numeric","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: metrics-head,panel-notes,metrics-table,col-p99,cell-eu"]}
+{"commit":"dd94486","id":"prose-bold-range","ok":true,"failures":[],"xfails":[]}
+{"commit":"dd94486","id":"prose-rewrite-across-marks","ok":true,"failures":[],"xfails":[]}
+{"commit":"dd94486","id":"prose-edit-classed-heading","ok":true,"failures":[],"xfails":[]}
+{"commit":"dd94486","id":"inline-style-color-change","ok":true,"failures":[],"xfails":["ids: lost 4 id(s) region=modeled: board-head,dot-api,dot-queue,dot-batch"]}
+{"commit":"dd94486","id":"styled-span-heavy-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"dd94486","id":"deco-span-survival","ok":true,"failures":[],"xfails":["ids: lost 4 id(s) region=modeled: board-head,dot-api,dot-queue,dot-batch"]}
+{"commit":"dd94486","id":"block-insert-para","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: top,sec-1,p-lead,sec-2,sec-3 · broken-anchor href=\"#…\" targets: sec-1,sec-2,sec-3,top"]}
+{"commit":"dd94486","id":"block-delete-section","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: top,sec-1,p-lead,sec-2,sec-3 · broken-anchor href=\"#…\" targets: sec-1,sec-2,sec-3,top"]}
+{"commit":"dd94486","id":"block-move-up","ok":true,"failures":[],"xfails":["ids: lost 4 id(s) region=modeled: board-head,dot-api,dot-queue,dot-batch"]}
+{"commit":"dd94486","id":"multi-block-restructure","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: metrics-head,panel-notes,metrics-table,col-p99,cell-eu"]}
+{"commit":"dd94486","id":"table-sort-desc","ok":true,"failures":[],"xfails":[]}
+{"commit":"dd94486","id":"list-task-add","ok":true,"failures":[],"xfails":[]}
+{"commit":"dd94486","id":"callout-kind-change","ok":true,"failures":[],"xfails":[]}
+{"commit":"dd94486","id":"clock-tz-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"dd94486","id":"frozen-block-untouched","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: metrics-head,panel-notes,metrics-table,col-p99,cell-eu"]}
+{"commit":"dd94486","id":"script-preservation-edit","ok":true,"failures":[],"xfails":[]}
+{"commit":"dd94486","id":"id-anchor-critical","ok":true,"failures":[],"xfails":["ids: lost 5 id(s) region=modeled: top,sec-1,p-lead,sec-2,sec-3 · broken-anchor href=\"#…\" targets: sec-1,sec-2,sec-3,top"]}
+{"commit":"dd94486","id":"id-delete-one-keep-rest","ok":true,"failures":[],"xfails":["ids: lost 4 id(s) region=modeled: top,sec-1,p-lead,sec-2 · broken-anchor href=\"#…\" targets: sec-1,sec-2,top"]}
+{"commit":"dd94486","id":"head-template-integrity","ok":true,"failures":[],"xfails":[]}
+{"commit":"dd94486","id":"classed-heading-class-survives","ok":true,"failures":[],"xfails":[]}
+{"commit":"dd94486","id":"table-to-list","ok":true,"failures":[],"xfails":[]}
+{"commit":"dd94486","id":"prose-to-tasklist","ok":true,"failures":[],"xfails":["ids: lost 1 id(s) region=modeled: board-head"]}
+{"commit":"dd94486","id":"table-to-statcards","ok":true,"failures":[],"xfails":[]}
+{"commit":"dd94486","id":"card-restyle","ok":true,"failures":[],"xfails":[]}

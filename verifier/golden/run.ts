@@ -145,7 +145,7 @@ if (reviewN && rendered.length) {
   const opBits = (o: any): string[] => o.kind === "sequence" ? o.ops.flatMap(opBits)
     : [o.kind === "replaceText" ? `replaceText “${o.find}” → “${o.replace}”` : o.kind + (o.attrs ? " " + JSON.stringify(o.attrs) : "")];
   const replacements = (o: any): string[] => o.kind === "sequence" ? o.ops.flatMap(replacements)
-    : (o.kind === "replaceText" && o.replace ? [o.replace] : []);
+    : (o.kind === "replaceText" && o.replace ? [o.replace] : o.kind === "wrapMark" ? [o.find] : []);
   const sections = picks.map(({ t, before, saved }) => {
     let display = saved;
     for (const r of replacements(t.op)) display = display.replace(new RegExp(`(>[^<]*)(${r.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`), `$1<mark style="background:#fff3bf;color:#111">$2</mark>`);
