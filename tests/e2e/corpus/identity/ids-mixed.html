@@ -1,0 +1,19 @@
+<!--corpus stress="ids across regions: modeled heading/cell/styled-box vs id inside a frozen svg (survives-control)" editable=true editTarget="throughput" neighbor="latency" frozenMin=1 mustContain="svg-label"-->
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Ids across regions</title><style>
+body{font:15px/1.5 sans-serif;color:#111;background:#fff;max-width:640px;margin:2rem auto}
+.panel{background:#eef1f6;border-radius:10px;padding:14px;margin:12px 0}
+td,th{border:1px solid #c8cdd6;padding:6px 10px}
+</style></head><body>
+<h2 id="metrics-head">Service metrics</h2>
+<p>We track throughput and latency for every region separately.</p>
+<div class="panel" id="panel-notes">
+<p>Notes captured during the incident review live in this panel.</p>
+</div>
+<table id="metrics-table"><thead><tr><th>Region</th><th id="col-p99">p99 ms</th></tr></thead>
+<tbody><tr><td id="cell-eu">eu-west</td><td>184</td></tr></tbody></table>
+<svg viewBox="0 0 200 60" width="200" height="60" role="img" aria-label="sparkline">
+<path d="M0 50 L40 42 L80 44 L120 30 L160 26 L200 12" fill="none" stroke="#2547c9" stroke-width="2"></path>
+<text id="svg-label" x="6" y="14" font-size="10">p99 trend</text>
+</svg>
+</body></html>

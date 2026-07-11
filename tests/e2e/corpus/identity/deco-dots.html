@@ -1,0 +1,12 @@
+<!--corpus stress="empty decorative spans with ids (status dots) beside editable prose" editable=true editTarget="pipeline" neighbor="deploys" mustContain="Status board"-->
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Status board</title><style>
+body{font:15px/1.6 sans-serif;color:#14171c;background:#fff;max-width:600px;margin:2rem auto}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+.ok{background:#1a9c4b}.warn{background:#d99114}.down{background:#c9302c}
+</style></head><body>
+<h2 id="board-head">Status board</h2>
+<p><span class="dot ok" id="dot-api"></span>API — the pipeline is green and deploys are flowing.</p>
+<p><span class="dot warn" id="dot-queue"></span>Queue — backlog above normal, drained hourly.</p>
+<p><span class="dot down" id="dot-batch"></span>Batch — paused pending the storage migration.</p>
+</body></html>

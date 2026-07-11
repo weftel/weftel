@@ -1,0 +1,798 @@
+{
+ "when": "2026-07-10T22:11:13.333Z",
+ "commit": "c2815d4",
+ "files": 35,
+ "results": [
+  {
+   "file": "tests/e2e/corpus/control/canary-pure-svg.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/control/canary-pure-svg.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/control/canary-pure-svg.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/control/canary-pure-svg.html",
+   "check": "contrast",
+   "state": "skip",
+   "advisory": true,
+   "detail": "no judgeable text elements"
+  },
+  {
+   "file": "tests/e2e/corpus/identity/anchors-toc.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/identity/anchors-toc.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/identity/anchors-toc.html",
+   "check": "ids",
+   "state": "xfail",
+   "detail": "lost 5 id(s) region=modeled: top,sec-1,p-lead,sec-2,sec-3 · broken-anchor href=\"#…\" targets: sec-1,sec-2,sec-3,top"
+  },
+  {
+   "file": "tests/e2e/corpus/identity/anchors-toc.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "11 judged, 0 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/identity/deco-dots.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/identity/deco-dots.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/identity/deco-dots.html",
+   "check": "ids",
+   "state": "xfail",
+   "detail": "lost 4 id(s) region=modeled: board-head,dot-api,dot-queue,dot-batch"
+  },
+  {
+   "file": "tests/e2e/corpus/identity/deco-dots.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "4 judged, 0 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/identity/ids-mixed.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/identity/ids-mixed.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/identity/ids-mixed.html",
+   "check": "ids",
+   "state": "xfail",
+   "detail": "lost 5 id(s) region=modeled: metrics-head,panel-notes,metrics-table,col-p99,cell-eu"
+  },
+  {
+   "file": "tests/e2e/corpus/identity/ids-mixed.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "8 judged, 0 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/provenance/ai-card.html",
+   "check": "roundtrip",
+   "state": "xfail",
+   "detail": "tree changed across save+reparse (T1 ≠ T2 in canonical form)"
+  },
+  {
+   "file": "tests/e2e/corpus/provenance/ai-card.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/provenance/ai-card.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/provenance/ai-card.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "2 judged, 0 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/provenance/browser-saved.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/provenance/browser-saved.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/provenance/browser-saved.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/provenance/browser-saved.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "2 judged, 0 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/provenance/entity-heavy.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/provenance/entity-heavy.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/provenance/entity-heavy.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/provenance/entity-heavy.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "1 judged, 0 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/real-career/decision-thesis.html",
+   "check": "roundtrip",
+   "state": "xfail",
+   "detail": "tree changed across save+reparse (T1 ≠ T2 in canonical form)"
+  },
+  {
+   "file": "tests/e2e/corpus/real-career/decision-thesis.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/real-career/decision-thesis.html",
+   "check": "ids",
+   "state": "xfail",
+   "detail": "lost 5 id(s) region=modeled: w0v,w1v,w2v,bars,winnerNote"
+  },
+  {
+   "file": "tests/e2e/corpus/real-career/decision-thesis.html",
+   "check": "contrast",
+   "state": "fail",
+   "advisory": true,
+   "detail": "36/109 judged elements below AA: <div.eyebrow> ratio 3.50 < 4.5 · <p.sub> ratio 2.54 < 4.5 · <h2> ratio 3.50 < 4.5 · <p.muted> ratio 2.54 < 4.5 (+32)"
+  },
+  {
+   "file": "tests/e2e/corpus/real-career/project-deep-dives.html",
+   "check": "roundtrip",
+   "state": "xfail",
+   "detail": "tree changed across save+reparse (T1 ≠ T2 in canonical form)"
+  },
+  {
+   "file": "tests/e2e/corpus/real-career/project-deep-dives.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/real-career/project-deep-dives.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/real-career/project-deep-dives.html",
+   "check": "contrast",
+   "state": "fail",
+   "advisory": true,
+   "detail": "92/168 judged elements below AA: <div.eyebrow> ratio 3.50 < 4.5 · <p> ratio 2.54 < 4.5 · <span.mins> ratio 3.77 < 4.5 · <span.mins> ratio 3.77 < 4.5 (+88)"
+  },
+  {
+   "file": "tests/e2e/corpus/real-career/saronic-slides.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/real-career/saronic-slides.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/real-career/saronic-slides.html",
+   "check": "ids",
+   "state": "xfail",
+   "detail": "lost 1 id(s) region=modeled: :$p · lost data-*: data-bespoke-marp-osc=page"
+  },
+  {
+   "file": "tests/e2e/corpus/real-career/saronic-slides.html",
+   "check": "contrast",
+   "state": "fail",
+   "advisory": true,
+   "detail": "5/89 judged elements below AA: <button> ratio 1.00 < 4.5 · <button> ratio 1.00 < 4.5 · <button> ratio 1.00 < 4.5 · <button> ratio 1.00 < 4.5 (+1)"
+  },
+  {
+   "file": "tests/e2e/corpus/real-career/spacex-cheatsheet.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/real-career/spacex-cheatsheet.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/real-career/spacex-cheatsheet.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/real-career/spacex-cheatsheet.html",
+   "check": "contrast",
+   "state": "fail",
+   "advisory": true,
+   "detail": "1/108 judged elements below AA: <h1> ratio 1.07 < 4.5"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/adamw.html",
+   "check": "roundtrip",
+   "state": "xfail",
+   "detail": "tree changed across save+reparse (T1 ≠ T2 in canonical form)"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/adamw.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/adamw.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/adamw.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "82 judged, 9 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/attention.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/attention.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/attention.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/attention.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "86 judged, 1 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/layernorm-vs-rmsnorm.html",
+   "check": "roundtrip",
+   "state": "xfail",
+   "detail": "tree changed across save+reparse (T1 ≠ T2 in canonical form)"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/layernorm-vs-rmsnorm.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/layernorm-vs-rmsnorm.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/layernorm-vs-rmsnorm.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "52 judged, 5 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/sampling.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/sampling.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/sampling.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/sampling.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "69 judged, 6 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/tokenization.html",
+   "check": "roundtrip",
+   "state": "xfail",
+   "detail": "tree changed across save+reparse (T1 ≠ T2 in canonical form)"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/tokenization.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/tokenization.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/tokenization.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "79 judged, 2 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/transformer-block.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/transformer-block.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/transformer-block.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/real-published/transformer-block.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "87 judged, 3 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/schema/lists.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/schema/lists.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/schema/lists.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/schema/lists.html",
+   "check": "contrast",
+   "state": "fail",
+   "advisory": true,
+   "detail": "1/3 judged elements below AA: <p> ratio 3.54 < 4.5"
+  },
+  {
+   "file": "tests/e2e/corpus/schema/marks-soup.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/schema/marks-soup.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/schema/marks-soup.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/schema/marks-soup.html",
+   "check": "contrast",
+   "state": "fail",
+   "advisory": true,
+   "detail": "2/7 judged elements below AA: <div.sub> ratio 3.54 < 4.5 · <span.tag> ratio 3.09 < 4.5"
+  },
+  {
+   "file": "tests/e2e/corpus/schema/table.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/schema/table.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/schema/table.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/schema/table.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "5 judged, 0 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/security/iframe.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/security/iframe.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/security/iframe.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/security/iframe.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "2 judged, 0 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/security/onerror.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/security/onerror.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/security/onerror.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/security/onerror.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "2 judged, 0 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/security/script.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/security/script.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/security/script.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/security/script.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "1 judged, 0 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/structure/classed-wrapper-interactive.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/structure/classed-wrapper-interactive.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/structure/classed-wrapper-interactive.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/structure/classed-wrapper-interactive.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "4 judged, 0 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/structure/mixed-img.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/structure/mixed-img.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/structure/mixed-img.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/structure/mixed-img.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "2 judged, 0 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/structure/multi-section-cards.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/structure/multi-section-cards.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/structure/multi-section-cards.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/structure/multi-section-cards.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "14 judged, 0 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/structure/nested-wrappers-svg.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/structure/nested-wrappers-svg.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/structure/nested-wrappers-svg.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/structure/nested-wrappers-svg.html",
+   "check": "contrast",
+   "state": "fail",
+   "advisory": true,
+   "detail": "1/4 judged elements below AA: <figcaption.cap> ratio 3.54 < 4.5"
+  },
+  {
+   "file": "tests/e2e/corpus/structure/stale-marker.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/structure/stale-marker.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/structure/stale-marker.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/structure/stale-marker.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "2 judged, 0 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/styling-source/at-rules.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/styling-source/at-rules.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/styling-source/at-rules.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/styling-source/at-rules.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "2 judged, 0 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/styling-source/class-and-style.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/styling-source/class-and-style.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/styling-source/class-and-style.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/styling-source/class-and-style.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "5 judged, 0 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/styling-source/element-selectors.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/styling-source/element-selectors.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/styling-source/element-selectors.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/styling-source/element-selectors.html",
+   "check": "contrast",
+   "state": "fail",
+   "advisory": true,
+   "detail": "1/4 judged elements below AA: <h2> ratio 2.77 < 4.5"
+  },
+  {
+   "file": "tests/e2e/corpus/styling-source/inline-only.html",
+   "check": "roundtrip",
+   "state": "xfail",
+   "detail": "tree changed across save+reparse (T1 ≠ T2 in canonical form)"
+  },
+  {
+   "file": "tests/e2e/corpus/styling-source/inline-only.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/styling-source/inline-only.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/styling-source/inline-only.html",
+   "check": "contrast",
+   "state": "fail",
+   "advisory": true,
+   "detail": "2/4 judged elements below AA: <strong> ratio 2.54 < 4.5 · <p> ratio 2.54 < 4.5"
+  },
+  {
+   "file": "tests/e2e/corpus/unmodelable/canvas.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/unmodelable/canvas.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/unmodelable/canvas.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/unmodelable/canvas.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "2 judged, 0 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/unmodelable/pre-code.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/unmodelable/pre-code.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/unmodelable/pre-code.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/unmodelable/pre-code.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "2 judged, 0 skipped"
+  },
+  {
+   "file": "tests/e2e/corpus/unmodelable/svg-rich.html",
+   "check": "roundtrip",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/unmodelable/svg-rich.html",
+   "check": "validity",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/unmodelable/svg-rich.html",
+   "check": "ids",
+   "state": "pass"
+  },
+  {
+   "file": "tests/e2e/corpus/unmodelable/svg-rich.html",
+   "check": "contrast",
+   "state": "pass",
+   "advisory": true,
+   "detail": "2 judged, 0 skipped"
+  }
+ ],
+ "counts": {
+  "pass": 118,
+  "fail": 9,
+  "xfail": 12,
+  "xpass": 0,
+  "skip": 1,
+  "error": 0
+ },
+ "exitCode": 0
+}
