@@ -135,16 +135,27 @@ const ItalicTagged = Italic.extend({
 // FULL_PARSE: carry `class` through the round-trip on native nodes + marks ProseMirror would
 // otherwise strip it from, so classed prose (<h3 class>, <li class>, <ul class>, <strong
 // class>) keeps rendering via the scoped doc sheet and saves its classes back verbatim.
+// #83: `id` and author `data-*` ride along on the NODE types — dropping them severed a
+// doc's own wiring (getElementById hooks, #anchor targets, data-sort). NODES ONLY, never
+// marks: ProseMirror splits a marked range at every overlapping-mark boundary, so a mark
+// carrying an id would render it duplicated across the split elements — save-time id
+// duplication is a corruption, not preservation. An id on an inline formatting element
+// (<strong id>) stays out of scope; ids on prose/table/list structure is the real class.
+const PRESERVE_NODE_TYPES = ["paragraph", "heading", "bulletList", "orderedList", "listItem", "blockquote", "codeBlock", "horizontalRule", "table", "tableRow", "tableHeader", "tableCell"];
+const PRESERVE_MARK_TYPES = ["bold", "italic", "code", "strike", "link"];
+// keepOnSplit:false on all three — Enter at the end of <p class="lead" id="intro"> must
+// start a CLEAN paragraph: carrying the class made fresh typing inherit the previous
+// line's look, and a carried id would silently mint a duplicate.
+export const idAttr = () => ({ id: { default: null, keepOnSplit: false, parseHTML: (el: any) => el.getAttribute("id"), renderHTML: (a: any) => (a.id ? { id: a.id } : {}) } });
 const PreserveAttrs = Extension.create({
   name: "preserveClassAttr",
   addGlobalAttributes() {
     if (!FULL_PARSE) return [];
-    return [{
-      types: ["paragraph", "heading", "bulletList", "orderedList", "listItem", "blockquote", "codeBlock", "horizontalRule", "table", "tableRow", "tableHeader", "tableCell", "bold", "italic", "code", "strike", "link"],
-      // keepOnSplit:false — Enter at the end of <p class="lead"> must start a CLEAN
-      // paragraph; carrying the class made fresh typing inherit the previous line's look.
-      attributes: { class: { default: null, keepOnSplit: false, parseHTML: (el: any) => el.getAttribute("class"), renderHTML: (attrs: any) => (attrs.class ? { class: attrs.class } : {}) } },
-    }];
+    const classAttr = { class: { default: null, keepOnSplit: false, parseHTML: (el: any) => el.getAttribute("class"), renderHTML: (attrs: any) => (attrs.class ? { class: attrs.class } : {}) } };
+    return [
+      { types: [...PRESERVE_NODE_TYPES, ...PRESERVE_MARK_TYPES], attributes: classAttr },
+      { types: PRESERVE_NODE_TYPES, attributes: { ...idAttr(), data: { ...dataAttrs().data, keepOnSplit: false } } },
+    ];
   },
 });
 
@@ -191,17 +202,26 @@ const dataAttrs = () => ({
 const sboxAttrs = () => ({
   style: { default: null, parseHTML: (el: any) => el.getAttribute("style"), renderHTML: (a: any) => (a.style ? { style: a.style } : {}) },
   class: { default: null, parseHTML: (el: any) => el.getAttribute("class"), renderHTML: (a: any) => (a.class ? { class: a.class } : {}) },
+  ...idAttr(),
   ...dataAttrs(),
 });
+// #83: identity attrs are ELEMENT-IDENTITY signals, same as class/style. A doc's own script
+// wires itself through <span id="w0v">, <div id="rows"></div>, <span data-hook> — elements
+// with no class or style at all. Without a schema home they flatten on parse and the wiring
+// is severed (the "renders empty after one edit" repro). The styled-family parse rules below
+// claim identity-carrying elements too.
+const hasAuthorData = (el: any) => Array.from(el.attributes || []).some((a: any) => { const n = (a.name || "").toLowerCase(); return n.startsWith("data-") && !APP_DATA_HOOKS.has(n); });
+const hasIdentity = (el: any) => !!(el.getAttribute("id") || hasAuthorData(el));
 export const StyledBox = Node.create({
   name: "styledBox", group: "block", content: "block+", defining: true,
   addAttributes() { return sboxAttrs(); },
   // Legacy (FULL_PARSE off): only an inline-styled, class-free div. FULL_PARSE: any div with a
-  // class or style AND block children — its look comes from the scoped doc sheet / inline style.
+  // class, style, or identity attr (#83) AND block children — its look comes from the scoped
+  // doc sheet / inline style; a bare <div id> is a script/anchor hook that must keep element-hood.
   parseHTML() { return [{ tag: "div", getAttrs: (el: any) => {
     const cls = el.getAttribute("class"); const sty = el.getAttribute("style");
     if (!FULL_PARSE) return (!cls && sty) ? {} : false;
-    return ((cls || sty) && hasBlockChild(el)) ? {} : false;
+    return ((cls || sty || hasIdentity(el)) && hasBlockChild(el)) ? {} : false;
   } }]; },
   renderHTML({ HTMLAttributes }: any) { return ["div", { ...HTMLAttributes, "data-sbox": "" }, 0]; },
   addStorage() { return sboxMd; },
@@ -215,7 +235,7 @@ export const StyledInlineBox = Node.create({
   parseHTML() { return [{ tag: "div", priority: 60, getAttrs: (el: any) => {
     if (!FULL_PARSE) return false;
     const cls = el.getAttribute("class"); const sty = el.getAttribute("style");
-    return ((cls || sty) && !hasBlockChild(el)) ? {} : false;
+    return ((cls || sty || hasIdentity(el)) && !hasBlockChild(el)) ? {} : false;
   } }]; },
   renderHTML({ HTMLAttributes }: any) { return ["div", { ...HTMLAttributes, "data-sbox": "" }, 0]; },
   addStorage() { return sboxMd; },
@@ -230,7 +250,7 @@ export const StyledSpan = Node.create({
   name: "styledSpan", inline: true, group: "inline", content: "inline*", defining: true,
   addAttributes() { return sboxAttrs(); },
   parseHTML() { return [{ tag: "span", priority: 65, getAttrs: (el: any) => {
-    if (!FULL_PARSE || !el.getAttribute("class")) return false;          // style-only → mark
+    if (!FULL_PARSE || !(el.getAttribute("class") || hasIdentity(el))) return false; // style-only → mark; identity (#83) → element
     if (!el.children.length && !(el.textContent || "").trim()) return false; // empty → DecoSpan
     return {};
   } }]; },
@@ -250,7 +270,7 @@ export const DecoSpan = Node.create({
   addAttributes() { return sboxAttrs(); },
   parseHTML() { return [{ tag: "span", priority: 70, getAttrs: (el: any) => {
     if (el.children.length || (el.textContent || "").trim()) return false;
-    return (el.getAttribute("class") || el.getAttribute("style")) ? {} : false;
+    return (el.getAttribute("class") || el.getAttribute("style") || hasIdentity(el)) ? {} : false;
   } }]; },
   renderHTML({ HTMLAttributes }: any) { return ["span", HTMLAttributes]; },
   addStorage() { return { markdown: { serialize(state: any, node: any) {
@@ -258,7 +278,7 @@ export const DecoSpan = Node.create({
     // emit any preserved data-* too (symmetry with the HTML path; the sibling styled nodes serialize
     // theirs via DOMSerializer) so a decorative span's hooks survive a .md round-trip as well
     const dataStr = a.data ? Object.keys(a.data).map((k) => " " + k + '="' + escapeAttr(a.data[k]) + '"').join("") : "";
-    state.write("<span" + (a.class ? ' class="' + escapeAttr(a.class) + '"' : "") + (a.style ? ' style="' + escapeAttr(a.style) + '"' : "") + dataStr + "></span>");
+    state.write("<span" + (a.id ? ' id="' + escapeAttr(a.id) + '"' : "") + (a.class ? ' class="' + escapeAttr(a.class) + '"' : "") + (a.style ? ' style="' + escapeAttr(a.style) + '"' : "") + dataStr + "></span>");
   } } }; },
 });
 
@@ -276,6 +296,7 @@ export const ImageNode = Node.create({
     src: { default: "" },
     alt: { default: null, renderHTML: (a: any) => (a.alt ? { alt: a.alt } : {}) },
     width: { default: null, renderHTML: (a: any) => (a.width ? { width: a.width } : {}) },
+    ...idAttr(),
   }; },
   parseHTML() { return [{ tag: "img[src]", getAttrs: (el: any) => ({ src: el.getAttribute("src") || "", alt: el.getAttribute("alt"), width: el.getAttribute("width") }) }]; },
   renderHTML({ HTMLAttributes }: any) { return ["img", HTMLAttributes]; },
@@ -312,7 +333,7 @@ export const RichBlock = Node.create({
 // (the div wrapper round-trips via parseHTML).
 export const Callout = Node.create({
   name: "callout", group: "block", content: "block+", defining: true,
-  addAttributes() { return { kind: { default: "info", parseHTML: (el: any) => el.getAttribute("data-kind") || "info", renderHTML: (a: any) => ({ "data-kind": a.kind }) } }; },
+  addAttributes() { return { kind: { default: "info", parseHTML: (el: any) => el.getAttribute("data-kind") || "info", renderHTML: (a: any) => ({ "data-kind": a.kind }) }, ...idAttr() }; },
   addStorage() {
     return { markdown: { serialize(state: any, node: any) {
       state.write(`<div data-callout data-kind="${escapeAttr(node.attrs.kind)}">\n\n`);

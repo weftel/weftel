@@ -14,6 +14,7 @@ import Suggestion from "@tiptap/suggestion";
 import { stripActive, escapeAttr, nativeInsertable, collectSvgTextLeaves, collectSvgTextRuns, collectHtmlTextLeaves, collectHtmlTextRuns, tidyInsertHtml, buildTree, countFiles, buildInteractSrcdoc, sanitizeRelNotePath, routeCmdkIntent, type FormatOp, type TableOp, type TreeNode } from "./lib"; // [AI:cmdk] intent router
 import { DOMSerializer } from "@tiptap/pm/model";
 import { FULL_PARSE, prepareDoc, serializeDoc, engineExtensions } from "./engine"; // shared round-trip engine: schema + parse/serialize (see client/engine.ts)
+import { idDupePositions } from "./ops"; // [#83] id-uniqueness core (pure, unit-tested)
 import { diffApprove } from "./diff-viewer"; // [AI:diff-gate]
 import { Plugin, TextSelection } from "@tiptap/pm/state";
 import { mountGhostCompletion } from "./ghost-completion"; // [AI:ghost] Tab ghost-text controller
@@ -622,12 +623,32 @@ if (note && mount) {
   // file's own target/rel round-trip verbatim. openOnClick off — handleClick below routes
   // clicks properly (relative note links navigate IN-APP; web links open a tab).
   const linkOpts = { openOnClick: false, HTMLAttributes: { target: null, rel: null } } as any;
+  // #83 id-uniqueness policy (editor-only, contributes no schema): a human paste/duplicate
+  // must not clone identity — when a transaction increases an id's count, occurrences after
+  // the first lose the id (nulled, never re-minted). Author duplicates loaded from disk are
+  // untouched (pure loads never save, and their count doesn't change). Core is pure +
+  // unit-tested in client/ops.ts.
+  const IdDedupe = Extension.create({
+    name: "idDedupe",
+    addProseMirrorPlugins() {
+      return [new Plugin({
+        appendTransaction(trs: any, oldState: any, newState: any) {
+          if (!trs.some((t: any) => t.docChanged)) return null;
+          const dupes = idDupePositions(oldState.doc, newState.doc);
+          if (!dupes.length) return null;
+          const tr = newState.tr;
+          dupes.forEach((pos: number) => { const n = newState.doc.nodeAt(pos); if (n) tr.setNodeMarkup(pos, undefined, { ...n.attrs, id: null }, n.marks); });
+          return tr;
+        },
+      })];
+    },
+  });
   const extensions: any[] = [
     // The schema comes from the SHARED engine (client/engine.ts) — identical for the live
-    // editor and the headless verifier. Only the four NodeViews (browser display/behavior)
+    // editor and the headless verifier. Only the three NodeViews (browser display/behavior)
     // are injected here; the trailing extensions are UI-only and contribute no schema.
     ...engineExtensions({ linkOpts, nodeViews: { image: imageView, richBlock: richView, callout: calloutView } }),
-    SlashMenu, TabKeys, EscapeTrap,
+    IdDedupe, SlashMenu, TabKeys, EscapeTrap,
     Placeholder.configure({ placeholder: ({ node }: any) => (node.type.name === "heading" ? "Heading" : "Write, or press \u201c/\u201d for commands\u2026"), showOnlyCurrent: true }),
   ];
   let content = note.content;

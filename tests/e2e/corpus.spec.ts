@@ -23,6 +23,11 @@
 //     mustRender                  — comma-list of substrings that MUST each appear in the LIVE editable
 //                                   surface, not just on disk (catches a multi-section doc collapsing
 //                                   to its first <article>/<main> — see F78)
+//     migrates   (default false)  — the doc carries a removed-feature marker that prepareDoc
+//                                   INTENTIONALLY degrades to visible text (#95 data-clock):
+//                                   the lossless check then asserts no-word-LOST (multiset
+//                                   containment) instead of strict equality, so the added
+//                                   migration text doesn't read as corruption
 import { test, expect, type Page } from "@playwright/test";
 import { writeFileSync, mkdirSync, readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -33,7 +38,7 @@ const SHOTS = join(CORPUS, "_shots");
 mkdirSync(VAULT, { recursive: true });
 mkdirSync(SHOTS, { recursive: true });
 
-type Dir = { stress: string; editable: boolean; frozenMin: number; editTarget?: string; neighbor?: string; mustContain?: string; mustRender?: string };
+type Dir = { stress: string; editable: boolean; frozenMin: number; editTarget?: string; neighbor?: string; mustContain?: string; mustRender?: string; migrates: boolean };
 function parseDirective(html: string): Dir {
   const m = html.match(/<!--\s*corpus\b([\s\S]*?)-->/i);
   const a = m ? m[1] : "";
@@ -47,6 +52,7 @@ function parseDirective(html: string): Dir {
     neighbor: get("neighbor"),
     mustContain: get("mustContain"),
     mustRender: get("mustRender"),
+    migrates: getBare("migrates") === "true",
   };
 }
 // Visible-text normalization for the lossless round-trip check: drop comments + <style>/<script>
@@ -69,9 +75,20 @@ async function openFixture(page: Page, vaultPath: string): Promise<string[]> {
   page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource|ERR_|net::|favicon/i.test(m.text())) errors.push(m.text()); });
   page.on("pageerror", (e) => errors.push("PAGEERROR: " + String(e)));
   await page.goto("/?file=" + encodeURIComponent(vaultPath));
+  await page.waitForFunction(() => (window as any).__editor && (window as any).__serialize && (window as any).__setMode);
+  // K5: interactive docs auto-open in INTERACT mode (sandboxed iframe, editor hidden). The
+  // corpus proves the EDIT round-trip — switch via the test seam before waiting on visibility (#100).
+  await page.evaluate(() => (window as any).__setMode("edit"));
   await page.waitForSelector(".ProseMirror");
-  await page.waitForFunction(() => (window as any).__editor && (window as any).__serialize);
   return errors;
+}
+// Re-navigation inside a test (idempotence passes) needs the same edit-mode handling (#100);
+// error listeners are already attached to the page by openFixture — don't re-attach.
+async function reopen(page: Page, vaultPath: string): Promise<void> {
+  await page.goto("/?file=" + encodeURIComponent(vaultPath));
+  await page.waitForFunction(() => (window as any).__editor && (window as any).__serialize && (window as any).__setMode);
+  await page.evaluate(() => (window as any).__setMode("edit"));
+  await page.waitForSelector(".ProseMirror");
 }
 
 const subsets = existsSync(CORPUS) ? readdirSync(CORPUS).filter((d) => !d.startsWith("_") && !d.startsWith(".") && existsSync(join(CORPUS, d)) && statSync(join(CORPUS, d)).isDirectory() && readdirSync(join(CORPUS, d)).some((f) => f.endsWith(".html"))) : [];
@@ -99,7 +116,20 @@ for (const subset of subsets) {
         // character still fails because the character sequence diverges.
         const preSave: string = await page.evaluate(() => (window as any).__serialize());
         const strip = (s: string) => visibleText(s).replace(/\s+/g, "");
-        expect(strip(preSave), "characters/words lost on load+save (real content loss)").toBe(strip(src));
+        if (d.migrates) {
+          // removed-feature migration (#95) intentionally ADDS visible text — assert no word
+          // was LOST (multiset containment), not equality
+          const tokens = (s: string) => visibleText(s).split(" ").filter(Boolean);
+          const have = new Map<string, number>();
+          tokens(preSave).forEach((t) => have.set(t, (have.get(t) || 0) + 1));
+          tokens(src).forEach((t) => {
+            const n = (have.get(t) || 0) - 1;
+            expect(n, `word "${t}" lost on load+save (real content loss)`).toBeGreaterThanOrEqual(0);
+            have.set(t, n);
+          });
+        } else {
+          expect(strip(preSave), "characters/words lost on load+save (real content loss)").toBe(strip(src));
+        }
 
         // 3) safety — OWN-FILES model: we PRESERVE user content losslessly (a script is often
         //    Claude-Code-authored; deleting it is the worse failure), but the editor must never
@@ -130,22 +160,16 @@ for (const subset of subsets) {
         // docs normalize once — nested-span collapse, code-leading-space — then stabilize.)
         const vp2 = join(VAULT, "corpus_idem__" + subset + "__" + file);
         writeFileSync(vp2, preSave);
-        await page.goto("/?file=" + encodeURIComponent(vp2));
-        await page.waitForSelector(".ProseMirror");
-        await page.waitForFunction(() => (window as any).__editor && (window as any).__serialize);
+        await reopen(page, vp2);
         const s2: string = await page.evaluate(() => (window as any).__serialize());
         if (s2 !== preSave) {
           writeFileSync(vp2, s2);
-          await page.goto("/?file=" + encodeURIComponent(vp2));
-          await page.waitForSelector(".ProseMirror");
-          await page.waitForFunction(() => (window as any).__editor && (window as any).__serialize);
+          await reopen(page, vp2);
           const s3: string = await page.evaluate(() => (window as any).__serialize());
           expect(s3, "serialization never settles (file churns on every open)").toBe(s2);
         }
         // back to the original doc for the remaining checks
-        await page.goto("/?file=" + encodeURIComponent(vpath));
-        await page.waitForSelector(".ProseMirror");
-        await page.waitForFunction(() => (window as any).__editor && (window as any).__serialize);
+        await reopen(page, vpath);
 
         // 4) unmodelable preservation vs security stripping
         const counts = await page.evaluate(() => {
