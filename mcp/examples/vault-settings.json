@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(./**/*.html)",
+      "Write(./**/*.html)",
+      "Edit(./**/*.htm)",
+      "Write(./**/*.htm)",
+      "Edit(./**/*.md)",
+      "Write(./**/*.md)",
+      "Edit(./**/*.markdown)",
+      "Write(./**/*.markdown)"
+    ]
+  }
+}

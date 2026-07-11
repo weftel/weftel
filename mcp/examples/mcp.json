@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "weftel": {
+      "command": "bun",
+      "args": ["run", "/Users/benja/weftel/mcp/server.ts"],
+      "env": {
+        "WEFTEL_URL": "http://localhost:4321",
+        "WEFTEL_APPROVAL_TIMEOUT_MS": "120000"
+      }
+    }
+  }
+}
