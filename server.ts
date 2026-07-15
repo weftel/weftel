@@ -175,21 +175,22 @@ function fmtOf(p: string): string {
 type NoteFile = { name: string; path: string; rel: string; fmt: string; mtime: number };
 // One walk yields both the note FILES (with mtime, epoch ms) and EVERY directory under the tree
 // (rel paths, incl. empty ones) so the client can show empty folders. Dot-dirs (.trash/.git/
-// .obsidian/…) and node_modules are skipped — never descended, never listed. Same depth(4)/
-// file-cap(800) guards as before.
+// .obsidian/…) and node_modules are skipped — never descended, never listed. Depth cap 8
+// (dirs past it are omitted entirely rather than rendered falsely empty); file cap 800.
+const TREE_MAX_DEPTH = 8;
 function listTree(dir: string): { files: NoteFile[]; dirs: string[] } {
   const root = resolve(dir);
   const files: NoteFile[] = [];
   const dirs: string[] = [];
   const walk = (d: string, depth: number) => {
-    if (depth > 4 || files.length > 800) return;
+    if (files.length > 800) return;
     let entries: string[] = [];
     try { entries = readdirSync(d); } catch { return; }
     for (const e of entries) {
       if (e.startsWith(".") || e === "node_modules") continue;
       const full = `${d}/${e}`;
       let st; try { st = statSync(full); } catch { continue; }
-      if (st.isDirectory()) { dirs.push(full.slice(root.length + 1)); walk(full, depth + 1); }
+      if (st.isDirectory()) { if (depth < TREE_MAX_DEPTH) { dirs.push(full.slice(root.length + 1)); walk(full, depth + 1); } }
       else if (NOTE_RE.test(e)) files.push({ name: e, path: full, rel: full.slice(root.length + 1), fmt: fmtOf(e), mtime: Math.round(st.mtimeMs) });
     }
   };
